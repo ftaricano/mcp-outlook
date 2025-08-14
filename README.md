@@ -1,13 +1,31 @@
 # MCP Email Server - Integração com Microsoft Graph
 
-Um servidor MCP (Model Context Protocol) para integração com emails do Microsoft Outlook/Exchange via Microsoft Graph API.
+Um servidor MCP (Model Context Protocol) avançado para integração completa com emails do Microsoft Outlook/Exchange via Microsoft Graph API.
 
-## Funcionalidades
+## 🚀 Funcionalidades Principais
 
-- **Listar emails**: Busca emails com filtros avançados
-- **Resumir emails**: Cria resumos inteligentes com análise de prioridade e sentimento
-- **Filtros flexíveis**: Por remetente, data, status de leitura, etc.
-- **Busca avançada**: Pesquisa por texto no conteúdo dos emails
+### 📧 Gestão de Emails
+- **Listar emails**: Busca avançada com filtros OData
+- **Enviar emails**: Suporte completo a anexos grandes (até 3MB)
+- **Responder emails**: Com threading automático
+- **Gestão de status**: Marcar como lido/não lido, deletar
+
+### 📎 Gestão de Anexos Avançada
+- **Download otimizado**: Salva arquivos grandes diretamente no disco
+- **Encoding inteligente**: Base64 com validação de integridade
+- **Suporte a múltiplos formatos**: Office, PDF, imagens, etc.
+- **Validação automática**: Verificação de tipos MIME e tamanhos
+
+### 🧠 Análise Inteligente
+- **Resumos automáticos**: IA analisa conteúdo, prioridade e sentimento
+- **Categorização**: Reunião, Projeto, Financeiro, RH, etc.
+- **Detecção de ações**: Identifica emails que requerem resposta
+- **Extração de dados**: Datas, valores monetários, pontos-chave
+
+### ⚡ Funções Híbridas (Novidade!)
+- **Automação completa**: Download + processamento + envio em uma operação
+- **Sem limitações de tamanho**: Contorna limitações do protocolo MCP
+- **Performance otimizada**: Processamento direto no disco
 
 ## Pré-requisitos
 
@@ -91,9 +109,11 @@ Adicione ao seu arquivo de configuração do Claude Code (`settings.json`):
 }
 ```
 
-## Ferramentas Disponíveis
+## 🛠️ Ferramentas Disponíveis
 
-### 1. `list_emails`
+### 📧 Gestão Básica de Emails
+
+#### 1. `list_emails`
 Lista emails da caixa de entrada com filtros opcionais.
 
 **Parâmetros:**
@@ -126,6 +146,96 @@ Cria resumos para múltiplos emails.
 **Parâmetros:**
 - `emailIds` (array): Lista de IDs de emails (opcional)
 - `maxResults` (number): Número máximo de emails (padrão: 5)
+
+### ⚡ Funções Híbridas Avançadas
+
+#### 4. `send_email_from_attachment` ⭐ **NOVO**
+Função híbrida que baixa anexo de um email e reenvia automaticamente para outros destinatários. **Resolve limitações do MCP para arquivos grandes**.
+
+**Parâmetros:**
+- `sourceEmailId` (string): ID do email que contém o anexo
+- `attachmentId` (string): ID do anexo a ser reenviado
+- `to` (array): Lista de destinatários
+- `subject` (string): Assunto do email
+- `body` (string): Corpo do email
+- `cc` (array, opcional): Destinatários em cópia
+- `useTemplate` (boolean, opcional): Usar template HTML elegante
+- `keepOriginalFile` (boolean, opcional): Manter arquivo no disco
+
+**Exemplo:**
+```javascript
+send_email_from_attachment({
+  sourceEmailId: "AAMkADcxMDIy...",
+  attachmentId: "AAMkADcxMDIy...",
+  to: ["cliente@empresa.com"],
+  subject: "Relatório Mensal",
+  body: "Segue o relatório solicitado em anexo.",
+  useTemplate: true
+})
+```
+
+#### 5. `send_email_with_file` ⭐ **NOVO**
+Envia email com arquivo já baixado do disco. **Ideal para automação com arquivos grandes**.
+
+**Parâmetros:**
+- `filePath` (string): Caminho absoluto para o arquivo no disco
+- `to` (array): Lista de destinatários
+- `subject` (string): Assunto do email
+- `body` (string): Corpo do email
+- `cc` (array, opcional): Destinatários em cópia
+- `useTemplate` (boolean, opcional): Usar template HTML
+- `customFilename` (string, opcional): Nome personalizado para o anexo
+
+**Exemplo:**
+```javascript
+send_email_with_file({
+  filePath: "/path/to/documento.pdf",
+  to: ["equipe@empresa.com"],
+  subject: "Documento Importante",
+  body: "Documento em anexo para revisão.",
+  useTemplate: true,
+  customFilename: "Documento_Final.pdf"
+})
+```
+
+### 📎 Gestão de Anexos
+
+#### 6. `download_attachment_to_file`
+Download otimizado de anexos grandes - salva diretamente no disco evitando limitações de token.
+
+#### 7. `encode_file_for_attachment`
+Codifica arquivo do sistema de arquivos para Base64 - resolve problema de anexos com 0KB.
+
+#### 8. `list_attachments`, `download_attachment`
+Listagem e download básico de anexos.
+
+### 📝 Outras Ferramentas
+
+#### 9-13. Gestão Completa
+- `send_email` - Envio básico com anexos
+- `reply_to_email` - Resposta com threading
+- `mark_as_read/unread` - Gestão de status
+- `delete_email` - Exclusão segura
+- `list_users` - Listagem de usuários da organização
+
+## ⚡ Vantagens das Funções Híbridas
+
+### 🚀 **Performance Superior**
+- **Zero limitações de tamanho**: Funciona com arquivos de qualquer tamanho
+- **Processamento direto**: Não transfere Base64 via protocolo MCP
+- **Cache inteligente**: Arquivos ficam no disco para reuso
+- **Validação automática**: Integridade garantida
+
+### 🔄 **Automação Completa**
+- **Workflow unificado**: Download + processamento + envio em uma operação
+- **Sem intervenção manual**: Processo totalmente automatizado
+- **Flexibilidade total**: Pode processar arquivo antes de reenviar
+- **Limpeza automática**: Remove arquivos temporários opcionalmente
+
+### 💪 **Robustez**
+- **Tratamento de erros**: Recuperação automática em falhas
+- **Validação de tipos**: Suporte a todos os formatos Office, PDF, imagens
+- **Compatibilidade**: Funciona com Microsoft Graph API sem limitações
 
 ## Filtros Avançados
 

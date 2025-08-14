@@ -39,11 +39,15 @@ export class GraphAuthProvider implements AuthenticationProvider {
       );
     }
 
+    // Para Client Credentials flow, usar .default é obrigatório
+    // As permissões específicas são configuradas no Azure AD Portal
+    const scopes = ['https://graph.microsoft.com/.default'];
+
     return {
       clientId,
       clientSecret,
       tenantId,
-      scopes: ['https://graph.microsoft.com/.default']
+      scopes
     };
   }
 
@@ -51,8 +55,9 @@ export class GraphAuthProvider implements AuthenticationProvider {
     if (this.accessToken && this.tokenExpiresAt && this.tokenExpiresAt > new Date()) {
       return this.accessToken;
     }
-
+    
     try {
+      
       const clientCredentialRequest: ClientCredentialRequest = {
         scopes: this.config.scopes,
       };
@@ -68,7 +73,6 @@ export class GraphAuthProvider implements AuthenticationProvider {
 
       return this.accessToken;
     } catch (error) {
-      console.error('Erro ao obter token de acesso:', error);
       throw new Error(`Falha na autenticação: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
     }
   }
@@ -84,9 +88,9 @@ export class GraphAuthProvider implements AuthenticationProvider {
       const client = this.getGraphClient();
       // Para Client Credentials flow, testamos com um endpoint que funciona para aplicações
       await client.api('/users').top(1).get();
+      
       return true;
     } catch (error) {
-      console.error('Erro ao validar conexão:', error);
       return false;
     }
   }

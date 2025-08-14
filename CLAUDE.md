@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is an MCP (Model Context Protocol) server for Microsoft Graph email integration that provides comprehensive email management capabilities for Claude Code. The server connects to Microsoft Outlook/Exchange via Microsoft Graph API and exposes 11 different tools for email operations including reading, sending, managing attachments, and intelligent email summarization.
+This is an advanced MCP (Model Context Protocol) server for Microsoft Graph email integration that provides comprehensive email management capabilities for Claude Code. The server connects to Microsoft Outlook/Exchange via Microsoft Graph API and exposes 15 different tools for email operations including reading, sending, managing attachments, intelligent email summarization, and **hybrid functions that solve MCP protocol limitations for large file handling**.
 
 ## Architecture
 
@@ -24,8 +24,9 @@ The application follows a clean layered architecture:
 - Supports both user-specific and service account authentication patterns
 
 **Service Layer (`src/services/`)**
-- `EmailService`: Core email operations (CRUD, search, attachments)
+- `EmailService`: Core email operations (CRUD, search, attachments) with new hybrid functions
 - `EmailSummarizer`: Intelligent email analysis with priority detection, categorization, and sentiment analysis
+- `FileManager`: Optimized file handling for large attachments with disk-based processing
 
 ### Key Architectural Patterns
 
@@ -34,6 +35,11 @@ The application follows a clean layered architecture:
 **Rich Email Analysis**: The summarizer implements sophisticated business logic for email categorization (Meeting, Project, Financial, HR, Marketing, Support, Sales, Notification) with priority scoring and sentiment analysis.
 
 **Attachment Management**: Complete attachment lifecycle from listing to Base64 content download.
+
+**Hybrid Functions Architecture**: Revolutionary approach that solves MCP protocol limitations for large file transfers:
+- `sendEmailFromAttachment()`: Downloads attachment from source email → processes on disk → sends with new email
+- `sendEmailWithFileAttachment()`: Reads file from disk → encodes internally → sends without MCP Base64 transfer
+- `FileManager`: Handles large file operations with disk-based processing, avoiding memory limitations
 
 ## Development Commands
 
@@ -68,13 +74,66 @@ TARGET_USER_EMAIL=user@domain.com  # Optional: specific user targeting
 
 ## Available MCP Tools
 
-The server exposes 11 tools categorized by functionality:
+The server exposes 15 tools categorized by functionality:
 
-**Email Management**: `list_emails`, `send_email`, `reply_to_email`
+**Email Management**: `list_emails`, `send_email` (with attachment support), `reply_to_email`
 **Status Operations**: `mark_as_read`, `mark_as_unread`, `delete_email`
-**Attachment Operations**: `list_attachments`, `download_attachment`
+**Basic Attachment Operations**: `list_attachments`, `download_attachment`
+**Advanced Attachment Operations**: `download_attachment_to_file`, `encode_file_for_attachment`, `export_email_as_attachment`
+**Hybrid Functions (NEW)**: `send_email_from_attachment`, `send_email_with_file`
 **Analysis Tools**: `summarize_email`, `summarize_emails_batch`
 **User Management**: `list_users`
+
+### Enhanced Email Sending with Attachments
+
+The `send_email` tool now supports sending attachments with the following features:
+- **Multiple Attachment Support**: Send multiple files in a single email
+- **Base64 Content Encoding**: Secure file content transmission via Base64 encoding
+- **MIME Type Support**: Automatic content type detection and specification
+- **File Size Tracking**: Optional file size metadata for better handling
+- **Comprehensive Error Handling**: Detailed error messages for attachment processing failures
+
+#### Attachment Format:
+```json
+{
+  "name": "document.pdf",
+  "contentType": "application/pdf", 
+  "content": "base64EncodedContent...",
+  "size": 1024 // optional, in bytes
+}
+```
+
+### Hybrid Functions - Solving MCP Protocol Limitations
+
+#### `send_email_from_attachment`
+Revolutionary function that completely automates email forwarding with large attachments:
+
+**Process Flow:**
+1. Downloads attachment from source email using `downloadAttachmentToFile()`
+2. Saves file directly to disk (bypassing MCP memory limitations)
+3. Re-encodes file using `FileManager.encodeFileForEmailAttachment()`
+4. Sends new email with attachment via Microsoft Graph API
+5. Optionally cleans up temporary files
+
+**Key Benefits:**
+- No MCP protocol size limitations (handles files up to 3MB Microsoft Graph limit)
+- Automatic file validation and integrity checking
+- Optimized disk-based processing
+- Complete error handling and recovery
+
+#### `send_email_with_file`
+Direct file-to-email function for disk-based files:
+
+**Process Flow:**
+1. Reads file from local disk using `FileManager`
+2. Performs MIME type detection and validation
+3. Encodes to Base64 internally (no MCP transfer)
+4. Sends email with attachment via Microsoft Graph API
+
+**Use Cases:**
+- Automated reporting with generated files
+- Bulk email operations with pre-processed attachments
+- Integration with other systems that generate files locally
 
 ## Email Summarization System
 
