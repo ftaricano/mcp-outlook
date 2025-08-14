@@ -15,7 +15,7 @@ export interface AttachmentValidationResult {
 
 export class AttachmentValidator {
   // Limites do Microsoft Graph API
-  private static readonly MAX_ATTACHMENT_SIZE = 3 * 1024 * 1024; // 3MB
+  private static readonly MAX_ATTACHMENT_SIZE = 15 * 1024 * 1024; // 15MB
   private static readonly MAX_TOTAL_SIZE = 25 * 1024 * 1024; // 25MB por email
   private static readonly MAX_ATTACHMENT_COUNT = 100;
 
@@ -81,14 +81,14 @@ export class AttachmentValidator {
     result.info.sizeInBytes = this.calculateBase64Size(cleanBase64);
     result.info.sizeInMB = result.info.sizeInBytes / (1024 * 1024);
 
-    // Verificar se precisa de upload session (>3MB)
+    // Verificar se precisa de upload session (>15MB)
     result.info.needsUploadSession = result.info.sizeInBytes > this.MAX_ATTACHMENT_SIZE;
 
     // Validação de tamanho
     if (result.info.sizeInBytes > this.MAX_ATTACHMENT_SIZE) {
       result.errors.push(
         `Arquivo muito grande: ${result.info.sizeInMB.toFixed(2)}MB. ` +
-        `Limite para anexos simples: 3MB. ` +
+        `Limite para anexos simples: 15MB. ` +
         `Arquivos maiores requerem upload session (não implementado ainda).`
       );
       result.isValid = false;

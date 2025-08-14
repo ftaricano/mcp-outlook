@@ -335,10 +335,10 @@ export class FileManager {
       console.log(`   Nome: ${fileName}`);
       console.log(`   Tamanho: ${(fileSize / 1024).toFixed(1)}KB`);
 
-      // 3. Verificar tamanho (limite de 3MB para Microsoft Graph)
-      const maxSize = 3 * 1024 * 1024; // 3MB
+      // 3. Verificar tamanho (limite de 15MB para Microsoft Graph)
+      const maxSize = 15 * 1024 * 1024; // 15MB
       if (fileSize > maxSize) {
-        throw new Error(`Arquivo muito grande: ${(fileSize / (1024 * 1024)).toFixed(2)}MB. Limite: 3MB`);
+        throw new Error(`Arquivo muito grande: ${(fileSize / (1024 * 1024)).toFixed(2)}MB. Limite: 15MB`);
       }
 
       // 4. Detectar MIME type baseado na extensão
@@ -465,7 +465,7 @@ export class FileManager {
 
       // 3. Verificar tamanho
       const fileSize = stats.size;
-      const maxSize = 3 * 1024 * 1024; // 3MB
+      const maxSize = 15 * 1024 * 1024; // 15MB
       
       if (fileSize === 0) {
         return { valid: false, error: 'Arquivo está vazio (0 bytes)', warnings };
@@ -474,7 +474,7 @@ export class FileManager {
       if (fileSize > maxSize) {
         return { 
           valid: false, 
-          error: `Arquivo muito grande: ${(fileSize / (1024 * 1024)).toFixed(2)}MB. Limite: 3MB`, 
+          error: `Arquivo muito grande: ${(fileSize / (1024 * 1024)).toFixed(2)}MB. Limite: 15MB`, 
           warnings 
         };
       }

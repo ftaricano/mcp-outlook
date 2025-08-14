@@ -18,7 +18,7 @@ export interface AttachmentInfo {
 
 export class AttachmentValidator {
   // Limites do Microsoft Graph API
-  private static readonly MAX_SMALL_ATTACHMENT_SIZE = 3 * 1024 * 1024; // 3MB
+  private static readonly MAX_SMALL_ATTACHMENT_SIZE = 15 * 1024 * 1024; // 15MB
   private static readonly MAX_TOTAL_ATTACHMENT_SIZE = 150 * 1024 * 1024; // 150MB
   private static readonly BASE64_OVERHEAD = 1.33; // 33% overhead
 
@@ -66,7 +66,7 @@ export class AttachmentValidator {
     const needsUploadSession = result.attachmentInfo.some(info => info.needsUploadSession);
     if (needsUploadSession) {
       result.warnings.push(
-        'Alguns anexos são grandes (>3MB) e requerem upload session - funcionalidade não implementada ainda'
+        'Alguns anexos são grandes (>15MB) e requerem upload session - funcionalidade não implementada ainda'
       );
     }
 

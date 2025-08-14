@@ -291,8 +291,8 @@ export class EmailService {
             throw new Error(`Anexo "${attachment.name}" tem Base64 inválido: ${error instanceof Error ? error.message : 'formato incorreto'}`);
           }
           
-          if (decodedSize > 3 * 1024 * 1024) { // 3MB limit
-            throw new Error(`Anexo "${attachment.name}" muito grande: ${(decodedSize / (1024 * 1024)).toFixed(2)}MB. Limite: 3MB`);
+          if (decodedSize > 15 * 1024 * 1024) { // 15MB limit
+            throw new Error(`Anexo "${attachment.name}" muito grande: ${(decodedSize / (1024 * 1024)).toFixed(2)}MB. Limite: 15MB`);
           }
           
           console.log(`   ✅ "${attachment.name}" - ${(decodedSize / 1024).toFixed(1)}KB - ${attachment.contentType}`);
@@ -335,7 +335,7 @@ export class EmailService {
           lowerErrorMsg.includes('base64') ||
           lowerErrorMsg.includes('size') ||
           lowerErrorMsg.includes('malformed')) {
-        throw new Error(`Erro de anexo: ${errorMsg}\n\n🔧 Dicas:\n- Verifique se o arquivo não está corrompido\n- Use tamanho menor que 3MB\n- Para boletos PDF use contentType 'application/pdf'\n- Teste com: node attachment-debug-test.js <arquivo>`);
+        throw new Error(`Erro de anexo: ${errorMsg}\n\n🔧 Dicas:\n- Verifique se o arquivo não está corrompido\n- Use tamanho menor que 15MB\n- Para boletos PDF use contentType 'application/pdf'\n- Teste com: node attachment-debug-test.js <arquivo>`);
       }
       
       throw new Error(`Falha ao enviar email: ${errorMsg}`);
