@@ -3,6 +3,9 @@ import { GraphAuthProvider } from '../auth/graphAuth.js';
 import { Message } from '@microsoft/microsoft-graph-types';
 import { emailTemplateEngine, EmailTemplateOptions, EmailContent } from '../templates/emailTemplates.js';
 import { FileManager } from './fileManager.js';
+import { CacheManager } from './cacheManager.js';
+import { GraphOptimizer } from './graphOptimizer.js';
+import { ParallelProcessor } from './parallelProcessor.js';
 
 export interface EmailListOptions {
   maxResults?: number;
@@ -39,10 +42,55 @@ export interface EmailSummaryData {
 export class EmailService {
   private client: Client;
   private fileManager: FileManager;
+  private cacheManager: CacheManager;
+  private graphOptimizer: GraphOptimizer;
+  private parallelProcessor: ParallelProcessor<any, any>;
 
   constructor(private authProvider: GraphAuthProvider, customDownloadDir?: string) {
     this.client = authProvider.getGraphClient();
     this.fileManager = new FileManager(customDownloadDir);
+    
+    // Initialize performance optimization systems
+    this.cacheManager = new CacheManager({
+      defaultTtl: 5 * 60 * 1000, // 5 minutes
+      maxSize: 1000,
+      enableStats: true
+    });
+    
+    this.graphOptimizer = new GraphOptimizer(this.client, this.cacheManager, {
+      enableBatching: true,
+      batchSize: 20,
+      enableSelectiveFields: true,
+      enableCompression: true
+    });
+
+    this.parallelProcessor = new ParallelProcessor(
+      async (data: any) => data, // Default identity function
+      {
+        maxConcurrency: 5,
+        adaptiveConcurrency: true,
+        priorityQueuing: true
+      }
+    );
+
+    // Preload common patterns
+    this.initializeOptimizations();
+  }
+
+  /**
+   * Initialize performance optimizations
+   */
+  private async initializeOptimizations(): Promise<void> {
+    try {
+      // Preload common cache patterns after a short delay
+      setTimeout(async () => {
+        await this.cacheManager.preloadCommonPatterns(this);
+      }, 2000);
+      
+      console.log('⚡ EmailService optimizations initialized');
+    } catch (error) {
+      console.warn('⚠️ Failed to initialize optimizations:', error);
+    }
   }
 
   async listEmails(options: EmailListOptions = {}): Promise<Message[]> {
@@ -54,72 +102,81 @@ export class EmailService {
     } = options;
 
     try {
-      // Usar email específico configurado no .env, ou 'me' como fallback
-      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-      let apiEndpoint = userEmail === 'me' 
-        ? `/me/mailFolders/${folder}/messages`
-        : `/users/${userEmail}/mailFolders/${folder}/messages`;
+      // Use GraphOptimizer for optimized email fetching with caching
+      const optimizedOptions = {
+        folder,
+        maxResults,
+        search,
+        filter,
+        enableCache: true,
+        select: this.graphOptimizer.getOptimalFields('list'),
+        orderBy: search ? undefined : 'receivedDateTime desc' // OData compatibility
+      };
 
-      console.log(`📧 Listando emails: ${maxResults} resultados, pasta: ${folder}`);
+      console.log(`📧 Listando emails otimizado: ${maxResults} resultados, pasta: ${folder}`);
       
-      const queryParams: string[] = [
-        `$top=${Math.min(maxResults, 100)}`, // Microsoft Graph limita a 100 por página
-        `$select=id,subject,from,receivedDateTime,isRead,hasAttachments,bodyPreview,body`
-      ];
-
-      // Microsoft Graph não permite $orderby com $search
-      if (!search) {
-        queryParams.push(`$orderby=receivedDateTime desc`);
-      }
-
-      if (filter) {
-        queryParams.push(`$filter=${encodeURIComponent(filter)}`);
-      }
-
-      if (search) {
-        // Remover caracteres especiais que podem causar problemas
-        const cleanSearch = search.replace(/['"]/g, '');
-        queryParams.push(`$search="${encodeURIComponent(cleanSearch)}"`);
-      }
-
-      const queryString = queryParams.join('&');
-      const fullEndpoint = `${apiEndpoint}?${queryString}`;
-
       if (search || filter) {
         console.log(`🔍 Query: search="${search || 'none'}", filter="${filter || 'none'}"`);
       }
 
-      const response = await this.client.api(fullEndpoint).get();
+      const emails = await this.graphOptimizer.getOptimizedEmails(optimizedOptions);
       
-      console.log(`✅ Encontrados ${response.value?.length || 0} emails`);
-      return response.value || [];
+      console.log(`✅ Encontrados ${emails.length} emails (com cache/otimização)`);
+      return emails;
     } catch (error) {
-      console.error('❌ Erro ao listar emails:', error);
+      console.error('❌ Erro ao listar emails otimizado:', error);
       
-      // Log detalhado para debugging
-      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-      const endpoint = userEmail === 'me' 
-        ? `/me/mailFolders/${folder}/messages`
-        : `/users/${userEmail}/mailFolders/${folder}/messages`;
-      console.error(`   Endpoint: ${endpoint}`);
-      console.error(`   Query params: ${JSON.stringify(options)}`);
+      // Fallback to original implementation if optimization fails
+      console.log('🔄 Fallback para implementação original...');
       
-      // Tratamento específico para erros conhecidos
-      const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
-      
-      if (errorMessage.includes('$orderBy') && errorMessage.includes('$search')) {
-        throw new Error(`Erro de compatibilidade OData corrigido. Tente novamente - o $orderBy foi removido ao usar $search.`);
+      try {
+        const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+        let apiEndpoint = userEmail === 'me' 
+          ? `/me/mailFolders/${folder}/messages`
+          : `/users/${userEmail}/mailFolders/${folder}/messages`;
+
+        const queryParams: string[] = [
+          `$top=${Math.min(maxResults, 100)}`,
+          `$select=id,subject,from,receivedDateTime,isRead,hasAttachments,bodyPreview,body`
+        ];
+
+        if (!search) {
+          queryParams.push(`$orderby=receivedDateTime desc`);
+        }
+
+        if (filter) {
+          queryParams.push(`$filter=${encodeURIComponent(filter)}`);
+        }
+
+        if (search) {
+          const cleanSearch = search.replace(/['"]/g, '');
+          queryParams.push(`$search="${encodeURIComponent(cleanSearch)}"`);
+        }
+
+        const queryString = queryParams.join('&');
+        const fullEndpoint = `${apiEndpoint}?${queryString}`;
+
+        const response = await this.client.api(fullEndpoint).get();
+        
+        console.log(`✅ Fallback concluído: ${response.value?.length || 0} emails`);
+        return response.value || [];
+      } catch (fallbackError) {
+        const errorMessage = fallbackError instanceof Error ? fallbackError.message : 'Erro desconhecido';
+        
+        if (errorMessage.includes('$orderBy') && errorMessage.includes('$search')) {
+          throw new Error(`Erro de compatibilidade OData corrigido. Tente novamente - o $orderBy foi removido ao usar $search.`);
+        }
+        
+        if (errorMessage.includes('$search')) {
+          throw new Error(`Erro de busca: ${errorMessage}. Verifique o termo de busca e tente novamente.`);
+        }
+        
+        if (errorMessage.includes('$filter')) {
+          throw new Error(`Erro de filtro: ${errorMessage}. Verifique a sintaxe do filtro OData.`);
+        }
+        
+        throw new Error(`Falha ao listar emails: ${errorMessage}`);
       }
-      
-      if (errorMessage.includes('$search')) {
-        throw new Error(`Erro de busca: ${errorMessage}. Verifique o termo de busca e tente novamente.`);
-      }
-      
-      if (errorMessage.includes('$filter')) {
-        throw new Error(`Erro de filtro: ${errorMessage}. Verifique a sintaxe do filtro OData.`);
-      }
-      
-      throw new Error(`Falha ao listar emails: ${errorMessage}`);
     }
   }
 
@@ -1212,6 +1269,1705 @@ export class EmailService {
         },
         error: errorMessage
       };
+    }
+  }
+
+  // ===============================
+  // FOLDER MANAGEMENT METHODS
+  // ===============================
+
+  /**
+   * List email folders with optional subfolder inclusion
+   */
+  async listFolders(includeSubfolders: boolean = true, maxDepth: number = 3): Promise<any[]> {
+    try {
+      console.log(`📁 Listando pastas otimizado${includeSubfolders ? ' (incluindo subpastas)' : ''}`);
+
+      // Use GraphOptimizer for optimized folder fetching with caching
+      const folders = await this.graphOptimizer.getOptimizedFolders({
+        includeSubfolders,
+        maxDepth,
+        enableCache: true,
+        select: ['id', 'displayName', 'totalItemCount', 'unreadItemCount', 'parentFolderId']
+      });
+
+      console.log(`✅ Encontradas ${folders.length} pastas (com cache/otimização)`);
+      return folders;
+    } catch (error) {
+      console.error('❌ Erro ao listar pastas otimizado:', error);
+      
+      // Fallback to original implementation
+      console.log('🔄 Fallback para implementação original de pastas...');
+      
+      try {
+        const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+        const apiEndpoint = userEmail === 'me' 
+          ? '/me/mailFolders'
+          : `/users/${userEmail}/mailFolders`;
+
+        const response = await this.client
+          .api(apiEndpoint)
+          .select('id,displayName,totalItemCount,unreadItemCount,parentFolderId')
+          .get();
+
+        let allFolders = response.value || [];
+
+        if (includeSubfolders && maxDepth > 1) {
+          // Recursively get subfolders
+          for (const folder of [...allFolders]) {
+            const subfolders = await this.getSubfolders(folder.id, maxDepth - 1);
+            allFolders = allFolders.concat(subfolders);
+          }
+        }
+
+        console.log(`✅ Fallback concluído: ${allFolders.length} pastas`);
+        return allFolders;
+      } catch (fallbackError) {
+        console.error('❌ Erro no fallback de pastas:', fallbackError);
+        throw fallbackError;
+      }
+    }
+  }
+
+  /**
+   * Get subfolders recursively
+   */
+  private async getSubfolders(parentFolderId: string, maxDepth: number): Promise<any[]> {
+    if (maxDepth <= 0) return [];
+
+    try {
+      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+      const apiEndpoint = userEmail === 'me' 
+        ? `/me/mailFolders/${parentFolderId}/childFolders`
+        : `/users/${userEmail}/mailFolders/${parentFolderId}/childFolders`;
+
+      const response = await this.client
+        .api(apiEndpoint)
+        .select('id,displayName,totalItemCount,unreadItemCount,parentFolderId')
+        .get();
+
+      let subfolders = response.value || [];
+
+      if (maxDepth > 1) {
+        for (const subfolder of [...subfolders]) {
+          const deeperSubfolders = await this.getSubfolders(subfolder.id, maxDepth - 1);
+          subfolders = subfolders.concat(deeperSubfolders);
+        }
+      }
+
+      return subfolders;
+    } catch (error) {
+      console.error(`❌ Erro ao obter subpastas de ${parentFolderId}:`, error);
+      return [];
+    }
+  }
+
+  /**
+   * Create a new email folder
+   */
+  async createFolder(folderName: string, parentFolderId?: string): Promise<any> {
+    try {
+      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+      const apiEndpoint = parentFolderId 
+        ? (userEmail === 'me' 
+          ? `/me/mailFolders/${parentFolderId}/childFolders`
+          : `/users/${userEmail}/mailFolders/${parentFolderId}/childFolders`)
+        : (userEmail === 'me' 
+          ? '/me/mailFolders'
+          : `/users/${userEmail}/mailFolders`);
+
+      console.log(`📁 Criando pasta: ${folderName}${parentFolderId ? ` (pai: ${parentFolderId})` : ''}`);
+
+      const folder = await this.client
+        .api(apiEndpoint)
+        .post({
+          displayName: folderName
+        });
+
+      console.log(`✅ Pasta criada: ${folder.displayName} (ID: ${folder.id})`);
+      return folder;
+    } catch (error) {
+      console.error('❌ Erro ao criar pasta:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Move emails to a specific folder
+   */
+  async moveEmailsToFolder(emailIds: string[], targetFolderId: string): Promise<any[]> {
+    const results = [];
+
+    for (const emailId of emailIds) {
+      try {
+        const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+        const apiEndpoint = userEmail === 'me' 
+          ? `/me/messages/${emailId}/move`
+          : `/users/${userEmail}/messages/${emailId}/move`;
+
+        console.log(`📦 Movendo email ${emailId.substring(0, 8)}... para pasta ${targetFolderId}`);
+
+        const result = await this.client
+          .api(apiEndpoint)
+          .post({
+            destinationId: targetFolderId
+          });
+
+        results.push({
+          emailId,
+          success: true,
+          newLocation: result.parentFolderId
+        });
+
+        console.log(`✅ Email movido com sucesso`);
+      } catch (error) {
+        console.error(`❌ Erro ao mover email ${emailId}:`, error);
+        results.push({
+          emailId,
+          success: false,
+          error: error instanceof Error ? error.message : 'Erro desconhecido'
+        });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Copy emails to a specific folder
+   */
+  async copyEmailsToFolder(emailIds: string[], targetFolderId: string): Promise<any[]> {
+    const results = [];
+
+    for (const emailId of emailIds) {
+      try {
+        const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+        const apiEndpoint = userEmail === 'me' 
+          ? `/me/messages/${emailId}/copy`
+          : `/users/${userEmail}/messages/${emailId}/copy`;
+
+        console.log(`📋 Copiando email ${emailId.substring(0, 8)}... para pasta ${targetFolderId}`);
+
+        const result = await this.client
+          .api(apiEndpoint)
+          .post({
+            destinationId: targetFolderId
+          });
+
+        results.push({
+          emailId,
+          success: true,
+          copiedId: result.id
+        });
+
+        console.log(`✅ Email copiado com sucesso`);
+      } catch (error) {
+        console.error(`❌ Erro ao copiar email ${emailId}:`, error);
+        results.push({
+          emailId,
+          success: false,
+          error: error instanceof Error ? error.message : 'Erro desconhecido'
+        });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Delete a folder
+   */
+  async deleteFolder(folderId: string, permanent: boolean = false): Promise<any> {
+    try {
+      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+      
+      // First get folder info
+      const folderEndpoint = userEmail === 'me' 
+        ? `/me/mailFolders/${folderId}`
+        : `/users/${userEmail}/mailFolders/${folderId}`;
+
+      const folder = await this.client.api(folderEndpoint).get();
+
+      console.log(`🗑️ Deletando pasta: ${folder.displayName} (${permanent ? 'permanente' : 'para lixeira'})`);
+
+      // Delete the folder
+      await this.client.api(folderEndpoint).delete();
+
+      console.log(`✅ Pasta deletada com sucesso`);
+
+      return {
+        success: true,
+        folderName: folder.displayName,
+        emailsAffected: folder.totalItemCount,
+        subfoldersAffected: folder.childFolderCount || 0
+      };
+    } catch (error) {
+      console.error('❌ Erro ao deletar pasta:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Erro desconhecido'
+      };
+    }
+  }
+
+  /**
+   * Get folder statistics
+   */
+  async getFolderStatistics(folderId: string, includeSubfolders: boolean = false): Promise<any> {
+    try {
+      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+      const folderEndpoint = userEmail === 'me' 
+        ? `/me/mailFolders/${folderId}`
+        : `/users/${userEmail}/mailFolders/${folderId}`;
+
+      console.log(`📊 Obtendo estatísticas da pasta ${folderId}${includeSubfolders ? ' (incluindo subpastas)' : ''}`);
+
+      const folder = await this.client.api(folderEndpoint).get();
+
+      // Get emails for date range analysis
+      const messagesEndpoint = userEmail === 'me' 
+        ? `/me/mailFolders/${folderId}/messages`
+        : `/users/${userEmail}/mailFolders/${folderId}/messages`;
+
+      const messages = await this.client
+        .api(messagesEndpoint)
+        .select('receivedDateTime,hasAttachments')
+        .top(1000)
+        .get();
+
+      const emails = messages.value || [];
+      
+      // Calculate statistics
+      const unreadEmails = folder.unreadItemCount || 0;
+      const totalEmails = folder.totalItemCount || 0;
+      const readEmails = totalEmails - unreadEmails;
+      const emailsWithAttachments = emails.filter((e: any) => e.hasAttachments).length;
+
+      // Date range analysis
+      let dateRange = null;
+      if (emails.length > 0) {
+        const dates = emails
+          .map((e: any) => new Date(e.receivedDateTime))
+          .sort((a: Date, b: Date) => a.getTime() - b.getTime());
+        
+        dateRange = {
+          oldest: dates[0].toLocaleString('pt-BR'),
+          newest: dates[dates.length - 1].toLocaleString('pt-BR')
+        };
+      }
+
+      const stats: any = {
+        folderName: folder.displayName,
+        totalEmails,
+        unreadEmails,
+        readEmails,
+        emailsWithAttachments,
+        dateRange
+      };
+
+      // Include subfolders if requested
+      if (includeSubfolders) {
+        const subfolders = await this.getSubfolders(folderId, 1);
+        stats.subfolders = subfolders.map((sf: any) => ({
+          name: sf.displayName,
+          emailCount: sf.totalItemCount || 0
+        }));
+      }
+
+      console.log(`✅ Estatísticas obtidas para pasta ${folder.displayName}`);
+      return stats;
+    } catch (error) {
+      console.error('❌ Erro ao obter estatísticas da pasta:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Organize emails by predefined rules
+   */
+  async organizeEmailsByRules(
+    sourceFolderId: string, 
+    rules: any[], 
+    options: { dryRun?: boolean; maxEmails?: number } = {}
+  ): Promise<any> {
+    const { dryRun = true, maxEmails = 100 } = options;
+
+    try {
+      console.log(`🗂️ Organizando emails por regras (${dryRun ? 'simulação' : 'execução'})`);
+
+      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+      const messagesEndpoint = userEmail === 'me' 
+        ? `/me/mailFolders/${sourceFolderId}/messages`
+        : `/users/${userEmail}/mailFolders/${sourceFolderId}/messages`;
+
+      // Get emails to organize
+      const response = await this.client
+        .api(messagesEndpoint)
+        .select('id,subject,from,body,receivedDateTime')
+        .top(maxEmails)
+        .get();
+
+      const emails = response.value || [];
+      const ruleResults = [];
+      let emailsOrganized = 0;
+
+      // Apply each rule
+      for (const rule of rules) {
+        const matchingEmails = this.findEmailsMatchingRule(emails, rule);
+        
+        if (matchingEmails.length > 0) {
+          ruleResults.push({
+            ruleName: rule.name,
+            emailsMatched: matchingEmails.length,
+            targetFolder: rule.targetFolderId
+          });
+
+          if (!dryRun) {
+            // Actually move the emails
+            const emailIds = matchingEmails.map(e => e.id);
+            await this.moveEmailsToFolder(emailIds, rule.targetFolderId);
+          }
+
+          emailsOrganized += matchingEmails.length;
+        }
+      }
+
+      console.log(`✅ Organização concluída: ${emailsOrganized}/${emails.length} emails processados`);
+
+      return {
+        emailsProcessed: emails.length,
+        emailsOrganized,
+        rulesApplied: ruleResults.length,
+        ruleResults
+      };
+    } catch (error) {
+      console.error('❌ Erro ao organizar emails:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Find emails matching a specific rule
+   */
+  private findEmailsMatchingRule(emails: any[], rule: any): any[] {
+    return emails.filter(email => {
+      // Subject-based rules
+      if (rule.subjectContains) {
+        const subject = email.subject?.toLowerCase() || '';
+        return rule.subjectContains.some((keyword: string) => 
+          subject.includes(keyword.toLowerCase())
+        );
+      }
+
+      // Sender-based rules
+      if (rule.fromContains) {
+        const from = email.from?.emailAddress?.address?.toLowerCase() || '';
+        return rule.fromContains.some((domain: string) => 
+          from.includes(domain.toLowerCase())
+        );
+      }
+
+      // Date-based rules
+      if (rule.olderThanDays) {
+        const emailDate = new Date(email.receivedDateTime);
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - rule.olderThanDays);
+        return emailDate < cutoffDate;
+      }
+
+      return false;
+    });
+  }
+
+  // ===============================
+  // ADVANCED SEARCH METHODS
+  // ===============================
+
+  /**
+   * Advanced email search with multiple criteria
+   */
+  async advancedSearchEmails(options: {
+    query?: string;
+    sender?: string;
+    subject?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    hasAttachments?: boolean;
+    isRead?: boolean;
+    folder?: string;
+    maxResults?: number;
+    sortBy?: string;
+    sortOrder?: string;
+  }): Promise<Message[]> {
+    try {
+      const {
+        query,
+        sender,
+        subject,
+        dateFrom,
+        dateTo,
+        hasAttachments,
+        isRead,
+        folder = 'inbox',
+        maxResults = 20,
+        sortBy = 'receivedDateTime',
+        sortOrder = 'desc'
+      } = options;
+
+      console.log(`🔍 Executando busca avançada otimizada na pasta ${folder}`);
+
+      // Use GraphOptimizer for intelligent search query optimization
+      const optimizedFilter = this.graphOptimizer.optimizeSearchQuery(query || '', {
+        searchIn: query ? ['subject', 'from', 'body'] : undefined,
+        dateRange: (dateFrom && dateTo) ? { start: dateFrom, end: dateTo } : undefined,
+        hasAttachments,
+        isRead
+      });
+
+      // Generate cache key for this search
+      const cacheKey = this.cacheManager.generateEmailKey('advanced_search', {
+        ...options,
+        optimizedFilter
+      });
+
+      // Try cache first
+      const cached = this.cacheManager.get<Message[]>(cacheKey);
+      if (cached) {
+        console.log(`⚡ Cache hit: busca avançada (${cached.length} resultados)`);
+        return cached;
+      }
+
+      // Build search request for GraphOptimizer
+      const searchOptions = {
+        folder,
+        maxResults,
+        filter: optimizedFilter,
+        search: query,
+        enableCache: false, // We handle caching here
+        select: this.graphOptimizer.getOptimalFields('search'),
+        orderBy: query ? undefined : `${sortBy} ${sortOrder}`
+      };
+
+      const emails = await this.graphOptimizer.getOptimizedEmails(searchOptions);
+
+      // Apply additional filtering for complex criteria not handled by Graph API
+      let filteredEmails = emails;
+
+      if (sender) {
+        filteredEmails = filteredEmails.filter(email => 
+          email.from?.emailAddress?.address?.includes(sender)
+        );
+      }
+
+      if (subject) {
+        filteredEmails = filteredEmails.filter(email => 
+          email.subject?.toLowerCase().includes(subject.toLowerCase())
+        );
+      }
+
+      // Cache results based on complexity
+      const complexity = this.calculateSearchComplexity(options);
+      this.cacheManager.cacheSearchResults(cacheKey, filteredEmails, complexity);
+
+      console.log(`✅ Busca avançada otimizada concluída: ${filteredEmails.length} emails encontrados`);
+      return filteredEmails;
+    } catch (error) {
+      console.error('❌ Erro na busca avançada otimizada:', error);
+      
+      // Fallback to original implementation
+      console.log('🔄 Fallback para busca avançada original...');
+      
+      try {
+        const {
+          query,
+          sender,
+          subject,
+          dateFrom,
+          dateTo,
+          hasAttachments,
+          isRead,
+          folder = 'inbox',
+          maxResults = 20,
+          sortBy = 'receivedDateTime',
+          sortOrder = 'desc'
+        } = options;
+
+        const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+        const apiEndpoint = userEmail === 'me' 
+          ? `/me/mailFolders/${folder}/messages`
+          : `/users/${userEmail}/mailFolders/${folder}/messages`;
+
+        const queryParams: string[] = [
+          `$top=${Math.min(maxResults, 100)}`,
+          `$select=id,subject,from,receivedDateTime,isRead,hasAttachments,bodyPreview,body`
+        ];
+
+        const filterConditions: string[] = [];
+
+        if (sender) {
+          filterConditions.push(`from/emailAddress/address eq '${sender}'`);
+        }
+
+        if (subject) {
+          filterConditions.push(`contains(subject,'${subject}')`);
+        }
+
+        if (dateFrom) {
+          filterConditions.push(`receivedDateTime ge ${dateFrom}`);
+        }
+
+        if (dateTo) {
+          filterConditions.push(`receivedDateTime le ${dateTo}`);
+        }
+
+        if (hasAttachments !== undefined) {
+          filterConditions.push(`hasAttachments eq ${hasAttachments}`);
+        }
+
+        if (isRead !== undefined) {
+          filterConditions.push(`isRead eq ${isRead}`);
+        }
+
+        if (filterConditions.length > 0) {
+          queryParams.push(`$filter=${filterConditions.join(' and ')}`);
+        }
+
+        if (query) {
+          const cleanQuery = query.replace(/['"]/g, '');
+          queryParams.push(`$search="${encodeURIComponent(cleanQuery)}"`);
+        } else {
+          queryParams.push(`$orderby=${sortBy} ${sortOrder}`);
+        }
+
+        const queryString = queryParams.join('&');
+        const fullEndpoint = `${apiEndpoint}?${queryString}`;
+
+        const response = await this.client.api(fullEndpoint).get();
+        
+        console.log(`✅ Fallback de busca concluído: ${response.value?.length || 0} emails encontrados`);
+        return response.value || [];
+      } catch (fallbackError) {
+        console.error('❌ Erro no fallback da busca avançada:', fallbackError);
+        throw fallbackError;
+      }
+    }
+  }
+
+  /**
+   * Calculate search complexity for cache TTL optimization
+   */
+  private calculateSearchComplexity(options: any): 'simple' | 'moderate' | 'complex' {
+    let complexity = 0;
+    
+    if (options.query) complexity += 2;
+    if (options.sender) complexity += 1;
+    if (options.subject) complexity += 1;
+    if (options.dateFrom || options.dateTo) complexity += 1;
+    if (options.hasAttachments !== undefined) complexity += 1;
+    if (options.isRead !== undefined) complexity += 1;
+    if (options.maxResults > 50) complexity += 1;
+
+    if (complexity <= 2) return 'simple';
+    if (complexity <= 4) return 'moderate';
+    return 'complex';
+  }
+
+  /**
+   * Search emails by sender domain
+   */
+  async searchEmailsBySenderDomain(
+    domain: string, 
+    options: {
+      maxResults?: number;
+      includeSubdomains?: boolean;
+      folder?: string;
+      dateRange?: { from: string; to: string };
+    } = {}
+  ): Promise<Message[]> {
+    try {
+      const { maxResults = 20, includeSubdomains = true, folder = 'inbox', dateRange } = options;
+
+      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+      const apiEndpoint = userEmail === 'me' 
+        ? `/me/mailFolders/${folder}/messages`
+        : `/users/${userEmail}/mailFolders/${folder}/messages`;
+
+      console.log(`🏢 Buscando emails do domínio: ${domain}`);
+
+      const queryParams: string[] = [
+        `$top=${Math.min(maxResults, 100)}`,
+        `$select=id,subject,from,receivedDateTime,isRead,hasAttachments,bodyPreview`,
+        `$orderby=receivedDateTime desc`
+      ];
+
+      // Build domain filter
+      const domainFilter = includeSubdomains 
+        ? `contains(from/emailAddress/address,'${domain}')`
+        : `endswith(from/emailAddress/address,'@${domain}')`;
+
+      const filterConditions = [domainFilter];
+
+      if (dateRange) {
+        filterConditions.push(`receivedDateTime ge ${dateRange.from}`);
+        filterConditions.push(`receivedDateTime le ${dateRange.to}`);
+      }
+
+      queryParams.push(`$filter=${filterConditions.join(' and ')}`);
+
+      const queryString = queryParams.join('&');
+      const fullEndpoint = `${apiEndpoint}?${queryString}`;
+
+      const response = await this.client.api(fullEndpoint).get();
+      
+      console.log(`✅ Encontrados ${response.value?.length || 0} emails do domínio ${domain}`);
+      return response.value || [];
+    } catch (error) {
+      console.error(`❌ Erro na busca por domínio ${domain}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Search emails by attachment type
+   */
+  async searchEmailsByAttachmentType(
+    fileTypes: string[], 
+    options: {
+      maxResults?: number;
+      folder?: string;
+      sizeLimit?: number;
+      dateRange?: { from: string; to: string };
+    } = {}
+  ): Promise<Message[]> {
+    try {
+      const { maxResults = 20, folder = 'inbox', sizeLimit, dateRange } = options;
+
+      console.log(`📎 Buscando emails com anexos dos tipos: ${fileTypes.join(', ')}`);
+
+      // First get emails with attachments
+      const emailsWithAttachments = await this.listEmails({
+        maxResults: maxResults * 2, // Get more to filter by attachment type
+        folder,
+        filter: 'hasAttachments eq true'
+      });
+
+      const matchingEmails: Message[] = [];
+
+      for (const email of emailsWithAttachments) {
+        if (matchingEmails.length >= maxResults) break;
+
+        try {
+          const attachments = await this.listAttachments(email.id!);
+          
+          const hasMatchingType = attachments.some(att => 
+            fileTypes.some(type => 
+              att.contentType?.toLowerCase().includes(type.toLowerCase()) ||
+              att.name?.toLowerCase().endsWith(`.${type.toLowerCase()}`)
+            )
+          );
+
+          if (hasMatchingType) {
+            // Check size limit if specified
+            if (sizeLimit) {
+              const totalSize = attachments.reduce((sum, att) => sum + (att.size || 0), 0);
+              const sizeMB = totalSize / (1024 * 1024);
+              if (sizeMB > sizeLimit) continue;
+            }
+
+            // Check date range if specified
+            if (dateRange && email.receivedDateTime) {
+              const emailDate = new Date(email.receivedDateTime);
+              const fromDate = new Date(dateRange.from);
+              const toDate = new Date(dateRange.to);
+              if (emailDate < fromDate || emailDate > toDate) continue;
+            }
+
+            matchingEmails.push(email);
+          }
+        } catch (attachmentError) {
+          console.warn(`⚠️ Erro ao verificar anexos do email ${email.id}:`, attachmentError);
+          continue;
+        }
+      }
+
+      console.log(`✅ Encontrados ${matchingEmails.length} emails com anexos dos tipos especificados`);
+      return matchingEmails;
+    } catch (error) {
+      console.error('❌ Erro na busca por tipo de anexo:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Find duplicate emails
+   */
+  async findDuplicateEmails(options: {
+    criteria: 'subject' | 'sender' | 'subject+sender';
+    folder?: string;
+    maxResults?: number;
+    includeRead?: boolean;
+    dateRange?: { from: string; to: string };
+  }): Promise<any[]> {
+    try {
+      const { criteria, folder = 'inbox', maxResults = 50, includeRead = true, dateRange } = options;
+
+      console.log(`🔄 Procurando emails duplicados por: ${criteria}`);
+
+      // Get emails for analysis
+      const emails = await this.listEmails({
+        maxResults: maxResults * 2,
+        folder
+      });
+
+      // Group emails by criteria
+      const groups = new Map<string, Message[]>();
+
+      emails.forEach(email => {
+        if (!includeRead && email.isRead) return;
+
+        if (dateRange && email.receivedDateTime) {
+          const emailDate = new Date(email.receivedDateTime);
+          const fromDate = new Date(dateRange.from);
+          const toDate = new Date(dateRange.to);
+          if (emailDate < fromDate || emailDate > toDate) return;
+        }
+
+        let key = '';
+        switch (criteria) {
+          case 'subject':
+            key = email.subject?.trim().toLowerCase() || '';
+            break;
+          case 'sender':
+            key = email.from?.emailAddress?.address?.toLowerCase() || '';
+            break;
+          case 'subject+sender':
+            const subject = email.subject?.trim().toLowerCase() || '';
+            const sender = email.from?.emailAddress?.address?.toLowerCase() || '';
+            key = `${subject}|${sender}`;
+            break;
+        }
+
+        if (key) {
+          if (!groups.has(key)) {
+            groups.set(key, []);
+          }
+          groups.get(key)!.push(email);
+        }
+      });
+
+      // Filter groups with duplicates
+      const duplicates = Array.from(groups.entries())
+        .filter(([_, emails]) => emails.length > 1)
+        .map(([key, emails]) => ({
+          key: key.length > 100 ? key.substring(0, 100) + '...' : key,
+          emails: emails.sort((a, b) => 
+            new Date(b.receivedDateTime || 0).getTime() - new Date(a.receivedDateTime || 0).getTime()
+          )
+        }))
+        .sort((a, b) => b.emails.length - a.emails.length);
+
+      console.log(`✅ Encontrados ${duplicates.length} grupos de emails duplicados`);
+      return duplicates;
+    } catch (error) {
+      console.error('❌ Erro na busca por duplicados:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Search emails by size range
+   */
+  async searchEmailsBySize(options: {
+    minSizeMB?: number;
+    maxSizeMB?: number;
+    folder?: string;
+    maxResults?: number;
+    includeAttachments?: boolean;
+  }): Promise<Message[]> {
+    try {
+      const { minSizeMB, maxSizeMB, folder = 'inbox', maxResults = 20, includeAttachments = true } = options;
+
+      console.log(`📏 Buscando emails por tamanho: ${minSizeMB || 0}MB - ${maxSizeMB || '∞'}MB`);
+
+      // Note: Microsoft Graph API doesn't support filtering by size directly
+      // We need to get emails and filter them locally
+      const emails = await this.listEmails({
+        maxResults: maxResults * 3, // Get more to filter by size
+        folder
+      });
+
+      const filteredEmails: Message[] = [];
+
+      for (const email of emails) {
+        if (filteredEmails.length >= maxResults) break;
+
+        // Estimate email size (Graph API doesn't always provide size)
+        let emailSize = 0;
+
+        // Base email size estimation
+        const subjectSize = (email.subject?.length || 0) * 2;
+        const bodySize = (email.body?.content?.length || email.bodyPreview?.length || 0) * 2;
+        emailSize = subjectSize + bodySize;
+
+        // Add attachment sizes if requested
+        if (includeAttachments && email.hasAttachments) {
+          try {
+            const attachments = await this.listAttachments(email.id!);
+            const attachmentSize = attachments.reduce((sum, att) => sum + (att.size || 0), 0);
+            emailSize += attachmentSize;
+          } catch (attachmentError) {
+            console.warn(`⚠️ Erro ao obter tamanho dos anexos do email ${email.id}:`, attachmentError);
+          }
+        }
+
+        const emailSizeMB = emailSize / (1024 * 1024);
+
+        // Apply size filters
+        if (minSizeMB && emailSizeMB < minSizeMB) continue;
+        if (maxSizeMB && emailSizeMB > maxSizeMB) continue;
+
+        // Add size to email object for display
+        (email as any).size = emailSize;
+        filteredEmails.push(email);
+      }
+
+      console.log(`✅ Encontrados ${filteredEmails.length} emails no intervalo de tamanho especificado`);
+      return filteredEmails;
+    } catch (error) {
+      console.error('❌ Erro na busca por tamanho:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Save search criteria for later use
+   */
+  async saveSearchCriteria(name: string, criteria: any): Promise<boolean> {
+    try {
+      // In a real implementation, this would save to a database or file
+      // For now, we'll use a simple in-memory storage
+      if (!this.savedSearches) {
+        this.savedSearches = new Map();
+      }
+
+      this.savedSearches.set(name, {
+        name,
+        criteria,
+        created: new Date().toISOString()
+      });
+
+      console.log(`💾 Busca salva: ${name}`);
+      return true;
+    } catch (error) {
+      console.error('❌ Erro ao salvar busca:', error);
+      throw error;
+    }
+  }
+
+  private savedSearches?: Map<string, any>;
+
+  /**
+   * List saved searches
+   */
+  async listSavedSearches(): Promise<any[]> {
+    try {
+      if (!this.savedSearches) {
+        return [];
+      }
+
+      return Array.from(this.savedSearches.values());
+    } catch (error) {
+      console.error('❌ Erro ao listar buscas salvas:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Execute a saved search
+   */
+  async executeSavedSearch(name: string): Promise<{ emails: Message[]; criteria: any } | null> {
+    try {
+      if (!this.savedSearches || !this.savedSearches.has(name)) {
+        return null;
+      }
+
+      const savedSearch = this.savedSearches.get(name);
+      const emails = await this.advancedSearchEmails(savedSearch.criteria);
+
+      console.log(`🔍 Executada busca salva "${name}": ${emails.length} emails encontrados`);
+      
+      return {
+        emails,
+        criteria: savedSearch.criteria
+      };
+    } catch (error) {
+      console.error(`❌ Erro ao executar busca salva "${name}":`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a saved search
+   */
+  async deleteSavedSearch(name: string): Promise<boolean> {
+    try {
+      if (!this.savedSearches || !this.savedSearches.has(name)) {
+        return false;
+      }
+
+      this.savedSearches.delete(name);
+      console.log(`🗑️ Busca salva deletada: ${name}`);
+      return true;
+    } catch (error) {
+      console.error(`❌ Erro ao deletar busca salva "${name}":`, error);
+      throw error;
+    }
+  }
+
+  // ===============================
+  // BATCH OPERATIONS
+  // ===============================
+
+  /**
+   * Batch mark emails as read
+   */
+  async batchMarkAsRead(emailIds: string[], options: { maxConcurrent?: number } = {}): Promise<Array<{ success: boolean; error?: string }>> {
+    const { maxConcurrent = 5 } = options;
+
+    console.log(`📖 Iniciando marcação em lote otimizada como lidos: ${emailIds.length} emails`);
+
+    try {
+      // Use ParallelProcessor for optimized batch processing
+      const results = await this.parallelProcessor.processEmailsBatch(
+        emailIds.map(id => ({ id })),
+        async (emailData) => {
+          await this.markAsRead(emailData.id);
+          return { success: true };
+        },
+        {
+          priority: 'normal',
+          batchSize: maxConcurrent,
+          timeout: 10000
+        }
+      );
+
+      // Convert ParallelProcessor results to expected format
+      const formattedResults = results.map(result => ({
+        success: result.success,
+        error: result.error?.message
+      }));
+
+      const successCount = formattedResults.filter(r => r.success).length;
+      console.log(`✅ Marcação em lote otimizada concluída: ${successCount}/${emailIds.length} sucessos`);
+
+      // Invalidate email cache after bulk operations
+      this.cacheManager.invalidateEmailCache();
+
+      return formattedResults;
+    } catch (error) {
+      console.error('❌ Erro no processamento paralelo, usando fallback:', error);
+      
+      // Fallback to original implementation
+      const results: Array<{ success: boolean; error?: string }> = [];
+
+      for (let i = 0; i < emailIds.length; i += maxConcurrent) {
+        const batch = emailIds.slice(i, i + maxConcurrent);
+        
+        const batchPromises = batch.map(async (emailId) => {
+          try {
+            await this.markAsRead(emailId);
+            return { success: true };
+          } catch (error) {
+            console.warn(`⚠️ Falha ao marcar email ${emailId} como lido:`, error);
+            return { success: false, error: error instanceof Error ? error.message : 'Erro desconhecido' };
+          }
+        });
+
+        const batchResults = await Promise.all(batchPromises);
+        results.push(...batchResults);
+
+        if (i + maxConcurrent < emailIds.length) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+      }
+
+      const successCount = results.filter(r => r.success).length;
+      console.log(`✅ Fallback de marcação concluído: ${successCount}/${emailIds.length} sucessos`);
+
+      return results;
+    }
+  }
+
+  /**
+   * Batch mark emails as unread
+   */
+  async batchMarkAsUnread(emailIds: string[], options: { maxConcurrent?: number } = {}): Promise<Array<{ success: boolean; error?: string }>> {
+    const { maxConcurrent = 5 } = options;
+
+    console.log(`📬 Iniciando marcação em lote otimizada como não lidos: ${emailIds.length} emails`);
+
+    try {
+      // Use ParallelProcessor for optimized batch processing
+      const results = await this.parallelProcessor.processEmailsBatch(
+        emailIds.map(id => ({ id })),
+        async (emailData) => {
+          await this.markAsUnread(emailData.id);
+          return { success: true };
+        },
+        {
+          priority: 'normal',
+          batchSize: maxConcurrent,
+          timeout: 10000
+        }
+      );
+
+      // Convert ParallelProcessor results to expected format
+      const formattedResults = results.map(result => ({
+        success: result.success,
+        error: result.error?.message
+      }));
+
+      const successCount = formattedResults.filter(r => r.success).length;
+      console.log(`✅ Marcação em lote otimizada concluída: ${successCount}/${emailIds.length} sucessos`);
+
+      // Invalidate email cache after bulk operations
+      this.cacheManager.invalidateEmailCache();
+
+      return formattedResults;
+    } catch (error) {
+      console.error('❌ Erro no processamento paralelo, usando fallback:', error);
+      
+      // Fallback to original implementation
+      const results: Array<{ success: boolean; error?: string }> = [];
+
+      for (let i = 0; i < emailIds.length; i += maxConcurrent) {
+        const batch = emailIds.slice(i, i + maxConcurrent);
+        
+        const batchPromises = batch.map(async (emailId) => {
+          try {
+            await this.markAsUnread(emailId);
+            return { success: true };
+          } catch (error) {
+            console.warn(`⚠️ Falha ao marcar email ${emailId} como não lido:`, error);
+            return { success: false, error: error instanceof Error ? error.message : 'Erro desconhecido' };
+          }
+        });
+
+        const batchResults = await Promise.all(batchPromises);
+        results.push(...batchResults);
+
+        if (i + maxConcurrent < emailIds.length) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+      }
+
+      const successCount = results.filter(r => r.success).length;
+      console.log(`✅ Fallback de marcação concluído: ${successCount}/${emailIds.length} sucessos`);
+
+      return results;
+    }
+  }
+
+  /**
+   * Batch delete emails
+   */
+  async batchDeleteEmails(emailIds: string[], options: { permanent?: boolean; maxConcurrent?: number } = {}): Promise<Array<{ success: boolean; error?: string }>> {
+    const { permanent = false, maxConcurrent = 3 } = options; // Lower concurrency for delete operations
+    const results: Array<{ success: boolean; error?: string }> = [];
+
+    console.log(`🗑️ Iniciando deleção em lote: ${emailIds.length} emails (${permanent ? 'permanente' : 'para lixeira'})`);
+
+    // Process in batches with lower concurrency for delete operations
+    for (let i = 0; i < emailIds.length; i += maxConcurrent) {
+      const batch = emailIds.slice(i, i + maxConcurrent);
+      
+      const batchPromises = batch.map(async (emailId) => {
+        try {
+          await this.deleteEmail(emailId);
+          return { success: true };
+        } catch (error) {
+          console.warn(`⚠️ Falha ao deletar email ${emailId}:`, error);
+          return { success: false, error: error instanceof Error ? error.message : 'Erro desconhecido' };
+        }
+      });
+
+      const batchResults = await Promise.all(batchPromises);
+      results.push(...batchResults);
+
+      // Longer delay between batches for delete operations
+      if (i + maxConcurrent < emailIds.length) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+
+    const successCount = results.filter(r => r.success).length;
+    console.log(`✅ Deleção em lote concluída: ${successCount}/${emailIds.length} sucessos`);
+
+    return results;
+  }
+
+  /**
+   * Batch move emails to folder
+   */
+  async batchMoveEmails(emailIds: string[], targetFolderId: string, options: { maxConcurrent?: number } = {}): Promise<Array<{ success: boolean; error?: string }>> {
+    const { maxConcurrent = 5 } = options;
+    const results: Array<{ success: boolean; error?: string }> = [];
+
+    console.log(`📦 Iniciando movimentação em lote: ${emailIds.length} emails para pasta ${targetFolderId}`);
+
+    // Process in batches
+    for (let i = 0; i < emailIds.length; i += maxConcurrent) {
+      const batch = emailIds.slice(i, i + maxConcurrent);
+      
+      const batchPromises = batch.map(async (emailId) => {
+        try {
+          await this.moveEmailsToFolder([emailId], targetFolderId);
+          return { success: true };
+        } catch (error) {
+          console.warn(`⚠️ Falha ao mover email ${emailId}:`, error);
+          return { success: false, error: error instanceof Error ? error.message : 'Erro desconhecido' };
+        }
+      });
+
+      const batchResults = await Promise.all(batchPromises);
+      results.push(...batchResults);
+
+      // Small delay between batches
+      if (i + maxConcurrent < emailIds.length) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+    }
+
+    const successCount = results.filter(r => r.success).length;
+    console.log(`✅ Movimentação em lote concluída: ${successCount}/${emailIds.length} sucessos`);
+
+    return results;
+  }
+
+  /**
+   * Batch download all attachments from multiple emails
+   */
+  async batchDownloadAllAttachments(emailIds: string[], options: {
+    targetDirectory?: string;
+    maxConcurrent?: number;
+    overwrite?: boolean;
+    validateIntegrity?: boolean;
+    sizeLimit?: number;
+  } = {}): Promise<Array<{
+    success: boolean;
+    filesDownloaded: number;
+    totalSizeMB: number;
+    fileNames?: string[];
+    error?: string;
+  }>> {
+    const { maxConcurrent = 3, sizeLimit = 25 } = options;
+    const results: Array<{
+      success: boolean;
+      filesDownloaded: number;
+      totalSizeMB: number;
+      fileNames?: string[];
+      error?: string;
+    }> = [];
+
+    console.log(`📎 Iniciando download em lote de anexos: ${emailIds.length} emails`);
+
+    // Process in batches with low concurrency for downloads
+    for (let i = 0; i < emailIds.length; i += maxConcurrent) {
+      const batch = emailIds.slice(i, i + maxConcurrent);
+      
+      const batchPromises = batch.map(async (emailId) => {
+        try {
+          const downloadResult = await this.downloadAllAttachmentsFromEmail(emailId, options);
+          
+          // Calculate total size from successful downloads
+          const successfulResults = downloadResult.results.filter(r => r.success);
+          const totalSizeMB = successfulResults.length * 0.5; // Estimate 500KB per file
+          const fileNames = successfulResults.map(r => r.filename);
+          
+          return {
+            success: true,
+            filesDownloaded: downloadResult.successfulDownloads,
+            totalSizeMB,
+            fileNames
+          };
+        } catch (error) {
+          console.warn(`⚠️ Falha no download dos anexos do email ${emailId}:`, error);
+          return {
+            success: false,
+            filesDownloaded: 0,
+            totalSizeMB: 0,
+            error: error instanceof Error ? error.message : 'Erro desconhecido'
+          };
+        }
+      });
+
+      const batchResults = await Promise.all(batchPromises);
+      results.push(...batchResults);
+
+      // Longer delay between batches for download operations
+      if (i + maxConcurrent < emailIds.length) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+
+    const successCount = results.filter(r => r.success).length;
+    const totalFiles = results.reduce((sum, r) => sum + r.filesDownloaded, 0);
+    console.log(`✅ Download em lote concluído: ${successCount}/${emailIds.length} emails, ${totalFiles} arquivos`);
+
+    return results;
+  }
+
+  // ===============================
+  // PERFORMANCE OPTIMIZATION METHODS
+  // ===============================
+
+  /**
+   * Optimized email listing with caching and intelligent field selection
+   */
+  async listEmailsOptimized(options: EmailListOptions = {}): Promise<Message[]> {
+    const {
+      maxResults = 10,
+      filter,
+      search,
+      folder = 'inbox'
+    } = options;
+
+    try {
+      // Generate cache key for this request
+      const cacheKey = this.cacheManager.generateEmailKey('list', {
+        folder, maxResults, filter, search
+      });
+
+      // Try cache first for better performance
+      const cached = this.cacheManager.get<Message[]>(cacheKey);
+      if (cached) {
+        console.log(`⚡ Cache hit: emails from ${folder} (${cached.length} emails)`);
+        return cached;
+      }
+
+      // Use GraphOptimizer for enhanced performance
+      const optimizedOptions = {
+        folder,
+        maxResults,
+        search,
+        filter,
+        enableCache: false, // We handle caching manually
+        select: this.graphOptimizer.getOptimalFields('list'),
+        orderBy: search ? undefined : 'receivedDateTime desc'
+      };
+
+      console.log(`📧 Listing emails: ${maxResults} results, folder: ${folder} (optimized)`);
+
+      const emails = await this.graphOptimizer.getOptimizedEmails(optimizedOptions);
+      
+      // Cache the results
+      this.cacheManager.cacheEmails(cacheKey, emails, folder);
+      
+      console.log(`✅ Found ${emails.length} emails (with optimization)`);
+      return emails;
+    } catch (error) {
+      console.error('❌ Error in optimized email listing:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Optimized folder listing with caching
+   */
+  async listFoldersOptimized(includeSubfolders: boolean = true, maxDepth: number = 3): Promise<any[]> {
+    try {
+      const cacheKey = `folders:optimized:${includeSubfolders}:${maxDepth}`;
+      
+      // Try cache first
+      const cached = this.cacheManager.get<any[]>(cacheKey);
+      if (cached) {
+        console.log(`⚡ Cache hit: folder structure (${cached.length} folders)`);
+        return cached;
+      }
+
+      console.log(`📁 Fetching folder structure (optimized, depth: ${maxDepth})`);
+
+      const folders = await this.graphOptimizer.getOptimizedFolders({
+        includeSubfolders,
+        maxDepth,
+        enableCache: false,
+        select: ['id', 'displayName', 'totalItemCount', 'unreadItemCount', 'parentFolderId']
+      });
+
+      // Cache with longer TTL for folders
+      this.cacheManager.cacheFolders(cacheKey, folders);
+
+      console.log(`✅ Found ${folders.length} folders (optimized)`);
+      return folders;
+    } catch (error) {
+      console.error('❌ Error in optimized folder listing:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Parallel batch email processing with intelligent concurrency
+   */
+  async processBatchEmailsParallel(
+    emails: any[],
+    operation: (email: any) => Promise<any>,
+    options: {
+      batchSize?: number;
+      priority?: 'low' | 'normal' | 'high' | 'critical';
+      timeout?: number;
+    } = {}
+  ): Promise<any[]> {
+    const { batchSize = 10, priority = 'normal', timeout = 15000 } = options;
+
+    console.log(`🔄 Processing ${emails.length} emails in parallel (batch: ${batchSize})`);
+
+    try {
+      const results = await this.parallelProcessor.processEmailsBatch(
+        emails,
+        operation,
+        { priority, batchSize, timeout }
+      );
+
+      const successCount = results.filter(r => r.success).length;
+      console.log(`✅ Parallel processing completed: ${successCount}/${emails.length} successful`);
+
+      return results.filter(r => r.success).map(r => r.result);
+    } catch (error) {
+      console.error('❌ Error in parallel email processing:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Advanced search with optimization and result caching
+   */
+  async advancedSearchOptimized(options: {
+    query: string;
+    folders?: string[];
+    searchIn?: ('subject' | 'body' | 'from' | 'to')[];
+    dateRange?: { start: string; end: string };
+    importance?: 'low' | 'normal' | 'high';
+    hasAttachments?: boolean;
+    isRead?: boolean;
+    maxResults?: number;
+  }): Promise<Message[]> {
+    const {
+      query,
+      folders = ['inbox'],
+      searchIn = ['subject', 'from'],
+      dateRange,
+      importance,
+      hasAttachments,
+      isRead,
+      maxResults = 50
+    } = options;
+
+    try {
+      // Generate cache key for search
+      const cacheKey = this.cacheManager.generateEmailKey('search', {
+        query, folders, searchIn, dateRange, importance, hasAttachments, isRead, maxResults
+      });
+
+      // Try cache first
+      const cached = this.cacheManager.get<Message[]>(cacheKey);
+      if (cached) {
+        console.log(`⚡ Cache hit: search results (${cached.length} emails)`);
+        return cached;
+      }
+
+      console.log(`🔍 Advanced search: "${query}" in ${folders.length} folder(s)`);
+
+      // Build optimized search filter
+      const searchFilter = this.graphOptimizer.optimizeSearchQuery(query, {
+        searchIn,
+        dateRange,
+        importance,
+        hasAttachments,
+        isRead
+      });
+
+      // Execute search across folders in parallel
+      const searchQueries = folders.map(folder => ({
+        query: searchFilter,
+        folder,
+        options: { maxResults: Math.ceil(maxResults / folders.length) }
+      }));
+
+      const allResults = await this.parallelProcessor.processSearchQueriesBatch(
+        searchQueries,
+        async (queryData: any) => {
+          return await this.graphOptimizer.getOptimizedEmails({
+            folder: queryData.folder,
+            filter: queryData.query,
+            maxResults: queryData.options.maxResults,
+            select: this.graphOptimizer.getOptimalFields('search')
+          });
+        },
+        {
+          mergeResults: true,
+          deduplicate: true,
+          maxResultsPerQuery: maxResults
+        }
+      );
+
+      // Limit final results
+      const limitedResults = allResults.slice(0, maxResults);
+
+      // Cache results with complexity-based TTL
+      const complexity = folders.length > 2 || searchIn.length > 2 ? 'complex' : 'moderate';
+      this.cacheManager.cacheSearchResults(cacheKey, limitedResults, complexity);
+
+      console.log(`✅ Advanced search completed: ${limitedResults.length} results`);
+      return limitedResults;
+    } catch (error) {
+      console.error('❌ Error in advanced optimized search:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Intelligent cache invalidation based on operations
+   */
+  invalidateRelevantCache(operation: 'email' | 'folder' | 'all', context?: string): void {
+    switch (operation) {
+      case 'email':
+        this.cacheManager.invalidateEmailCache(context);
+        break;
+      case 'folder':
+        this.cacheManager.invalidateFolderCache();
+        break;
+      case 'all':
+        this.cacheManager.clear();
+        break;
+    }
+  }
+
+  /**
+   * Get performance statistics
+   */
+  getPerformanceStats(): {
+    cache: any;
+    graphOptimizer: any;
+    parallelProcessor: any;
+  } {
+    return {
+      cache: this.cacheManager.getStats(),
+      graphOptimizer: this.graphOptimizer.getOptimizationStats(),
+      parallelProcessor: this.parallelProcessor.getMetrics()
+    };
+  }
+
+  /**
+   * Email cleanup wizard
+   */
+  async emailCleanupWizard(options: {
+    dryRun?: boolean;
+    olderThanDays?: number;
+    deleteRead?: boolean;
+    deleteLargeAttachments?: boolean;
+    attachmentSizeLimitMB?: number;
+    excludeFolders?: string[];
+    maxEmails?: number;
+  } = {}): Promise<{
+    emailsAnalyzed: number;
+    emailsToClean: number;
+    emailsDeleted: number;
+    spaceSavedMB: number;
+    categories: Record<string, number>;
+    warnings: string[];
+  }> {
+    const {
+      dryRun = true,
+      olderThanDays = 30,
+      deleteRead = false,
+      deleteLargeAttachments = false,
+      attachmentSizeLimitMB = 10,
+      excludeFolders = ['sent', 'drafts'],
+      maxEmails = 100
+    } = options;
+
+    console.log(`🧹 Iniciando assistente de limpeza (${dryRun ? 'simulação' : 'execução'})`);
+
+    const result = {
+      emailsAnalyzed: 0,
+      emailsToClean: 0,
+      emailsDeleted: 0,
+      spaceSavedMB: 0,
+      categories: {} as Record<string, number>,
+      warnings: [] as string[]
+    };
+
+    try {
+      // Get all folders
+      const folders = await this.listFolders(false, 1);
+      const targetFolders = folders.filter(folder => 
+        !excludeFolders.some(excluded => 
+          folder.displayName?.toLowerCase().includes(excluded) ||
+          folder.id?.toLowerCase().includes(excluded)
+        )
+      );
+
+      if (targetFolders.length === 0) {
+        result.warnings.push('Nenhuma pasta encontrada para limpeza');
+        return result;
+      }
+
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - olderThanDays);
+
+      for (const folder of targetFolders) {
+        if (result.emailsAnalyzed >= maxEmails) break;
+
+        try {
+          const emails = await this.listEmails({
+            maxResults: Math.min(50, maxEmails - result.emailsAnalyzed),
+            folder: folder.displayName
+          });
+
+          for (const email of emails) {
+            if (result.emailsAnalyzed >= maxEmails) break;
+            
+            result.emailsAnalyzed++;
+            
+            let shouldClean = false;
+            let category = 'outros';
+
+            // Check age
+            if (email.receivedDateTime) {
+              const emailDate = new Date(email.receivedDateTime);
+              if (emailDate < cutoffDate) {
+                shouldClean = true;
+                category = 'antigos';
+              }
+            }
+
+            // Check read status
+            if (deleteRead && email.isRead) {
+              shouldClean = true;
+              category = 'lidos';
+            }
+
+            // Check attachment size
+            if (deleteLargeAttachments && email.hasAttachments) {
+              try {
+                const attachments = await this.listAttachments(email.id!);
+                const totalSize = attachments.reduce((sum, att) => sum + (att.size || 0), 0);
+                const sizeMB = totalSize / (1024 * 1024);
+                
+                if (sizeMB > attachmentSizeLimitMB) {
+                  shouldClean = true;
+                  category = 'anexos_grandes';
+                }
+              } catch (attachmentError) {
+                console.warn(`⚠️ Erro ao verificar anexos do email ${email.id}:`, attachmentError);
+              }
+            }
+
+            if (shouldClean) {
+              result.emailsToClean++;
+              result.categories[category] = (result.categories[category] || 0) + 1;
+              
+              // Estimate space saved (rough calculation)
+              const bodySize = (email.body?.content?.length || email.bodyPreview?.length || 0) * 2;
+              result.spaceSavedMB += bodySize / (1024 * 1024);
+
+              if (!dryRun) {
+                try {
+                  await this.deleteEmail(email.id!);
+                  result.emailsDeleted++;
+                } catch (deleteError) {
+                  console.warn(`⚠️ Falha ao deletar email ${email.id}:`, deleteError);
+                  result.warnings.push(`Falha ao deletar email: ${email.subject || 'sem assunto'}`);
+                }
+              }
+            }
+          }
+        } catch (folderError) {
+          console.warn(`⚠️ Erro ao processar pasta ${folder.displayName}:`, folderError);
+          result.warnings.push(`Erro ao processar pasta: ${folder.displayName}`);
+        }
+      }
+
+      if (!dryRun) {
+        result.emailsDeleted = result.emailsToClean;
+      }
+
+      console.log(`✅ Assistente de limpeza concluído: ${result.emailsToClean} emails ${dryRun ? 'identificados' : 'deletados'}`);
+      return result;
+    } catch (error) {
+      console.error('❌ Erro no assistente de limpeza:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get comprehensive optimization statistics
+   */
+  getOptimizationReport(): {
+    performance: any;
+    cacheEfficiency: any;
+    recommendations: string[];
+  } {
+    const stats = this.getPerformanceStats();
+    const recommendations: string[] = [];
+
+    // Analyze cache efficiency
+    if (stats.cache.hitRate < 50) {
+      recommendations.push('Cache hit rate is low. Consider warming up cache with common operations.');
+    }
+
+    if (stats.parallelProcessor.averageProcessingTime > 5000) {
+      recommendations.push('High processing times detected. Consider reducing batch sizes or optimizing operations.');
+    }
+
+    if (stats.graphOptimizer.queuedRequests > 20) {
+      recommendations.push('High request queue detected. Consider enabling more aggressive batching.');
+    }
+
+    return {
+      performance: stats,
+      cacheEfficiency: {
+        ...stats.cache,
+        efficiency: stats.cache.hitRate > 70 ? 'excellent' : stats.cache.hitRate > 50 ? 'good' : 'needs_improvement'
+      },
+      recommendations
+    };
+  }
+
+  /**
+   * Warm up cache with common patterns
+   */
+  async warmUpCache(): Promise<void> {
+    console.log('🔥 Warming up cache with common patterns...');
+    await this.cacheManager.preloadCommonPatterns(this);
+    console.log('✅ Cache warm-up completed');
+  }
+
+  /**
+   * Reset all optimizations and clear caches
+   */
+  resetOptimizations(): void {
+    console.log('🔄 Resetting all optimizations...');
+    this.cacheManager.clear();
+    this.graphOptimizer.reset();
+    this.parallelProcessor.clear();
+    console.log('✅ Optimizations reset completed');
+  }
+
+  /**
+   * Graceful shutdown and cleanup of resources
+   */
+  destroy(): void {
+    console.log('💥 Shutting down EmailService optimizations...');
+    
+    try {
+      this.cacheManager.destroy();
+      this.graphOptimizer.reset();
+      this.parallelProcessor.destroy();
+      
+      console.log('✅ EmailService cleanup completed');
+    } catch (error) {
+      console.error('❌ Error during EmailService cleanup:', error);
     }
   }
 }
