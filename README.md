@@ -1,31 +1,79 @@
 # MCP Email Server - Integração com Microsoft Graph
 
-Um servidor MCP (Model Context Protocol) avançado para integração completa com emails do Microsoft Outlook/Exchange via Microsoft Graph API.
+Um servidor MCP (Model Context Protocol) avançado para integração completa com emails do Microsoft Outlook/Exchange via Microsoft Graph API, oferecendo **39 ferramentas especializadas** organizadas em 8 categorias funcionais.
+
+## 🔑 Multi-Tenant Support
+
+Este servidor suporta múltiplas contas simultaneamente através do MCP Hub:
+- **outlook-fernando**: fernando.taricano@cpzseg.com.br (conta principal/trabalho)
+- **outlook-faturamento**: faturamento@cpzseg.com.br (conta faturamento corporativo)
+
+Configuração via variável de ambiente `TARGET_USER_EMAIL` no MCP Hub.
 
 ## 🚀 Funcionalidades Principais
 
-### 📧 Gestão de Emails
-- **Listar emails**: Busca avançada com filtros OData
-- **Enviar emails**: Suporte completo a anexos grandes (até 3MB)
-- **Responder emails**: Com threading automático
-- **Gestão de status**: Marcar como lido/não lido, deletar
+### 1️⃣ Email Management (3 tools)
+- `list_emails` - Busca avançada com filtros OData
+- `send_email` - Envio com anexos grandes (até 3MB) e templates HTML
+- `reply_to_email` - Resposta com threading automático
 
-### 📎 Gestão de Anexos Avançada
-- **Download otimizado**: Salva arquivos grandes diretamente no disco
-- **Encoding inteligente**: Base64 com validação de integridade
-- **Suporte a múltiplos formatos**: Office, PDF, imagens, etc.
-- **Validação automática**: Verificação de tipos MIME e tamanhos
+### 2️⃣ Status Operations (3 tools)
+- `mark_as_read` / `mark_as_unread` - Gestão de status de leitura
+- `delete_email` - Exclusão de emails
 
-### 🧠 Análise Inteligente
-- **Resumos automáticos**: IA analisa conteúdo, prioridade e sentimento
-- **Categorização**: Reunião, Projeto, Financeiro, RH, etc.
-- **Detecção de ações**: Identifica emails que requerem resposta
-- **Extração de dados**: Datas, valores monetários, pontos-chave
+### 3️⃣ Analysis Tools (3 tools)
+- `summarize_email` - Resumo inteligente com análise de prioridade e sentimento
+- `summarize_emails_batch` - Resumo em lote com categorização automática
+- `list_users` - Listagem de usuários do diretório organizacional
 
-### ⚡ Funções Híbridas (Novidade!)
-- **Automação completa**: Download + processamento + envio em uma operação
-- **Sem limitações de tamanho**: Contorna limitações do protocolo MCP
-- **Performance otimizada**: Processamento direto no disco
+### 4️⃣ Basic Attachment Operations (3 tools)
+- `list_attachments` - Listagem de anexos com metadados
+- `download_attachment` - Download como Base64
+- `download_attachment_to_file` - Download otimizado para disco (arquivos grandes)
+
+### 5️⃣ Advanced Attachment Operations (7 tools)
+- `download_all_attachments` - Download em lote com processamento paralelo
+- `list_downloaded_files` - Listagem de arquivos baixados
+- `get_download_directory_info` - Informações do diretório de downloads
+- `cleanup_old_downloads` - Limpeza automática de arquivos antigos
+- `export_email_as_attachment` - Exportação de emails como EML/MSG
+- `encode_file_for_attachment` - Codificação de arquivos para anexo
+- `send_email_from_attachment` ⭐ **HYBRID** - Reenvio automático de anexos
+- `send_email_with_file` ⭐ **HYBRID** - Envio com arquivo do disco
+
+### 6️⃣ Folder Management (7 tools)
+- `list_folders` - Listagem de pastas com suporte a subpastas
+- `create_folder` - Criação de novas pastas
+- `move_emails_to_folder` / `copy_emails_to_folder` - Movimentação de emails
+- `delete_folder` - Exclusão de pastas
+- `get_folder_stats` - Estatísticas detalhadas de pastas
+- `organize_emails_by_rules` - Organização automática com regras personalizáveis
+
+### 7️⃣ Advanced Search (6 tools)
+- `advanced_search` - Busca multi-critério avançada
+- `search_by_sender_domain` - Busca por domínio com análise estatística
+- `search_by_attachment_type` - Busca por tipo de anexo
+- `find_duplicate_emails` - Detecção de duplicatas
+- `search_by_size` - Busca por faixa de tamanho
+- `saved_searches` - Gerenciamento de buscas salvas
+
+### 8️⃣ Batch Operations (6 tools)
+- `batch_mark_as_read` / `batch_mark_as_unread` - Marcação em lote
+- `batch_delete_emails` - Exclusão em lote com controle de permanência
+- `batch_move_emails` - Movimentação em lote
+- `batch_download_attachments` - Download de anexos em lote otimizado
+- `email_cleanup_wizard` ⭐ - Assistente inteligente de limpeza
+
+## 🌟 Destaques
+
+### ⚡ Funções Híbridas Revolucionárias
+As funções híbridas (`send_email_from_attachment` e `send_email_with_file`) resolvem limitações fundamentais do protocolo MCP para transferência de arquivos grandes, processando diretamente no disco sem limitações de tokens.
+
+### 🧠 Análise Inteligente de Emails
+Sistema avançado de resumo que analisa prioridade, categoria, sentimento, ações requeridas e extrai dados-chave automaticamente.
+
+### 🎨 Templates HTML Profissionais
+4 temas elegantes (professional, modern, minimal, corporate) para emails corporativos de alta qualidade.
 
 ## Pré-requisitos
 
@@ -44,11 +92,14 @@ Um servidor MCP (Model Context Protocol) avançado para integração completa co
 1. Na aplicação criada, vá para **API permissions**
 2. Clique em **Add a permission** > **Microsoft Graph** > **Application permissions**
 3. Adicione as seguintes permissões:
-   - `Mail.Read` - Ler emails
-   - `Mail.ReadBasic` - Ler informações básicas dos emails
+   - `Mail.ReadWrite` - Gerenciamento completo de emails
+   - `Mail.Send` - Envio de emails
    - `User.Read.All` - Ler perfis de usuário (opcional)
+   - `Files.ReadWrite.All` - Operações com anexos (opcional)
 
 4. Clique em **Grant admin consent** para aprovar as permissões
+
+**Importante:** As permissões `Mail.ReadWrite` e `Mail.Send` são OBRIGATÓRIAS para o funcionamento completo do servidor.
 
 ### 3. Criar client secret
 
@@ -89,229 +140,155 @@ npm run build
 npm start
 ```
 
-### Configurar no Claude Code
+### Configurar no MCP Hub (Recomendado)
 
-Adicione ao seu arquivo de configuração do Claude Code (`settings.json`):
+**⚠️ IMPORTANTE:** Este servidor deve ser acessado APENAS através do MCP Hub. Configure no arquivo `hub-config.json`:
 
 ```json
 {
-  "mcpServers": {
-    "mcp-email": {
+  "servers": {
+    "outlook-fernando": {
       "command": "node",
-      "args": ["/caminho/para/mcp-email/dist/index.js"],
+      "args": ["/path/to/mcp-email/dist/index.js"],
       "env": {
-        "MICROSOFT_GRAPH_CLIENT_ID": "seu_client_id",
-        "MICROSOFT_GRAPH_CLIENT_SECRET": "seu_client_secret",
-        "MICROSOFT_GRAPH_TENANT_ID": "seu_tenant_id"
+        "MICROSOFT_GRAPH_CLIENT_ID": "your_id",
+        "MICROSOFT_GRAPH_CLIENT_SECRET": "your_secret",
+        "MICROSOFT_GRAPH_TENANT_ID": "your_tenant",
+        "TARGET_USER_EMAIL": "fernando.taricano@cpzseg.com.br"
+      }
+    },
+    "outlook-faturamento": {
+      "command": "node",
+      "args": ["/path/to/mcp-email/dist/index.js"],
+      "env": {
+        "MICROSOFT_GRAPH_CLIENT_ID": "your_id",
+        "MICROSOFT_GRAPH_CLIENT_SECRET": "your_secret",
+        "MICROSOFT_GRAPH_TENANT_ID": "your_tenant",
+        "TARGET_USER_EMAIL": "faturamento@cpzseg.com.br"
       }
     }
   }
 }
 ```
 
-## 🛠️ Ferramentas Disponíveis
+### Uso via MCP Hub Intelligence
 
-### 📧 Gestão Básica de Emails
+```typescript
+// ✅ CORRETO: Usar busca inteligente em português
+smart-search({ query: "buscar emails não lidos", context: "trabalho" })
+// IA retorna: outlook-fernando tools com alta confiança
 
-#### 1. `list_emails`
-Lista emails da caixa de entrada com filtros opcionais.
+call-tool("outlook-fernando", "list_emails", {
+  filter: "isRead eq false",
+  limit: 10
+})
 
-**Parâmetros:**
-- `maxResults` (number): Número máximo de emails (padrão: 10)
-- `filter` (string): Filtro OData (ex: "isRead eq false")
-- `search` (string): Termo de busca
-- `folder` (string): Pasta específica (padrão: "inbox")
-
-**Exemplos:**
-```javascript
-// Listar emails não lidos
-list_emails({ filter: "isRead eq false" })
-
-// Buscar emails de um remetente
-list_emails({ filter: "from/emailAddress/address eq 'exemplo@empresa.com'" })
-
-// Buscar por texto
-list_emails({ search: "projeto importante" })
+// ❌ ERRADO: NUNCA tente usar APIs diretas
+// import { Client } from '@microsoft/microsoft-graph-client';
 ```
 
-### 2. `summarize_email`
-Cria um resumo detalhado de um email específico.
+## 🛠️ Ferramentas Disponíveis (39 Total)
 
-**Parâmetros:**
-- `emailId` (string): ID do email para resumir
+**Para documentação completa de todas as 39 ferramentas, consulte:** `/Users/fernandotaricano/mcp/mcp-email/CLAUDE.md`
 
-### 3. `summarize_emails_batch`
-Cria resumos para múltiplos emails.
+### Resumo por Categoria
 
-**Parâmetros:**
-- `emailIds` (array): Lista de IDs de emails (opcional)
-- `maxResults` (number): Número máximo de emails (padrão: 5)
+**1️⃣ Email Management (3 tools):** list_emails, send_email, reply_to_email
+**2️⃣ Status Operations (3 tools):** mark_as_read, mark_as_unread, delete_email
+**3️⃣ Analysis Tools (3 tools):** summarize_email, summarize_emails_batch, list_users
+**4️⃣ Basic Attachments (3 tools):** list_attachments, download_attachment, download_attachment_to_file
+**5️⃣ Advanced Attachments (7 tools):** download_all_attachments, send_email_from_attachment ⭐, send_email_with_file ⭐, etc.
+**6️⃣ Folder Management (7 tools):** list_folders, create_folder, organize_emails_by_rules, etc.
+**7️⃣ Advanced Search (6 tools):** advanced_search, search_by_sender_domain, find_duplicate_emails, etc.
+**8️⃣ Batch Operations (6 tools):** batch_mark_as_read, batch_delete_emails, email_cleanup_wizard ⭐, etc.
 
-### ⚡ Funções Híbridas Avançadas
+### Exemplos de Uso
 
-#### 4. `send_email_from_attachment` ⭐ **NOVO**
-Função híbrida que baixa anexo de um email e reenvia automaticamente para outros destinatários. **Resolve limitações do MCP para arquivos grandes**.
+#### Buscar Emails Não Lidos
+```typescript
+call-tool("outlook-fernando", "list_emails", {
+  filter: "isRead eq false",
+  limit: 10
+})
+```
 
-**Parâmetros:**
-- `sourceEmailId` (string): ID do email que contém o anexo
-- `attachmentId` (string): ID do anexo a ser reenviado
-- `to` (array): Lista de destinatários
-- `subject` (string): Assunto do email
-- `body` (string): Corpo do email
-- `cc` (array, opcional): Destinatários em cópia
-- `useTemplate` (boolean, opcional): Usar template HTML elegante
-- `keepOriginalFile` (boolean, opcional): Manter arquivo no disco
+#### Enviar Email com Template Profissional
+```typescript
+call-tool("outlook-fernando", "send_email", {
+  to: ["cliente@empresa.com"],
+  subject: "Proposta Comercial",
+  body: "Segue nossa proposta em anexo.",
+  useTemplate: true,
+  templateTheme: "professional"
+})
+```
 
-**Exemplo:**
-```javascript
-send_email_from_attachment({
+#### Reenviar Anexo Automaticamente (Hybrid Function)
+```typescript
+call-tool("outlook-fernando", "send_email_from_attachment", {
   sourceEmailId: "AAMkADcxMDIy...",
   attachmentId: "AAMkADcxMDIy...",
-  to: ["cliente@empresa.com"],
-  subject: "Relatório Mensal",
-  body: "Segue o relatório solicitado em anexo.",
+  to: ["outro-cliente@empresa.com"],
+  subject: "Relatório Solicitado",
+  body: "Segue o relatório em anexo.",
   useTemplate: true
 })
 ```
 
-#### 5. `send_email_with_file` ⭐ **NOVO**
-Envia email com arquivo já baixado do disco. **Ideal para automação com arquivos grandes**.
+## 📚 Documentação Adicional
 
-**Parâmetros:**
-- `filePath` (string): Caminho absoluto para o arquivo no disco
-- `to` (array): Lista de destinatários
-- `subject` (string): Assunto do email
-- `body` (string): Corpo do email
-- `cc` (array, opcional): Destinatários em cópia
-- `useTemplate` (boolean, opcional): Usar template HTML
-- `customFilename` (string, opcional): Nome personalizado para o anexo
+### Documentação Completa
+Para referência completa de todas as 39 ferramentas com parâmetros detalhados, exemplos de uso, troubleshooting e best practices, consulte:
 
-**Exemplo:**
-```javascript
-send_email_with_file({
-  filePath: "/path/to/documento.pdf",
-  to: ["equipe@empresa.com"],
-  subject: "Documento Importante",
-  body: "Documento em anexo para revisão.",
-  useTemplate: true,
-  customFilename: "Documento_Final.pdf"
-})
-```
+**📖 [CLAUDE.md - Documentação Completa para Claude Code](/Users/fernandotaricano/mcp/mcp-email/CLAUDE.md)**
 
-### 📎 Gestão de Anexos
+### Links Úteis
+- **Azure AD Setup:** Configuração de aplicativo e permissões
+- **Microsoft Graph API:** [Documentação oficial](https://docs.microsoft.com/en-us/graph/)
+- **OData Filters:** Sintaxe de filtros avançados
+- **MCP Hub:** Integração com o hub centralizado
 
-#### 6. `download_attachment_to_file`
-Download otimizado de anexos grandes - salva diretamente no disco evitando limitações de token.
 
-#### 7. `encode_file_for_attachment`
-Codifica arquivo do sistema de arquivos para Base64 - resolve problema de anexos com 0KB.
+## 🎯 Troubleshooting Rápido
 
-#### 8. `list_attachments`, `download_attachment`
-Listagem e download básico de anexos.
+### Erro de Autenticação
+1. Verifique credenciais no `hub-config.json`
+2. Confirme permissões concedidas no Azure AD
+3. Verifique expiração do client secret
+4. Teste: `node test-connection.js`
 
-### 📝 Outras Ferramentas
+### Anexos com 0KB
+Use funções híbridas: `send_email_from_attachment` ou `send_email_with_file`
 
-#### 9-13. Gestão Completa
-- `send_email` - Envio básico com anexos
-- `reply_to_email` - Resposta com threading
-- `mark_as_read/unread` - Gestão de status
-- `delete_email` - Exclusão segura
-- `list_users` - Listagem de usuários da organização
+### Performance
+- Use operações em lote (`batch_*` tools)
+- Configure `maxConcurrent` adequadamente
+- Implemente paginação com `skip` e `limit`
 
-## ⚡ Vantagens das Funções Híbridas
+**Para troubleshooting completo, consulte CLAUDE.md**
 
-### 🚀 **Performance Superior**
-- **Zero limitações de tamanho**: Funciona com arquivos de qualquer tamanho
-- **Processamento direto**: Não transfere Base64 via protocolo MCP
-- **Cache inteligente**: Arquivos ficam no disco para reuso
-- **Validação automática**: Integridade garantida
+## 🛠️ Desenvolvimento
 
-### 🔄 **Automação Completa**
-- **Workflow unificado**: Download + processamento + envio em uma operação
-- **Sem intervenção manual**: Processo totalmente automatizado
-- **Flexibilidade total**: Pode processar arquivo antes de reenviar
-- **Limpeza automática**: Remove arquivos temporários opcionalmente
-
-### 💪 **Robustez**
-- **Tratamento de erros**: Recuperação automática em falhas
-- **Validação de tipos**: Suporte a todos os formatos Office, PDF, imagens
-- **Compatibilidade**: Funciona com Microsoft Graph API sem limitações
-
-## Filtros Avançados
-
-### Filtros OData Comuns
-
-```javascript
-// Emails não lidos
-"isRead eq false"
-
-// Emails de um remetente específico
-"from/emailAddress/address eq 'exemplo@domain.com'"
-
-// Emails recebidos hoje
-"receivedDateTime ge 2024-01-15T00:00:00Z"
-
-// Emails com anexos
-"hasAttachments eq true"
-
-// Emails importantes
-"importance eq 'high'"
-
-// Combinando filtros
-"isRead eq false and hasAttachments eq true"
-```
-
-### Pastas Disponíveis
-
-- `inbox` - Caixa de entrada
-- `sentitems` - Itens enviados
-- `drafts` - Rascunhos
-- `deleteditems` - Itens excluídos
-- `junkemail` - Spam
-
-## Resumos Inteligentes
-
-O sistema de resumo analisa:
-
-- **Prioridade**: Alta, média ou baixa baseada em palavras-chave
-- **Categoria**: Reunião, Projeto, Financeiro, RH, etc.
-- **Pontos-chave**: Lista de informações importantes
-- **Ação necessária**: Se o email requer alguma ação
-- **Sentimento**: Positivo, neutro ou negativo
-- **Anexos**: Lista de arquivos anexados
-
-## Troubleshooting
-
-### Erro de autenticação
-- Verifique se as credenciais estão corretas no `.env`
-- Confirme que as permissões foram concedidas no Azure AD
-- Verifique se o client secret não expirou
-
-### Erro de permissões
-- Certifique-se de que concedeu as permissões necessárias
-- Clique em "Grant admin consent" no Azure Portal
-
-### Emails não são encontrados
-- Verifique se o filtro OData está correto
-- Confirme que há emails na pasta especificada
-- Teste sem filtros primeiro
-
-## Desenvolvimento
-
-### Estrutura do projeto
+### Estrutura do Projeto
 ```
 src/
-├── auth/
-│   └── graphAuth.ts      # Autenticação Microsoft Graph
-├── services/
-│   ├── emailService.ts   # Serviços de email
-│   └── emailSummarizer.ts # Sistema de resumos
-└── index.ts             # Servidor MCP principal
+├── handlers/           # Handler Registry modular
+├── auth/              # Microsoft Graph authentication
+├── services/          # Email service e FileManager
+├── security/          # Security Manager
+├── monitoring/        # Performance monitoring
+├── logging/           # Advanced logging
+└── index.ts          # MCP server entry point
 ```
 
-### Executar em modo desenvolvimento
+### Commands
 ```bash
-npm run dev
+npm run build          # Compilar TypeScript
+npm start              # Executar servidor compilado
+npm run dev            # Desenvolvimento com watch
+node test-connection.js       # Testar Microsoft Graph
+node test-email-functions.js  # Testar funcionalidades
+node check-permissions.js     # Validar permissões Azure AD
 ```
 
 ## Licença
