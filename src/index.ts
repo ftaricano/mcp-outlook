@@ -49,12 +49,12 @@ class EmailMCPServer {
     
     // Initialize monitoring and logging
     this.logger = new AdvancedLogger({
-      enableFileLogging: true,
-      enableConsoleLogging: true,
-      logLevel: 'info',
+      enableFileLogging: false, // Desabilitado para evitar criação de arquivos de log
+      enableConsoleLogging: false, // Desabilitado para reduzir verbosidade
+      logLevel: 'error', // Apenas erros críticos
       logDirectory: './logs',
-      enablePerformanceLogging: true,
-      enableAuditTrail: true
+      enablePerformanceLogging: false,
+      enableAuditTrail: false
     });
 
     this.performanceMonitor = new PerformanceMonitor({
