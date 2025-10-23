@@ -22,6 +22,9 @@ Thumbs.db
 *.swo
 
 # TypeScript
-*.tsbuildinfologs/
+*.tsbuildinfo
+
+# Logs
+logs/
 *.log
 *.jsonl
