@@ -10,21 +10,25 @@ interface GraphConfig {
 }
 
 export class GraphAuthProvider implements AuthenticationProvider {
-  private msalInstance: ConfidentialClientApplication;
-  private config: GraphConfig;
+  private msalInstance: ConfidentialClientApplication | null = null;
+  private config: GraphConfig | null = null;
+  private configError: Error | null = null;
   private accessToken: string | null = null;
   private tokenExpiresAt: Date | null = null;
 
   constructor() {
-    this.config = this.getConfigFromEnv();
-    
-    this.msalInstance = new ConfidentialClientApplication({
-      auth: {
-        clientId: this.config.clientId,
-        clientSecret: this.config.clientSecret,
-        authority: `https://login.microsoftonline.com/${this.config.tenantId}`,
-      },
-    });
+    try {
+      this.config = this.getConfigFromEnv();
+      this.msalInstance = new ConfidentialClientApplication({
+        auth: {
+          clientId: this.config.clientId,
+          clientSecret: this.config.clientSecret,
+          authority: `https://login.microsoftonline.com/${this.config.tenantId}`,
+        },
+      });
+    } catch (error) {
+      this.configError = error instanceof Error ? error : new Error('Falha ao carregar configuração do Microsoft Graph');
+    }
   }
 
   private getConfigFromEnv(): GraphConfig {
@@ -57,12 +61,13 @@ export class GraphAuthProvider implements AuthenticationProvider {
     }
     
     try {
+      this.ensureConfigured();
       
       const clientCredentialRequest: ClientCredentialRequest = {
-        scopes: this.config.scopes,
+        scopes: this.config!.scopes,
       };
 
-      const response = await this.msalInstance.acquireTokenByClientCredential(clientCredentialRequest);
+      const response = await this.msalInstance!.acquireTokenByClientCredential(clientCredentialRequest);
       
       if (!response || !response.accessToken) {
         throw new Error('Falha ao obter token de acesso');
@@ -85,6 +90,7 @@ export class GraphAuthProvider implements AuthenticationProvider {
 
   async validateConnection(): Promise<boolean> {
     try {
+      this.ensureConfigured();
       const client = this.getGraphClient();
       // Para Client Credentials flow, testamos com um endpoint que funciona para aplicações
       await client.api('/users').top(1).get();
@@ -92,6 +98,16 @@ export class GraphAuthProvider implements AuthenticationProvider {
       return true;
     } catch (error) {
       return false;
+    }
+  }
+
+  private ensureConfigured(): void {
+    if (this.configError) {
+      throw this.configError;
+    }
+
+    if (!this.config || !this.msalInstance) {
+      throw new Error('Configuração do Microsoft Graph não inicializada');
     }
   }
 }

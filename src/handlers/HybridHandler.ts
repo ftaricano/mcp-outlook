@@ -32,9 +32,9 @@ export class HybridHandler extends BaseHandler {
       customFilename
     } = args;
 
-    console.log(`🚀 Iniciando envio híbrido de anexo...`);
-    console.log(`   Email origem: ${sourceEmailId.substring(0, 30)}...`);
-    console.log(`   Anexo: ${attachmentId.substring(0, 30)}...`);
+    console.error(`🚀 Iniciando envio híbrido de anexo...`);
+    console.error(`   Email origem: ${sourceEmailId.substring(0, 30)}...`);
+    console.error(`   Anexo: ${attachmentId.substring(0, 30)}...`);
 
     try {
       const result = await this.emailService.sendEmailFromAttachment(
@@ -122,7 +122,7 @@ export class HybridHandler extends BaseHandler {
       customFilename
     } = args;
 
-    console.log(`📎 Enviando email com arquivo do disco: ${filePath}`);
+    console.error(`📎 Enviando email com arquivo do disco: ${filePath}`);
 
     try {
       const result = await this.emailService.sendEmailWithFileAttachment(

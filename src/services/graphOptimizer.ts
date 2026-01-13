@@ -54,7 +54,18 @@ export class GraphOptimizer {
     this.pendingBatch = [];
     this.requestQueue = new Map();
 
-    console.log('⚡ GraphOptimizer inicializado:', this.config);
+    console.error('⚡ GraphOptimizer inicializado:', this.config);
+  }
+
+  /**
+   * Helper to get the base endpoint (uses /users/{id} for app permissions or /me for delegated)
+   */
+  private getBaseEndpoint(): string {
+    const targetUser = process.env.TARGET_USER_EMAIL;
+    if (targetUser && targetUser !== 'me') {
+      return `/users/${targetUser}`;
+    }
+    return '/me';
   }
 
   /**
@@ -86,13 +97,16 @@ export class GraphOptimizer {
     if (enableCache) {
       const cached = this.cacheManager.get<any[]>(cacheKey);
       if (cached) {
-        console.log(`⚡ Cache hit: emails from ${folder}`);
+        console.error(`⚡ Cache hit: emails from ${folder}`);
         return cached;
       }
     }
 
-    // Build optimized query
-    let query = this.buildOptimizedQuery(queryOptions);
+    const baseEndpoint = this.getBaseEndpoint();
+    const folderPath = folder === 'inbox' ? `${baseEndpoint}/mailFolders/inbox` : `${baseEndpoint}/mailFolders/${folder}`;
+    
+    // Build optimized query with endpoint
+    let query = this.buildOptimizedQuery(`${folderPath}/messages`, queryOptions);
     
     // Add selective fields
     if (this.config.enableSelectiveFields && select.length > 0) {
@@ -111,10 +125,7 @@ export class GraphOptimizer {
     }
 
     try {
-      const folderPath = folder === 'inbox' ? '/me/mailFolders/inbox' : `/me/mailFolders/${folder}`;
-      const emails = await query
-        .api(`${folderPath}/messages`)
-        .get();
+      const emails = await query.get();
 
       const emailList = emails.value || [];
       
@@ -123,7 +134,7 @@ export class GraphOptimizer {
         this.cacheManager.cacheEmails(cacheKey, emailList, folder);
       }
 
-      console.log(`⚡ Fetched ${emailList.length} emails from ${folder} (optimized)`);
+      console.error(`⚡ Fetched ${emailList.length} emails from ${folder} (optimized)`);
       return emailList;
     } catch (error) {
       console.error('❌ Error in optimized email fetch:', error);
@@ -152,21 +163,20 @@ export class GraphOptimizer {
     if (enableCache) {
       const cached = this.cacheManager.get<any[]>(cacheKey);
       if (cached) {
-        console.log('⚡ Cache hit: folder structure');
+        console.error('⚡ Cache hit: folder structure');
         return cached;
       }
     }
 
     try {
-      let query = this.buildOptimizedQuery(queryOptions);
+      const baseEndpoint = this.getBaseEndpoint();
+      let query = this.buildOptimizedQuery(`${baseEndpoint}/mailFolders`, queryOptions);
       
       if (this.config.enableSelectiveFields) {
         query = query.select(select);
       }
 
-      const folders = await query
-        .api('/me/mailFolders')
-        .get();
+      const folders = await query.get();
 
       let folderList = folders.value || [];
 
@@ -180,7 +190,7 @@ export class GraphOptimizer {
         this.cacheManager.cacheFolders(cacheKey, folderList);
       }
 
-      console.log(`⚡ Fetched ${folderList.length} folders (optimized, depth: ${maxDepth})`);
+      console.error(`⚡ Fetched ${folderList.length} folders (optimized, depth: ${maxDepth})`);
       return folderList;
     } catch (error) {
       console.error('❌ Error in optimized folder fetch:', error);
@@ -199,7 +209,7 @@ export class GraphOptimizer {
     const results = new Map<string, any>();
     const batches = this.chunkArray(requests, this.config.batchSize);
 
-    console.log(`⚡ Executing ${requests.length} requests in ${batches.length} batch(es)`);
+    console.error(`⚡ Executing ${requests.length} requests in ${batches.length} batch(es)`);
 
     for (const batch of batches) {
       try {
@@ -370,8 +380,8 @@ export class GraphOptimizer {
   /**
    * Build optimized query with standard optimizations
    */
-  private buildOptimizedQuery(options: OptimizedQueryOptions): any {
-    let query = this.client.api('');
+  private buildOptimizedQuery(endpoint: string, options: OptimizedQueryOptions): any {
+    let query = this.client.api(endpoint);
 
     if (options.filter) {
       query = query.filter(options.filter);
@@ -404,10 +414,12 @@ export class GraphOptimizer {
 
     const allFolders = [...folders];
 
+    const baseEndpoint = this.getBaseEndpoint();
+
     for (const folder of folders) {
       try {
         const subfolders = await this.client
-          .api(`/me/mailFolders/${folder.id}/childFolders`)
+          .api(`${baseEndpoint}/mailFolders/${folder.id}/childFolders`)
           .select(selectFields)
           .get();
 
@@ -527,6 +539,6 @@ export class GraphOptimizer {
       this.batchTimeout = undefined;
     }
 
-    console.log('⚡ GraphOptimizer reset completed');
+    console.error('⚡ GraphOptimizer reset completed');
   }
 }

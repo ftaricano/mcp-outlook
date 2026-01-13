@@ -258,17 +258,18 @@ export class ErrorHandler {
    * Log error with appropriate level
    */
   private static logError(error: StandardError): void {
-    const logLevel = error.retryable ? 'warn' : 'error';
+    // Force everything to stderr to avoid breaking MCP protocol on stdout
     const logMessage = `[${error.code}] ${error.message}`;
     
-    console[logLevel](`🔴 ${logMessage}`);
+    // console[logLevel] might write to stdout if level is 'log' or 'info'
+    console.error(`🔴 ${logMessage}`);
     
     if (error.details) {
-      console[logLevel](`   Details: ${error.details}`);
+      console.error(`   Details: ${error.details}`);
     }
     
     if (error.context) {
-      console[logLevel](`   Context:`, error.context);
+      console.error(`   Context:`, error.context);
     }
   }
 

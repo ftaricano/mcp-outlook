@@ -83,7 +83,7 @@ export class ParallelProcessor<T, R> extends EventEmitter {
       throughputPerSecond: 0
     };
 
-    console.log('🔄 ParallelProcessor initialized:', this.config);
+    console.error('🔄 ParallelProcessor initialized:', this.config);
   }
 
   /**
@@ -120,7 +120,7 @@ export class ParallelProcessor<T, R> extends EventEmitter {
    * Add multiple tasks for batch processing
    */
   async addBatch(tasks: ParallelTask<T, R>[]): Promise<ProcessingResult<R>[]> {
-    console.log(`📦 Adding batch of ${tasks.length} tasks for processing`);
+    console.error(`📦 Adding batch of ${tasks.length} tasks for processing`);
     
     const promises = tasks.map(task => this.addTask(task));
     return Promise.all(promises);
@@ -140,7 +140,7 @@ export class ParallelProcessor<T, R> extends EventEmitter {
   ): Promise<ProcessingResult<any>[]> {
     const { priority = 'normal', batchSize = 10, timeout = 15000 } = options;
     
-    console.log(`📧 Processing ${emails.length} emails in parallel (batch size: ${batchSize})`);
+    console.error(`📧 Processing ${emails.length} emails in parallel (batch size: ${batchSize})`);
 
     // Create processor for email operations
     const emailProcessor = new ParallelProcessor(operation, {
@@ -162,7 +162,7 @@ export class ParallelProcessor<T, R> extends EventEmitter {
       await emailProcessor.waitForCompletion();
       
       const successCount = results.filter(r => r.success).length;
-      console.log(`✅ Email batch processing completed: ${successCount}/${emails.length} successful`);
+      console.error(`✅ Email batch processing completed: ${successCount}/${emails.length} successful`);
       
       return results;
     } finally {
@@ -193,7 +193,7 @@ export class ParallelProcessor<T, R> extends EventEmitter {
       ? attachments.filter(att => (att.size || 0) / (1024 * 1024) <= sizeLimit)
       : attachments;
 
-    console.log(`📎 Processing ${filteredAttachments.length} attachments in parallel (max concurrent: ${maxConcurrentDownloads})`);
+    console.error(`📎 Processing ${filteredAttachments.length} attachments in parallel (max concurrent: ${maxConcurrentDownloads})`);
 
     // Create specialized processor for downloads
     const downloadProcessor = new ParallelProcessor(downloadFunction, {
@@ -223,7 +223,7 @@ export class ParallelProcessor<T, R> extends EventEmitter {
         .filter(r => r.success)
         .reduce((sum, r) => sum + ((r.result?.size || 0) / (1024 * 1024)), 0);
       
-      console.log(`✅ Attachment batch processing completed: ${successCount}/${filteredAttachments.length} successful, ${totalSize.toFixed(2)}MB downloaded`);
+      console.error(`✅ Attachment batch processing completed: ${successCount}/${filteredAttachments.length} successful, ${totalSize.toFixed(2)}MB downloaded`);
       
       return results;
     } finally {
@@ -245,7 +245,7 @@ export class ParallelProcessor<T, R> extends EventEmitter {
   ): Promise<any[]> {
     const { mergeResults = true, deduplicate = true, maxResultsPerQuery = 50 } = options;
 
-    console.log(`🔍 Processing ${queries.length} search queries in parallel`);
+    console.error(`🔍 Processing ${queries.length} search queries in parallel`);
 
     const searchProcessor = new ParallelProcessor(searchFunction, {
       maxConcurrency: Math.min(queries.length, 5),
@@ -285,7 +285,7 @@ export class ParallelProcessor<T, R> extends EventEmitter {
         });
       }
 
-      console.log(`✅ Search batch completed: ${allResults.length} unique results from ${queries.length} queries`);
+      console.error(`✅ Search batch completed: ${allResults.length} unique results from ${queries.length} queries`);
       return allResults;
     } finally {
       searchProcessor.destroy();
@@ -391,7 +391,7 @@ export class ParallelProcessor<T, R> extends EventEmitter {
       // Retry the task
       task.retryCount = currentRetries + 1;
       
-      console.log(`🔄 Retrying task ${task.id} (attempt ${task.retryCount}/${task.maxRetries})`);
+      console.error(`🔄 Retrying task ${task.id} (attempt ${task.retryCount}/${task.maxRetries})`);
       
       // Add delay before retry
       await new Promise(resolve => setTimeout(resolve, this.config.retryDelayMs * task.retryCount!));
@@ -551,7 +551,7 @@ export class ParallelProcessor<T, R> extends EventEmitter {
       throughputPerSecond: 0
     };
 
-    console.log('🧹 ParallelProcessor cleared');
+    console.error('🧹 ParallelProcessor cleared');
   }
 
   /**
@@ -560,6 +560,6 @@ export class ParallelProcessor<T, R> extends EventEmitter {
   destroy(): void {
     this.clear();
     this.removeAllListeners();
-    console.log('💥 ParallelProcessor destroyed');
+    console.error('💥 ParallelProcessor destroyed');
   }
 }

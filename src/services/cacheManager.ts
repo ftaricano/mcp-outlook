@@ -57,7 +57,7 @@ export class CacheManager extends EventEmitter {
     };
 
     this.startCleanupTimer();
-    console.log('🗄️ CacheManager inicializado:', this.config);
+    console.error('🗄️ CacheManager inicializado:', this.config);
   }
 
   /**
@@ -125,7 +125,7 @@ export class CacheManager extends EventEmitter {
     this.updateStats();
     this.emit('cache-set', key, data);
 
-    console.log(`💾 Cache SET: ${key} (TTL: ${ttl}ms, Size: ${this.cache.size})`);
+    console.error(`💾 Cache SET: ${key} (TTL: ${ttl}ms, Size: ${this.cache.size})`);
   }
 
   /**
@@ -208,7 +208,7 @@ export class CacheManager extends EventEmitter {
     }
 
     this.updateStats();
-    console.log(`🗑️ Cache invalidated: ${invalidated} entries for tags: ${tags.join(', ')}`);
+    console.error(`🗑️ Cache invalidated: ${invalidated} entries for tags: ${tags.join(', ')}`);
     return invalidated;
   }
 
@@ -257,7 +257,7 @@ export class CacheManager extends EventEmitter {
       this.cache.delete(keyToEvict);
       this.stats.evictions++;
       this.emit('cache-evicted', keyToEvict);
-      console.log(`🗑️ Cache evicted: ${keyToEvict} (LRU strategy)`);
+      console.error(`🗑️ Cache evicted: ${keyToEvict} (LRU strategy)`);
     }
   }
 
@@ -307,7 +307,7 @@ export class CacheManager extends EventEmitter {
     }
 
     if (cleaned > 0) {
-      console.log(`🧹 Cache cleanup: ${cleaned} expired entries removed`);
+      console.error(`🧹 Cache cleanup: ${cleaned} expired entries removed`);
       this.updateStats();
     }
   }
@@ -354,7 +354,7 @@ export class CacheManager extends EventEmitter {
     this.stats.evictions = 0;
     this.updateStats();
     this.emit('cache-cleared');
-    console.log(`🗑️ Cache cleared: ${size} entries removed`);
+    console.error(`🗑️ Cache cleared: ${size} entries removed`);
   }
 
   /**
@@ -366,7 +366,7 @@ export class CacheManager extends EventEmitter {
     }
     this.clear();
     this.removeAllListeners();
-    console.log('🗄️ CacheManager destroyed');
+    console.error('🗄️ CacheManager destroyed');
   }
 
   /**
@@ -374,7 +374,7 @@ export class CacheManager extends EventEmitter {
    */
   async preloadCommonPatterns(emailService: any): Promise<void> {
     try {
-      console.log('🔄 Preloading common cache patterns...');
+      console.error('🔄 Preloading common cache patterns...');
       
       // Preload folders (commonly accessed)
       const folders = await emailService.listFolders(false, 2);
@@ -384,7 +384,7 @@ export class CacheManager extends EventEmitter {
       const inboxEmails = await emailService.listEmails({ maxResults: 20, folder: 'inbox' });
       this.cacheEmails('emails:inbox:recent', inboxEmails, 'inbox');
       
-      console.log('✅ Cache preloading completed');
+      console.error('✅ Cache preloading completed');
     } catch (error) {
       console.warn('⚠️ Cache preloading failed:', error);
     }

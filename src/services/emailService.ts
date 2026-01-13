@@ -87,7 +87,7 @@ export class EmailService {
         await this.cacheManager.preloadCommonPatterns(this);
       }, 2000);
       
-      console.log('⚡ EmailService optimizations initialized');
+      console.error('⚡ EmailService optimizations initialized');
     } catch (error) {
       console.warn('⚠️ Failed to initialize optimizations:', error);
     }
@@ -113,21 +113,21 @@ export class EmailService {
         orderBy: search ? undefined : 'receivedDateTime desc' // OData compatibility
       };
 
-      console.log(`📧 Listando emails otimizado: ${maxResults} resultados, pasta: ${folder}`);
+      console.error(`📧 Listando emails otimizado: ${maxResults} resultados, pasta: ${folder}`);
       
       if (search || filter) {
-        console.log(`🔍 Query: search="${search || 'none'}", filter="${filter || 'none'}"`);
+        console.error(`🔍 Query: search="${search || 'none'}", filter="${filter || 'none'}"`);
       }
 
       const emails = await this.graphOptimizer.getOptimizedEmails(optimizedOptions);
       
-      console.log(`✅ Encontrados ${emails.length} emails (com cache/otimização)`);
+      console.error(`✅ Encontrados ${emails.length} emails (com cache/otimização)`);
       return emails;
     } catch (error) {
       console.error('❌ Erro ao listar emails otimizado:', error);
       
       // Fallback to original implementation if optimization fails
-      console.log('🔄 Fallback para implementação original...');
+      console.error('🔄 Fallback para implementação original...');
       
       try {
         const userEmail = process.env.TARGET_USER_EMAIL || 'me';
@@ -158,7 +158,7 @@ export class EmailService {
 
         const response = await this.client.api(fullEndpoint).get();
         
-        console.log(`✅ Fallback concluído: ${response.value?.length || 0} emails`);
+        console.error(`✅ Fallback concluído: ${response.value?.length || 0} emails`);
         return response.value || [];
       } catch (fallbackError) {
         const errorMessage = fallbackError instanceof Error ? fallbackError.message : 'Erro desconhecido';
@@ -283,7 +283,7 @@ export class EmailService {
       let emailBody = body;
       
       if (enhancedOptions?.useTemplate) {
-        console.log('🎨 Aplicando template HTML elegante...');
+        console.error('🎨 Aplicando template HTML elegante...');
         
         const emailContent: EmailContent = {
           title: enhancedOptions.emailContent?.title,
@@ -302,7 +302,7 @@ export class EmailService {
         if (!validation.valid) {
           console.warn('⚠️  Template warnings:', validation.warnings.join(', '));
         } else {
-          console.log('✅ Template validado com sucesso');
+          console.error('✅ Template validado com sucesso');
         }
       }
 
@@ -321,22 +321,22 @@ export class EmailService {
 
       // Adicionar anexos se fornecidos
       if (attachments && attachments.length > 0) {
-        console.log(`📎 Processando ${attachments.length} anexo(s) para Microsoft Graph...`);
+        console.error(`📎 Processando ${attachments.length} anexo(s) para Microsoft Graph...`);
         
         const processedAttachments = [];
         
         for (let i = 0; i < attachments.length; i++) {
           const attachment = attachments[i];
-          console.log(`   ${i + 1}. Processando "${attachment.name}"`);
+          console.error(`   ${i + 1}. Processando "${attachment.name}"`);
           
           // Validar e preparar Base64 para Microsoft Graph API (preservando integridade)
           const cleanBase64 = this.cleanBase64ForMSGraph(attachment.content);
           
           // Verificar se o arquivo foi modificado
           if (cleanBase64.length !== attachment.content.length) {
-            console.log(`   ⚠️  Arquivo foi modificado: ${attachment.content.length} → ${cleanBase64.length} chars`);
+            console.error(`   ⚠️  Arquivo foi modificado: ${attachment.content.length} → ${cleanBase64.length} chars`);
           } else {
-            console.log(`   ✅ Arquivo preservado intacto: ${cleanBase64.length} chars`);
+            console.error(`   ✅ Arquivo preservado intacto: ${cleanBase64.length} chars`);
           }
           
           // Validar tamanho real do arquivo decodificado
@@ -352,7 +352,7 @@ export class EmailService {
             throw new Error(`Anexo "${attachment.name}" muito grande: ${(decodedSize / (1024 * 1024)).toFixed(2)}MB. Limite: 15MB`);
           }
           
-          console.log(`   ✅ "${attachment.name}" - ${(decodedSize / 1024).toFixed(1)}KB - ${attachment.contentType}`);
+          console.error(`   ✅ "${attachment.name}" - ${(decodedSize / 1024).toFixed(1)}KB - ${attachment.contentType}`);
           
           processedAttachments.push({
             '@odata.type': '#microsoft.graph.fileAttachment',
@@ -363,12 +363,12 @@ export class EmailService {
         }
         
         message.message.attachments = processedAttachments;
-        console.log('✅ Todos os anexos processados e prontos para Microsoft Graph');
+        console.error('✅ Todos os anexos processados e prontos para Microsoft Graph');
       }
 
-      console.log('📧 Enviando email...');
+      console.error('📧 Enviando email...');
       const response = await this.client.api(apiPath).post(message);
-      console.log('✅ Email enviado com sucesso');
+      console.error('✅ Email enviado com sucesso');
       
       return { 
         success: true, 
@@ -411,7 +411,7 @@ export class EmailService {
       let replyBody = body;
       
       if (enhancedOptions?.useTemplate) {
-        console.log('🎨 Aplicando template HTML para resposta...');
+        console.error('🎨 Aplicando template HTML para resposta...');
         
         try {
           // Buscar email original para incluir no template
@@ -439,7 +439,7 @@ export class EmailService {
             enhancedOptions.templateOptions || {}
           );
           
-          console.log('✅ Template de resposta aplicado com sucesso');
+          console.error('✅ Template de resposta aplicado com sucesso');
           
         } catch (templateError) {
           console.warn('⚠️  Erro ao aplicar template, usando formato simples:', templateError);
@@ -541,15 +541,15 @@ export class EmailService {
         ? `/me/messages/${emailId}/attachments/${attachmentId}`
         : `/users/${userEmail}/messages/${emailId}/attachments/${attachmentId}`;
 
-      console.log(`📥 Baixando anexo...`);
+      console.error(`📥 Baixando anexo...`);
       
       // Obter informações completas do anexo incluindo conteúdo
       const attachment = await this.client.api(apiPath).get();
       const attachmentType = attachment['@odata.type'];
       
-      console.log(`   Nome: ${attachment.name}`);
-      console.log(`   Tipo: ${attachment.contentType}`);
-      console.log(`   Tamanho reportado: ${attachment.size} bytes`);
+      console.error(`   Nome: ${attachment.name}`);
+      console.error(`   Tipo: ${attachment.contentType}`);
+      console.error(`   Tamanho reportado: ${attachment.size} bytes`);
       
       let content = '';
       let actualSize = 0;
@@ -594,7 +594,7 @@ export class EmailService {
           content = content.replace(/[\s\r\n\t]+/g, '');
           
           if (originalLength !== content.length) {
-            console.log(`   🧹 Limpeza: removidos ${originalLength - content.length} caracteres`);
+            console.error(`   🧹 Limpeza: removidos ${originalLength - content.length} caracteres`);
           }
           
           // Corrigir padding se necessário
@@ -602,14 +602,14 @@ export class EmailService {
           if (remainder !== 0) {
             const paddingNeeded = 4 - remainder;
             content += '='.repeat(paddingNeeded);
-            console.log(`   🔧 Padding corrigido: adicionados ${paddingNeeded} caracteres`);
+            console.error(`   🔧 Padding corrigido: adicionados ${paddingNeeded} caracteres`);
           }
           
           // Verificar se é Base64 válido e obter tamanho real
           try {
             const testBuffer = Buffer.from(content, 'base64');
             actualSize = testBuffer.length;
-            console.log(`   ✅ Base64 válido: ${(actualSize / 1024).toFixed(2)}KB decodificado`);
+            console.error(`   ✅ Base64 válido: ${(actualSize / 1024).toFixed(2)}KB decodificado`);
             
             // Verificar discrepância com tamanho reportado
             if (attachment.size && Math.abs(actualSize - attachment.size) > 1000) {
@@ -629,7 +629,7 @@ export class EmailService {
         
       } else if (attachmentType === '#microsoft.graph.itemAttachment') {
         // ItemAttachment - email anexado
-        console.log('   📧 ItemAttachment detectado (email anexado)');
+        console.error('   📧 ItemAttachment detectado (email anexado)');
         content = attachment.item ? Buffer.from(JSON.stringify(attachment.item)).toString('base64') : '';
         if (content) {
           actualSize = Buffer.from(content, 'base64').length;
@@ -653,7 +653,7 @@ export class EmailService {
         throw new Error('Conteúdo do anexo não encontrado ou está vazio');
       }
       
-      console.log(`   📦 Download concluído: ${content.length} caracteres Base64`);
+      console.error(`   📦 Download concluído: ${content.length} caracteres Base64`);
       
       return {
         name: attachment.name || 'anexo_sem_nome',
@@ -674,14 +674,14 @@ export class EmailService {
    */
   private cleanBase64ForMSGraph(base64Content: string): string {
     const originalSize = base64Content.length;
-    console.log(`   📏 Base64 original: ${originalSize} caracteres`);
+    console.error(`   📏 Base64 original: ${originalSize} caracteres`);
     
     // 1. Remover prefixo data: URI se presente
     let cleanContent = base64Content;
     const dataUriMatch = base64Content.match(/^data:[^;]+;base64,(.*)$/);
     if (dataUriMatch) {
       cleanContent = dataUriMatch[1];
-      console.log(`   🔧 Removido prefixo data: URI - agora: ${cleanContent.length} caracteres`);
+      console.error(`   🔧 Removido prefixo data: URI - agora: ${cleanContent.length} caracteres`);
     }
     
     // 2. Remover espaços em branco, quebras de linha e caracteres invisíveis
@@ -691,21 +691,21 @@ export class EmailService {
     cleanContent = cleanContent.replace(/[^A-Za-z0-9+/=]/g, '');
     
     const afterCleanSize = cleanContent.length;
-    console.log(`   🧹 Após limpeza: ${afterCleanSize} caracteres`);
+    console.error(`   🧹 Após limpeza: ${afterCleanSize} caracteres`);
     
     // 4. Corrigir padding se necessário
     const remainder = cleanContent.length % 4;
     if (remainder !== 0) {
       const paddingNeeded = 4 - remainder;
       cleanContent += '='.repeat(paddingNeeded);
-      console.log(`   🔧 Adicionado ${paddingNeeded} caractere(s) de padding`);
+      console.error(`   🔧 Adicionado ${paddingNeeded} caractere(s) de padding`);
     }
     
     // 5. Validar que o Base64 é válido
     try {
       const testBuffer = Buffer.from(cleanContent, 'base64');
       const decodedSize = testBuffer.length;
-      console.log(`   ✅ Base64 válido - arquivo de ${(decodedSize / 1024).toFixed(1)}KB`);
+      console.error(`   ✅ Base64 válido - arquivo de ${(decodedSize / 1024).toFixed(1)}KB`);
       
       return cleanContent;
       
@@ -741,17 +741,17 @@ export class EmailService {
     const startTime = Date.now();
     
     try {
-      console.log('🚀 Iniciando download otimizado...');
-      console.log(`   Email ID: ${emailId.substring(0, 30)}...`);
-      console.log(`   Attachment ID: ${attachmentId.substring(0, 30)}...`);
+      console.error('🚀 Iniciando download otimizado...');
+      console.error(`   Email ID: ${emailId.substring(0, 30)}...`);
+      console.error(`   Attachment ID: ${attachmentId.substring(0, 30)}...`);
 
       // 1. Baixar anexo usando método existente
       const attachment = await this.downloadAttachment(emailId, attachmentId);
       
-      console.log('📦 Anexo obtido via Graph API');
-      console.log(`   Nome: ${attachment.name}`);
-      console.log(`   Tipo: ${attachment.contentType}`);
-      console.log(`   Tamanho: ${attachment.size || 0} bytes`);
+      console.error('📦 Anexo obtido via Graph API');
+      console.error(`   Nome: ${attachment.name}`);
+      console.error(`   Tipo: ${attachment.contentType}`);
+      console.error(`   Tamanho: ${attachment.size || 0} bytes`);
 
       // 2. Preparar dados para o FileManager
       const attachmentData = {
@@ -770,10 +770,10 @@ export class EmailService {
 
       const downloadTime = Date.now() - startTime;
 
-      console.log(`✅ Download concluído em ${downloadTime}ms`);
-      console.log(`   Arquivo: ${saveResult.filePath}`);
-      console.log(`   Tamanho salvo: ${saveResult.savedSize} bytes`);
-      console.log(`   Integridade: ${saveResult.integrity ? '✅' : '⚠️'}`);
+      console.error(`✅ Download concluído em ${downloadTime}ms`);
+      console.error(`   Arquivo: ${saveResult.filePath}`);
+      console.error(`   Tamanho salvo: ${saveResult.savedSize} bytes`);
+      console.error(`   Integridade: ${saveResult.integrity ? '✅' : '⚠️'}`);
 
       return {
         success: saveResult.success,
@@ -866,13 +866,13 @@ export class EmailService {
     const maxConcurrent = options.maxConcurrent || 3;
     
     try {
-      console.log('📦 Iniciando download em lote...');
+      console.error('📦 Iniciando download em lote...');
       
       // 1. Listar todos os anexos do email
       const attachments = await this.listAttachments(emailId);
       
       if (attachments.length === 0) {
-        console.log('📭 Nenhum anexo encontrado no email');
+        console.error('📭 Nenhum anexo encontrado no email');
         return {
           success: true,
           totalFiles: 0,
@@ -883,7 +883,7 @@ export class EmailService {
         };
       }
 
-      console.log(`📎 ${attachments.length} anexos encontrados`);
+      console.error(`📎 ${attachments.length} anexos encontrados`);
 
       // 2. Download com controle de concorrência
       const results = [];
@@ -933,15 +933,15 @@ export class EmailService {
         const batchResults = await Promise.all(batchPromises);
         results.push(...batchResults);
 
-        console.log(`📊 Lote ${i / maxConcurrent + 1} processado: ${batchResults.length} arquivos`);
+        console.error(`📊 Lote ${i / maxConcurrent + 1} processado: ${batchResults.length} arquivos`);
       }
 
       const downloadTime = Date.now() - startTime;
       
-      console.log(`✅ Download em lote concluído em ${downloadTime}ms`);
-      console.log(`   Total: ${attachments.length} arquivos`);
-      console.log(`   Sucessos: ${successfulDownloads}`);
-      console.log(`   Falhas: ${failedDownloads}`);
+      console.error(`✅ Download em lote concluído em ${downloadTime}ms`);
+      console.error(`   Total: ${attachments.length} arquivos`);
+      console.error(`   Sucessos: ${successfulDownloads}`);
+      console.error(`   Falhas: ${failedDownloads}`);
 
       return {
         success: failedDownloads === 0,
@@ -972,7 +972,7 @@ export class EmailService {
    */
   async exportEmailAsAttachment(emailId: string): Promise<EmailAttachment> {
     try {
-      console.log(`📧 Exportando email ${emailId.substring(0, 30)}... como anexo EML`);
+      console.error(`📧 Exportando email ${emailId.substring(0, 30)}... como anexo EML`);
 
       // 1. Buscar dados básicos do email
       const userEmail = process.env.TARGET_USER_EMAIL;
@@ -988,7 +988,7 @@ export class EmailService {
         ? `/users/${userEmail}/messages/${emailId}/$value`
         : `/me/messages/${emailId}/$value`;
 
-      console.log('🔄 Obtendo conteúdo MIME completo...');
+      console.error('🔄 Obtendo conteúdo MIME completo...');
       const mimeContent = await client.api(mimeUrl).get();
 
       // 3. Gerar nome do arquivo baseado no assunto e data
@@ -1006,10 +1006,10 @@ export class EmailService {
       // 4. Converter conteúdo MIME para Base64
       const base64Content = Buffer.from(mimeContent, 'utf8').toString('base64');
 
-      console.log('✅ Email exportado com sucesso');
-      console.log(`   Arquivo: ${fileName}`);
-      console.log(`   Tamanho: ${(base64Content.length / 1024).toFixed(1)}KB (Base64)`);
-      console.log(`   Assunto original: ${subject}`);
+      console.error('✅ Email exportado com sucesso');
+      console.error(`   Arquivo: ${fileName}`);
+      console.error(`   Tamanho: ${(base64Content.length / 1024).toFixed(1)}KB (Base64)`);
+      console.error(`   Assunto original: ${subject}`);
 
       return {
         name: fileName,
@@ -1073,13 +1073,13 @@ export class EmailService {
     const startTime = Date.now();
     
     try {
-      console.log('🚀 Iniciando envio híbrido de email com anexo...');
-      console.log(`   Email origem: ${sourceEmailId.substring(0, 30)}...`);
-      console.log(`   Anexo: ${attachmentId.substring(0, 30)}...`);
-      console.log(`   Destinatários: ${to.join(', ')}`);
+      console.error('🚀 Iniciando envio híbrido de email com anexo...');
+      console.error(`   Email origem: ${sourceEmailId.substring(0, 30)}...`);
+      console.error(`   Anexo: ${attachmentId.substring(0, 30)}...`);
+      console.error(`   Destinatários: ${to.join(', ')}`);
 
       // 1. Baixar anexo para disco
-      console.log('📥 Fase 1: Baixando anexo...');
+      console.error('📥 Fase 1: Baixando anexo...');
       const downloadResult = await this.downloadAttachmentToFile(
         sourceEmailId,
         attachmentId,
@@ -1094,13 +1094,13 @@ export class EmailService {
         throw new Error(`Falha no download: ${downloadResult.error}`);
       }
 
-      console.log('✅ Download concluído');
-      console.log(`   Arquivo: ${downloadResult.filename}`);
-      console.log(`   Tamanho: ${(downloadResult.savedSize / 1024).toFixed(1)}KB`);
-      console.log(`   Local: ${downloadResult.filePath}`);
+      console.error('✅ Download concluído');
+      console.error(`   Arquivo: ${downloadResult.filename}`);
+      console.error(`   Tamanho: ${(downloadResult.savedSize / 1024).toFixed(1)}KB`);
+      console.error(`   Local: ${downloadResult.filePath}`);
 
       // 2. Codificar arquivo para anexo
-      console.log('🔄 Fase 2: Codificando para anexo...');
+      console.error('🔄 Fase 2: Codificando para anexo...');
       const encodingResult = await this.fileManager.encodeFileForEmailAttachment(
         downloadResult.filePath
       );
@@ -1109,8 +1109,8 @@ export class EmailService {
         throw new Error(`Falha na codificação: ${encodingResult.error}`);
       }
 
-      console.log('✅ Codificação concluída');
-      console.log(`   Base64: ${encodingResult.content.length} caracteres`);
+      console.error('✅ Codificação concluída');
+      console.error(`   Base64: ${encodingResult.content.length} caracteres`);
 
       // 3. Preparar anexo para envio
       const attachmentForEmail: EmailAttachment = {
@@ -1121,7 +1121,7 @@ export class EmailService {
       };
 
       // 4. Enviar email
-      console.log('📧 Fase 3: Enviando email...');
+      console.error('📧 Fase 3: Enviando email...');
       const sendResult = await this.sendEmail(
         to,
         subject,
@@ -1141,7 +1141,7 @@ export class EmailService {
         try {
           const fs = await import('fs');
           fs.default.unlinkSync(downloadResult.filePath);
-          console.log('🗑️  Arquivo temporário removido');
+          console.error('🗑️  Arquivo temporário removido');
         } catch (cleanupError) {
           console.warn('⚠️  Erro ao remover arquivo temporário:', cleanupError);
         }
@@ -1149,9 +1149,9 @@ export class EmailService {
 
       const totalTime = Date.now() - startTime;
 
-      console.log('🎉 Envio híbrido concluído com sucesso!');
-      console.log(`   Tempo total: ${totalTime}ms`);
-      console.log(`   Message ID: ${sendResult.messageId || 'N/A'}`);
+      console.error('🎉 Envio híbrido concluído com sucesso!');
+      console.error(`   Tempo total: ${totalTime}ms`);
+      console.error(`   Message ID: ${sendResult.messageId || 'N/A'}`);
 
       return {
         success: true,
@@ -1213,9 +1213,9 @@ export class EmailService {
     error?: string;
   }> {
     try {
-      console.log('📎 Enviando email com arquivo do disco...');
-      console.log(`   Arquivo: ${filePath}`);
-      console.log(`   Destinatários: ${to.join(', ')}`);
+      console.error('📎 Enviando email com arquivo do disco...');
+      console.error(`   Arquivo: ${filePath}`);
+      console.error(`   Destinatários: ${to.join(', ')}`);
 
       // 1. Codificar arquivo
       const encodingResult = await this.fileManager.encodeFileForEmailAttachment(filePath);
@@ -1243,7 +1243,7 @@ export class EmailService {
         options.enhancedOptions
       );
 
-      console.log('✅ Email enviado com anexo do disco');
+      console.error('✅ Email enviado com anexo do disco');
 
       return {
         success: true,
@@ -1281,7 +1281,7 @@ export class EmailService {
    */
   async listFolders(includeSubfolders: boolean = true, maxDepth: number = 3): Promise<any[]> {
     try {
-      console.log(`📁 Listando pastas otimizado${includeSubfolders ? ' (incluindo subpastas)' : ''}`);
+      console.error(`📁 Listando pastas otimizado${includeSubfolders ? ' (incluindo subpastas)' : ''}`);
 
       // Use GraphOptimizer for optimized folder fetching with caching
       const folders = await this.graphOptimizer.getOptimizedFolders({
@@ -1291,13 +1291,13 @@ export class EmailService {
         select: ['id', 'displayName', 'totalItemCount', 'unreadItemCount', 'parentFolderId']
       });
 
-      console.log(`✅ Encontradas ${folders.length} pastas (com cache/otimização)`);
+      console.error(`✅ Encontradas ${folders.length} pastas (com cache/otimização)`);
       return folders;
     } catch (error) {
       console.error('❌ Erro ao listar pastas otimizado:', error);
       
       // Fallback to original implementation
-      console.log('🔄 Fallback para implementação original de pastas...');
+      console.error('🔄 Fallback para implementação original de pastas...');
       
       try {
         const userEmail = process.env.TARGET_USER_EMAIL || 'me';
@@ -1320,7 +1320,7 @@ export class EmailService {
           }
         }
 
-        console.log(`✅ Fallback concluído: ${allFolders.length} pastas`);
+        console.error(`✅ Fallback concluído: ${allFolders.length} pastas`);
         return allFolders;
       } catch (fallbackError) {
         console.error('❌ Erro no fallback de pastas:', fallbackError);
@@ -1376,7 +1376,7 @@ export class EmailService {
           ? '/me/mailFolders'
           : `/users/${userEmail}/mailFolders`);
 
-      console.log(`📁 Criando pasta: ${folderName}${parentFolderId ? ` (pai: ${parentFolderId})` : ''}`);
+      console.error(`📁 Criando pasta: ${folderName}${parentFolderId ? ` (pai: ${parentFolderId})` : ''}`);
 
       const folder = await this.client
         .api(apiEndpoint)
@@ -1384,7 +1384,7 @@ export class EmailService {
           displayName: folderName
         });
 
-      console.log(`✅ Pasta criada: ${folder.displayName} (ID: ${folder.id})`);
+      console.error(`✅ Pasta criada: ${folder.displayName} (ID: ${folder.id})`);
       return folder;
     } catch (error) {
       console.error('❌ Erro ao criar pasta:', error);
@@ -1405,7 +1405,7 @@ export class EmailService {
           ? `/me/messages/${emailId}/move`
           : `/users/${userEmail}/messages/${emailId}/move`;
 
-        console.log(`📦 Movendo email ${emailId.substring(0, 8)}... para pasta ${targetFolderId}`);
+        console.error(`📦 Movendo email ${emailId.substring(0, 8)}... para pasta ${targetFolderId}`);
 
         const result = await this.client
           .api(apiEndpoint)
@@ -1419,7 +1419,7 @@ export class EmailService {
           newLocation: result.parentFolderId
         });
 
-        console.log(`✅ Email movido com sucesso`);
+        console.error(`✅ Email movido com sucesso`);
       } catch (error) {
         console.error(`❌ Erro ao mover email ${emailId}:`, error);
         results.push({
@@ -1446,7 +1446,7 @@ export class EmailService {
           ? `/me/messages/${emailId}/copy`
           : `/users/${userEmail}/messages/${emailId}/copy`;
 
-        console.log(`📋 Copiando email ${emailId.substring(0, 8)}... para pasta ${targetFolderId}`);
+        console.error(`📋 Copiando email ${emailId.substring(0, 8)}... para pasta ${targetFolderId}`);
 
         const result = await this.client
           .api(apiEndpoint)
@@ -1460,7 +1460,7 @@ export class EmailService {
           copiedId: result.id
         });
 
-        console.log(`✅ Email copiado com sucesso`);
+        console.error(`✅ Email copiado com sucesso`);
       } catch (error) {
         console.error(`❌ Erro ao copiar email ${emailId}:`, error);
         results.push({
@@ -1488,12 +1488,12 @@ export class EmailService {
 
       const folder = await this.client.api(folderEndpoint).get();
 
-      console.log(`🗑️ Deletando pasta: ${folder.displayName} (${permanent ? 'permanente' : 'para lixeira'})`);
+      console.error(`🗑️ Deletando pasta: ${folder.displayName} (${permanent ? 'permanente' : 'para lixeira'})`);
 
       // Delete the folder
       await this.client.api(folderEndpoint).delete();
 
-      console.log(`✅ Pasta deletada com sucesso`);
+      console.error(`✅ Pasta deletada com sucesso`);
 
       return {
         success: true,
@@ -1520,7 +1520,7 @@ export class EmailService {
         ? `/me/mailFolders/${folderId}`
         : `/users/${userEmail}/mailFolders/${folderId}`;
 
-      console.log(`📊 Obtendo estatísticas da pasta ${folderId}${includeSubfolders ? ' (incluindo subpastas)' : ''}`);
+      console.error(`📊 Obtendo estatísticas da pasta ${folderId}${includeSubfolders ? ' (incluindo subpastas)' : ''}`);
 
       const folder = await this.client.api(folderEndpoint).get();
 
@@ -1574,7 +1574,7 @@ export class EmailService {
         }));
       }
 
-      console.log(`✅ Estatísticas obtidas para pasta ${folder.displayName}`);
+      console.error(`✅ Estatísticas obtidas para pasta ${folder.displayName}`);
       return stats;
     } catch (error) {
       console.error('❌ Erro ao obter estatísticas da pasta:', error);
@@ -1593,7 +1593,7 @@ export class EmailService {
     const { dryRun = true, maxEmails = 100 } = options;
 
     try {
-      console.log(`🗂️ Organizando emails por regras (${dryRun ? 'simulação' : 'execução'})`);
+      console.error(`🗂️ Organizando emails por regras (${dryRun ? 'simulação' : 'execução'})`);
 
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
       const messagesEndpoint = userEmail === 'me' 
@@ -1632,7 +1632,7 @@ export class EmailService {
         }
       }
 
-      console.log(`✅ Organização concluída: ${emailsOrganized}/${emails.length} emails processados`);
+      console.error(`✅ Organização concluída: ${emailsOrganized}/${emails.length} emails processados`);
 
       return {
         emailsProcessed: emails.length,
@@ -1714,7 +1714,7 @@ export class EmailService {
         sortOrder = 'desc'
       } = options;
 
-      console.log(`🔍 Executando busca avançada otimizada na pasta ${folder}`);
+      console.error(`🔍 Executando busca avançada otimizada na pasta ${folder}`);
 
       // Use GraphOptimizer for intelligent search query optimization
       const optimizedFilter = this.graphOptimizer.optimizeSearchQuery(query || '', {
@@ -1733,7 +1733,7 @@ export class EmailService {
       // Try cache first
       const cached = this.cacheManager.get<Message[]>(cacheKey);
       if (cached) {
-        console.log(`⚡ Cache hit: busca avançada (${cached.length} resultados)`);
+        console.error(`⚡ Cache hit: busca avançada (${cached.length} resultados)`);
         return cached;
       }
 
@@ -1769,13 +1769,13 @@ export class EmailService {
       const complexity = this.calculateSearchComplexity(options);
       this.cacheManager.cacheSearchResults(cacheKey, filteredEmails, complexity);
 
-      console.log(`✅ Busca avançada otimizada concluída: ${filteredEmails.length} emails encontrados`);
+      console.error(`✅ Busca avançada otimizada concluída: ${filteredEmails.length} emails encontrados`);
       return filteredEmails;
     } catch (error) {
       console.error('❌ Erro na busca avançada otimizada:', error);
       
       // Fallback to original implementation
-      console.log('🔄 Fallback para busca avançada original...');
+      console.error('🔄 Fallback para busca avançada original...');
       
       try {
         const {
@@ -1844,7 +1844,7 @@ export class EmailService {
 
         const response = await this.client.api(fullEndpoint).get();
         
-        console.log(`✅ Fallback de busca concluído: ${response.value?.length || 0} emails encontrados`);
+        console.error(`✅ Fallback de busca concluído: ${response.value?.length || 0} emails encontrados`);
         return response.value || [];
       } catch (fallbackError) {
         console.error('❌ Erro no fallback da busca avançada:', fallbackError);
@@ -1892,7 +1892,7 @@ export class EmailService {
         ? `/me/mailFolders/${folder}/messages`
         : `/users/${userEmail}/mailFolders/${folder}/messages`;
 
-      console.log(`🏢 Buscando emails do domínio: ${domain}`);
+      console.error(`🏢 Buscando emails do domínio: ${domain}`);
 
       const queryParams: string[] = [
         `$top=${Math.min(maxResults, 100)}`,
@@ -1919,7 +1919,7 @@ export class EmailService {
 
       const response = await this.client.api(fullEndpoint).get();
       
-      console.log(`✅ Encontrados ${response.value?.length || 0} emails do domínio ${domain}`);
+      console.error(`✅ Encontrados ${response.value?.length || 0} emails do domínio ${domain}`);
       return response.value || [];
     } catch (error) {
       console.error(`❌ Erro na busca por domínio ${domain}:`, error);
@@ -1942,7 +1942,7 @@ export class EmailService {
     try {
       const { maxResults = 20, folder = 'inbox', sizeLimit, dateRange } = options;
 
-      console.log(`📎 Buscando emails com anexos dos tipos: ${fileTypes.join(', ')}`);
+      console.error(`📎 Buscando emails com anexos dos tipos: ${fileTypes.join(', ')}`);
 
       // First get emails with attachments
       const emailsWithAttachments = await this.listEmails({
@@ -1990,7 +1990,7 @@ export class EmailService {
         }
       }
 
-      console.log(`✅ Encontrados ${matchingEmails.length} emails com anexos dos tipos especificados`);
+      console.error(`✅ Encontrados ${matchingEmails.length} emails com anexos dos tipos especificados`);
       return matchingEmails;
     } catch (error) {
       console.error('❌ Erro na busca por tipo de anexo:', error);
@@ -2011,7 +2011,7 @@ export class EmailService {
     try {
       const { criteria, folder = 'inbox', maxResults = 50, includeRead = true, dateRange } = options;
 
-      console.log(`🔄 Procurando emails duplicados por: ${criteria}`);
+      console.error(`🔄 Procurando emails duplicados por: ${criteria}`);
 
       // Get emails for analysis
       const emails = await this.listEmails({
@@ -2066,7 +2066,7 @@ export class EmailService {
         }))
         .sort((a, b) => b.emails.length - a.emails.length);
 
-      console.log(`✅ Encontrados ${duplicates.length} grupos de emails duplicados`);
+      console.error(`✅ Encontrados ${duplicates.length} grupos de emails duplicados`);
       return duplicates;
     } catch (error) {
       console.error('❌ Erro na busca por duplicados:', error);
@@ -2087,7 +2087,7 @@ export class EmailService {
     try {
       const { minSizeMB, maxSizeMB, folder = 'inbox', maxResults = 20, includeAttachments = true } = options;
 
-      console.log(`📏 Buscando emails por tamanho: ${minSizeMB || 0}MB - ${maxSizeMB || '∞'}MB`);
+      console.error(`📏 Buscando emails por tamanho: ${minSizeMB || 0}MB - ${maxSizeMB || '∞'}MB`);
 
       // Note: Microsoft Graph API doesn't support filtering by size directly
       // We need to get emails and filter them locally
@@ -2131,7 +2131,7 @@ export class EmailService {
         filteredEmails.push(email);
       }
 
-      console.log(`✅ Encontrados ${filteredEmails.length} emails no intervalo de tamanho especificado`);
+      console.error(`✅ Encontrados ${filteredEmails.length} emails no intervalo de tamanho especificado`);
       return filteredEmails;
     } catch (error) {
       console.error('❌ Erro na busca por tamanho:', error);
@@ -2156,7 +2156,7 @@ export class EmailService {
         created: new Date().toISOString()
       });
 
-      console.log(`💾 Busca salva: ${name}`);
+      console.error(`💾 Busca salva: ${name}`);
       return true;
     } catch (error) {
       console.error('❌ Erro ao salvar busca:', error);
@@ -2194,7 +2194,7 @@ export class EmailService {
       const savedSearch = this.savedSearches.get(name);
       const emails = await this.advancedSearchEmails(savedSearch.criteria);
 
-      console.log(`🔍 Executada busca salva "${name}": ${emails.length} emails encontrados`);
+      console.error(`🔍 Executada busca salva "${name}": ${emails.length} emails encontrados`);
       
       return {
         emails,
@@ -2216,7 +2216,7 @@ export class EmailService {
       }
 
       this.savedSearches.delete(name);
-      console.log(`🗑️ Busca salva deletada: ${name}`);
+      console.error(`🗑️ Busca salva deletada: ${name}`);
       return true;
     } catch (error) {
       console.error(`❌ Erro ao deletar busca salva "${name}":`, error);
@@ -2234,7 +2234,7 @@ export class EmailService {
   async batchMarkAsRead(emailIds: string[], options: { maxConcurrent?: number } = {}): Promise<Array<{ success: boolean; error?: string }>> {
     const { maxConcurrent = 5 } = options;
 
-    console.log(`📖 Iniciando marcação em lote otimizada como lidos: ${emailIds.length} emails`);
+    console.error(`📖 Iniciando marcação em lote otimizada como lidos: ${emailIds.length} emails`);
 
     try {
       // Use ParallelProcessor for optimized batch processing
@@ -2258,7 +2258,7 @@ export class EmailService {
       }));
 
       const successCount = formattedResults.filter(r => r.success).length;
-      console.log(`✅ Marcação em lote otimizada concluída: ${successCount}/${emailIds.length} sucessos`);
+      console.error(`✅ Marcação em lote otimizada concluída: ${successCount}/${emailIds.length} sucessos`);
 
       // Invalidate email cache after bulk operations
       this.cacheManager.invalidateEmailCache();
@@ -2292,7 +2292,7 @@ export class EmailService {
       }
 
       const successCount = results.filter(r => r.success).length;
-      console.log(`✅ Fallback de marcação concluído: ${successCount}/${emailIds.length} sucessos`);
+      console.error(`✅ Fallback de marcação concluído: ${successCount}/${emailIds.length} sucessos`);
 
       return results;
     }
@@ -2304,7 +2304,7 @@ export class EmailService {
   async batchMarkAsUnread(emailIds: string[], options: { maxConcurrent?: number } = {}): Promise<Array<{ success: boolean; error?: string }>> {
     const { maxConcurrent = 5 } = options;
 
-    console.log(`📬 Iniciando marcação em lote otimizada como não lidos: ${emailIds.length} emails`);
+    console.error(`📬 Iniciando marcação em lote otimizada como não lidos: ${emailIds.length} emails`);
 
     try {
       // Use ParallelProcessor for optimized batch processing
@@ -2328,7 +2328,7 @@ export class EmailService {
       }));
 
       const successCount = formattedResults.filter(r => r.success).length;
-      console.log(`✅ Marcação em lote otimizada concluída: ${successCount}/${emailIds.length} sucessos`);
+      console.error(`✅ Marcação em lote otimizada concluída: ${successCount}/${emailIds.length} sucessos`);
 
       // Invalidate email cache after bulk operations
       this.cacheManager.invalidateEmailCache();
@@ -2362,7 +2362,7 @@ export class EmailService {
       }
 
       const successCount = results.filter(r => r.success).length;
-      console.log(`✅ Fallback de marcação concluído: ${successCount}/${emailIds.length} sucessos`);
+      console.error(`✅ Fallback de marcação concluído: ${successCount}/${emailIds.length} sucessos`);
 
       return results;
     }
@@ -2375,7 +2375,7 @@ export class EmailService {
     const { permanent = false, maxConcurrent = 3 } = options; // Lower concurrency for delete operations
     const results: Array<{ success: boolean; error?: string }> = [];
 
-    console.log(`🗑️ Iniciando deleção em lote: ${emailIds.length} emails (${permanent ? 'permanente' : 'para lixeira'})`);
+    console.error(`🗑️ Iniciando deleção em lote: ${emailIds.length} emails (${permanent ? 'permanente' : 'para lixeira'})`);
 
     // Process in batches with lower concurrency for delete operations
     for (let i = 0; i < emailIds.length; i += maxConcurrent) {
@@ -2401,7 +2401,7 @@ export class EmailService {
     }
 
     const successCount = results.filter(r => r.success).length;
-    console.log(`✅ Deleção em lote concluída: ${successCount}/${emailIds.length} sucessos`);
+    console.error(`✅ Deleção em lote concluída: ${successCount}/${emailIds.length} sucessos`);
 
     return results;
   }
@@ -2413,7 +2413,7 @@ export class EmailService {
     const { maxConcurrent = 5 } = options;
     const results: Array<{ success: boolean; error?: string }> = [];
 
-    console.log(`📦 Iniciando movimentação em lote: ${emailIds.length} emails para pasta ${targetFolderId}`);
+    console.error(`📦 Iniciando movimentação em lote: ${emailIds.length} emails para pasta ${targetFolderId}`);
 
     // Process in batches
     for (let i = 0; i < emailIds.length; i += maxConcurrent) {
@@ -2439,7 +2439,7 @@ export class EmailService {
     }
 
     const successCount = results.filter(r => r.success).length;
-    console.log(`✅ Movimentação em lote concluída: ${successCount}/${emailIds.length} sucessos`);
+    console.error(`✅ Movimentação em lote concluída: ${successCount}/${emailIds.length} sucessos`);
 
     return results;
   }
@@ -2469,7 +2469,7 @@ export class EmailService {
       error?: string;
     }> = [];
 
-    console.log(`📎 Iniciando download em lote de anexos: ${emailIds.length} emails`);
+    console.error(`📎 Iniciando download em lote de anexos: ${emailIds.length} emails`);
 
     // Process in batches with low concurrency for downloads
     for (let i = 0; i < emailIds.length; i += maxConcurrent) {
@@ -2512,7 +2512,7 @@ export class EmailService {
 
     const successCount = results.filter(r => r.success).length;
     const totalFiles = results.reduce((sum, r) => sum + r.filesDownloaded, 0);
-    console.log(`✅ Download em lote concluído: ${successCount}/${emailIds.length} emails, ${totalFiles} arquivos`);
+    console.error(`✅ Download em lote concluído: ${successCount}/${emailIds.length} emails, ${totalFiles} arquivos`);
 
     return results;
   }
@@ -2541,7 +2541,7 @@ export class EmailService {
       // Try cache first for better performance
       const cached = this.cacheManager.get<Message[]>(cacheKey);
       if (cached) {
-        console.log(`⚡ Cache hit: emails from ${folder} (${cached.length} emails)`);
+        console.error(`⚡ Cache hit: emails from ${folder} (${cached.length} emails)`);
         return cached;
       }
 
@@ -2556,14 +2556,14 @@ export class EmailService {
         orderBy: search ? undefined : 'receivedDateTime desc'
       };
 
-      console.log(`📧 Listing emails: ${maxResults} results, folder: ${folder} (optimized)`);
+      console.error(`📧 Listing emails: ${maxResults} results, folder: ${folder} (optimized)`);
 
       const emails = await this.graphOptimizer.getOptimizedEmails(optimizedOptions);
       
       // Cache the results
       this.cacheManager.cacheEmails(cacheKey, emails, folder);
       
-      console.log(`✅ Found ${emails.length} emails (with optimization)`);
+      console.error(`✅ Found ${emails.length} emails (with optimization)`);
       return emails;
     } catch (error) {
       console.error('❌ Error in optimized email listing:', error);
@@ -2581,11 +2581,11 @@ export class EmailService {
       // Try cache first
       const cached = this.cacheManager.get<any[]>(cacheKey);
       if (cached) {
-        console.log(`⚡ Cache hit: folder structure (${cached.length} folders)`);
+        console.error(`⚡ Cache hit: folder structure (${cached.length} folders)`);
         return cached;
       }
 
-      console.log(`📁 Fetching folder structure (optimized, depth: ${maxDepth})`);
+      console.error(`📁 Fetching folder structure (optimized, depth: ${maxDepth})`);
 
       const folders = await this.graphOptimizer.getOptimizedFolders({
         includeSubfolders,
@@ -2597,7 +2597,7 @@ export class EmailService {
       // Cache with longer TTL for folders
       this.cacheManager.cacheFolders(cacheKey, folders);
 
-      console.log(`✅ Found ${folders.length} folders (optimized)`);
+      console.error(`✅ Found ${folders.length} folders (optimized)`);
       return folders;
     } catch (error) {
       console.error('❌ Error in optimized folder listing:', error);
@@ -2619,7 +2619,7 @@ export class EmailService {
   ): Promise<any[]> {
     const { batchSize = 10, priority = 'normal', timeout = 15000 } = options;
 
-    console.log(`🔄 Processing ${emails.length} emails in parallel (batch: ${batchSize})`);
+    console.error(`🔄 Processing ${emails.length} emails in parallel (batch: ${batchSize})`);
 
     try {
       const results = await this.parallelProcessor.processEmailsBatch(
@@ -2629,7 +2629,7 @@ export class EmailService {
       );
 
       const successCount = results.filter(r => r.success).length;
-      console.log(`✅ Parallel processing completed: ${successCount}/${emails.length} successful`);
+      console.error(`✅ Parallel processing completed: ${successCount}/${emails.length} successful`);
 
       return results.filter(r => r.success).map(r => r.result);
     } catch (error) {
@@ -2671,11 +2671,11 @@ export class EmailService {
       // Try cache first
       const cached = this.cacheManager.get<Message[]>(cacheKey);
       if (cached) {
-        console.log(`⚡ Cache hit: search results (${cached.length} emails)`);
+        console.error(`⚡ Cache hit: search results (${cached.length} emails)`);
         return cached;
       }
 
-      console.log(`🔍 Advanced search: "${query}" in ${folders.length} folder(s)`);
+      console.error(`🔍 Advanced search: "${query}" in ${folders.length} folder(s)`);
 
       // Build optimized search filter
       const searchFilter = this.graphOptimizer.optimizeSearchQuery(query, {
@@ -2717,7 +2717,7 @@ export class EmailService {
       const complexity = folders.length > 2 || searchIn.length > 2 ? 'complex' : 'moderate';
       this.cacheManager.cacheSearchResults(cacheKey, limitedResults, complexity);
 
-      console.log(`✅ Advanced search completed: ${limitedResults.length} results`);
+      console.error(`✅ Advanced search completed: ${limitedResults.length} results`);
       return limitedResults;
     } catch (error) {
       console.error('❌ Error in advanced optimized search:', error);
@@ -2786,7 +2786,7 @@ export class EmailService {
       maxEmails = 100
     } = options;
 
-    console.log(`🧹 Iniciando assistente de limpeza (${dryRun ? 'simulação' : 'execução'})`);
+    console.error(`🧹 Iniciando assistente de limpeza (${dryRun ? 'simulação' : 'execução'})`);
 
     const result = {
       emailsAnalyzed: 0,
@@ -2892,7 +2892,7 @@ export class EmailService {
         result.emailsDeleted = result.emailsToClean;
       }
 
-      console.log(`✅ Assistente de limpeza concluído: ${result.emailsToClean} emails ${dryRun ? 'identificados' : 'deletados'}`);
+      console.error(`✅ Assistente de limpeza concluído: ${result.emailsToClean} emails ${dryRun ? 'identificados' : 'deletados'}`);
       return result;
     } catch (error) {
       console.error('❌ Erro no assistente de limpeza:', error);
@@ -2938,34 +2938,34 @@ export class EmailService {
    * Warm up cache with common patterns
    */
   async warmUpCache(): Promise<void> {
-    console.log('🔥 Warming up cache with common patterns...');
+    console.error('🔥 Warming up cache with common patterns...');
     await this.cacheManager.preloadCommonPatterns(this);
-    console.log('✅ Cache warm-up completed');
+    console.error('✅ Cache warm-up completed');
   }
 
   /**
    * Reset all optimizations and clear caches
    */
   resetOptimizations(): void {
-    console.log('🔄 Resetting all optimizations...');
+    console.error('🔄 Resetting all optimizations...');
     this.cacheManager.clear();
     this.graphOptimizer.reset();
     this.parallelProcessor.clear();
-    console.log('✅ Optimizations reset completed');
+    console.error('✅ Optimizations reset completed');
   }
 
   /**
    * Graceful shutdown and cleanup of resources
    */
   destroy(): void {
-    console.log('💥 Shutting down EmailService optimizations...');
+    console.error('💥 Shutting down EmailService optimizations...');
     
     try {
       this.cacheManager.destroy();
       this.graphOptimizer.reset();
       this.parallelProcessor.destroy();
       
-      console.log('✅ EmailService cleanup completed');
+      console.error('✅ EmailService cleanup completed');
     } catch (error) {
       console.error('❌ Error during EmailService cleanup:', error);
     }

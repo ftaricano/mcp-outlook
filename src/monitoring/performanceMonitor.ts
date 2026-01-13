@@ -60,7 +60,7 @@ export class PerformanceMonitor extends EventEmitter {
       ...alertConfig
     };
 
-    console.log('📊 PerformanceMonitor initialized with alerts:', this.alertConfig);
+    console.error('📊 PerformanceMonitor initialized with alerts:', this.alertConfig);
   }
 
   /**
@@ -341,7 +341,7 @@ export class PerformanceMonitor extends EventEmitter {
       }
     }, intervalMs);
 
-    console.log(`📊 Real-time monitoring started (interval: ${intervalMs}ms)`);
+    console.error(`📊 Real-time monitoring started (interval: ${intervalMs}ms)`);
   }
 
   /**
@@ -351,7 +351,7 @@ export class PerformanceMonitor extends EventEmitter {
     if (this.monitoringInterval) {
       clearInterval(this.monitoringInterval);
       this.monitoringInterval = undefined;
-      console.log('📊 Real-time monitoring stopped');
+      console.error('📊 Real-time monitoring stopped');
     }
   }
 
@@ -464,7 +464,7 @@ export class PerformanceMonitor extends EventEmitter {
     this.operationCounters.clear();
     this.responseTimesHistogram.clear();
     this.startTime = Date.now();
-    console.log('📊 PerformanceMonitor reset completed');
+    console.error('📊 PerformanceMonitor reset completed');
   }
 
   /**
@@ -493,6 +493,6 @@ export class PerformanceMonitor extends EventEmitter {
     this.stopRealTimeMonitoring();
     this.reset();
     this.removeAllListeners();
-    console.log('📊 PerformanceMonitor destroyed');
+    console.error('📊 PerformanceMonitor destroyed');
   }
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import dotenv from 'dotenv';
-dotenv.config();
+dotenv.config({ quiet: true });
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -19,6 +19,7 @@ import { HandlerRegistry } from './handlers/HandlerRegistry.js';
 import { PerformanceMonitor } from './monitoring/performanceMonitor.js';
 import { AdvancedLogger } from './logging/advancedLogger.js';
 import { IntegratedMonitoring } from './monitoring/integratedMonitoring.js';
+import { LockManager } from './utils/lockManager.js';
 
 class EmailMCPServer {
   private server: Server;
@@ -29,8 +30,18 @@ class EmailMCPServer {
   public performanceMonitor: PerformanceMonitor;
   public logger: AdvancedLogger;
   public integratedMonitoring: IntegratedMonitoring;
+  private lockManager: LockManager;
 
   constructor() {
+    // Acquire lock immediately
+    this.lockManager = new LockManager();
+    try {
+      this.lockManager.acquire();
+    } catch (error) {
+      console.error('❌ Failed to acquire lock:', error);
+      process.exit(1);
+    }
+
     this.server = new Server(
       {
         name: 'mcp-email-server',
@@ -211,12 +222,15 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       if (server.integratedMonitoring) {
         await server.integratedMonitoring.destroy();
       }
-      if (server.logger) {
         await server.logger.destroy();
-      }
+
       if (server.performanceMonitor) {
         server.performanceMonitor.destroy();
       }
+      
+      // Release lock
+      // @ts-ignore - access private property for shutdown
+      server.lockManager.release();
       
       console.error('✅ Graceful shutdown completed');
       process.exit(0);

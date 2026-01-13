@@ -83,7 +83,7 @@ export class SecurityManager extends EventEmitter {
     this.securityEvents = [];
     this.encryptionKey = this.generateEncryptionKey();
 
-    console.log('🔒 SecurityManager initialized with enhanced protection');
+    console.error('🔒 SecurityManager initialized with enhanced protection');
   }
 
   /**
@@ -501,7 +501,7 @@ export class SecurityManager extends EventEmitter {
     
     const removed = initialLength - this.auditLog.length;
     if (removed > 0) {
-      console.log(`🧹 Cleared ${removed} old audit entries`);
+      console.error(`🧹 Cleared ${removed} old audit entries`);
     }
     
     return removed;
@@ -923,7 +923,7 @@ export class SecurityManager extends EventEmitter {
     // Store interval for cleanup
     (this as any).monitoringInterval = monitoringInterval;
     
-    console.log('🛡️ Real-time security monitoring started');
+    console.error('🛡️ Real-time security monitoring started');
   }
 
   /**
@@ -950,7 +950,7 @@ export class SecurityManager extends EventEmitter {
       }
 
       // Log security status
-      console.log(`🔍 Security check completed - Risk Level: ${report.summary.overallRiskLevel}`);
+      console.error(`🔍 Security check completed - Risk Level: ${report.summary.overallRiskLevel}`);
     } catch (error) {
       console.error('❌ Security monitoring error:', error);
     }
@@ -964,7 +964,7 @@ export class SecurityManager extends EventEmitter {
     if (interval) {
       clearInterval(interval);
       delete (this as any).monitoringInterval;
-      console.log('🛡️ Security monitoring stopped');
+      console.error('🛡️ Security monitoring stopped');
     }
   }
 
@@ -977,6 +977,6 @@ export class SecurityManager extends EventEmitter {
     this.rateLimitTracking.clear();
     this.securityEvents = [];
     this.removeAllListeners();
-    console.log('🔒 SecurityManager destroyed');
+    console.error('🔒 SecurityManager destroyed');
   }
 }

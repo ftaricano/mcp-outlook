@@ -312,7 +312,7 @@ export class AdvancedLogger extends EventEmitter {
         console.debug(logMessage, entry.context || '');
         break;
       case 'info':
-        console.log(logMessage, entry.context || '');
+        console.error(logMessage, entry.context || '');
         break;
       case 'warn':
         console.warn(logMessage, entry.context || '');
@@ -429,7 +429,7 @@ export class AdvancedLogger extends EventEmitter {
         const filesToDelete = logFiles.slice(this.config.maxFiles);
         for (const file of filesToDelete) {
           await fs.unlink(file.path);
-          console.log(`🗑️ Deleted old log file: ${file.name}`);
+          console.error(`🗑️ Deleted old log file: ${file.name}`);
         }
       }
 
@@ -438,7 +438,7 @@ export class AdvancedLogger extends EventEmitter {
       for (const file of logFiles) {
         if (file.stats && file.stats.birthtime.getTime() < retentionCutoff) {
           await fs.unlink(file.path);
-          console.log(`🗑️ Deleted expired log file: ${file.name}`);
+          console.error(`🗑️ Deleted expired log file: ${file.name}`);
         }
       }
     } catch (error) {

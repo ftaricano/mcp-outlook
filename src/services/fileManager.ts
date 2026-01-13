@@ -22,7 +22,7 @@ export class FileManager {
   private ensureDownloadDirectory(): void {
     if (!fs.existsSync(this.downloadDir)) {
       fs.mkdirSync(this.downloadDir, { recursive: true });
-      console.log(`📁 Diretório criado: ${this.downloadDir}`);
+      console.error(`📁 Diretório criado: ${this.downloadDir}`);
     }
   }
 
@@ -74,10 +74,10 @@ export class FileManager {
         });
       }
 
-      console.log('💾 Iniciando salvamento otimizado...');
-      console.log(`   Arquivo: ${filename}`);
-      console.log(`   Tamanho original: ${attachment.size} bytes`);
-      console.log(`   Destino: ${filePath}`);
+      console.error('💾 Iniciando salvamento otimizado...');
+      console.error(`   Arquivo: ${filename}`);
+      console.error(`   Tamanho original: ${attachment.size} bytes`);
+      console.error(`   Destino: ${filePath}`);
 
       // Processar Base64 em chunks para evitar problemas de memória
       const result = await this.saveBase64ToFileOptimized(
@@ -90,7 +90,7 @@ export class FileManager {
       let integrity = true;
       if (options.validateIntegrity) {
         integrity = await this.validateFileIntegrity(filePath, attachment.size);
-        console.log(`🔍 Integridade: ${integrity ? '✅ OK' : '❌ FALHA'}`);
+        console.error(`🔍 Integridade: ${integrity ? '✅ OK' : '❌ FALHA'}`);
       }
 
       return {
@@ -136,7 +136,7 @@ export class FileManager {
         writeStream.on('finish', () => {
           // Verificar tamanho final
           const stats = fs.statSync(filePath);
-          console.log(`✅ Arquivo salvo: ${stats.size} bytes`);
+          console.error(`✅ Arquivo salvo: ${stats.size} bytes`);
           resolve({ success: true, fileSize: stats.size });
         });
 
@@ -276,7 +276,7 @@ export class FileManager {
         if (file.modified.getTime() < cutoffTime) {
           fs.unlinkSync(file.path);
           cleanedCount++;
-          console.log(`🗑️  Removido arquivo antigo: ${file.name}`);
+          console.error(`🗑️  Removido arquivo antigo: ${file.name}`);
         }
       }
 
@@ -320,7 +320,7 @@ export class FileManager {
     error?: string;
   }> {
     try {
-      console.log(`📎 Codificando arquivo para anexo: ${filePath}`);
+      console.error(`📎 Codificando arquivo para anexo: ${filePath}`);
 
       // 1. Verificar se arquivo existe
       if (!fs.existsSync(filePath)) {
@@ -332,8 +332,8 @@ export class FileManager {
       const fileSize = stats.size;
       const fileName = path.basename(filePath);
 
-      console.log(`   Nome: ${fileName}`);
-      console.log(`   Tamanho: ${(fileSize / 1024).toFixed(1)}KB`);
+      console.error(`   Nome: ${fileName}`);
+      console.error(`   Tamanho: ${(fileSize / 1024).toFixed(1)}KB`);
 
       // 3. Verificar tamanho (limite de 15MB para Microsoft Graph)
       const maxSize = 15 * 1024 * 1024; // 15MB
@@ -343,10 +343,10 @@ export class FileManager {
 
       // 4. Detectar MIME type baseado na extensão
       const contentType = this.detectContentType(filePath);
-      console.log(`   Tipo MIME: ${contentType}`);
+      console.error(`   Tipo MIME: ${contentType}`);
 
       // 5. Ler e codificar arquivo
-      console.log('🔄 Lendo e codificando arquivo...');
+      console.error('🔄 Lendo e codificando arquivo...');
       const fileBuffer = fs.readFileSync(filePath);
       const base64Content = fileBuffer.toString('base64');
 
@@ -356,9 +356,9 @@ export class FileManager {
         console.warn(`⚠️  Diferença de tamanho após codificação: original=${fileSize}, decodificado=${decodedSize}`);
       }
 
-      console.log(`✅ Arquivo codificado com sucesso`);
-      console.log(`   Base64 length: ${base64Content.length} caracteres`);
-      console.log(`   Tamanho decodificado: ${decodedSize} bytes`);
+      console.error(`✅ Arquivo codificado com sucesso`);
+      console.error(`   Base64 length: ${base64Content.length} caracteres`);
+      console.error(`   Tamanho decodificado: ${decodedSize} bytes`);
 
       return {
         success: true,
