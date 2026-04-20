@@ -189,5 +189,3 @@ describe('EmailSummarizer.summarizeEmailsBatch', () => {
   });
 });
 
-// Make sure vi is importable in this test file after the helper uses it above.
-import { vi } from 'vitest';
