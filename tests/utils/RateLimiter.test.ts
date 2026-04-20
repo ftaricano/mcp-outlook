@@ -45,8 +45,11 @@ describe('RateLimiter.executeWithRetry', () => {
     const op = vi.fn().mockRejectedValue(lastErr);
 
     const promise = limiter.executeWithRetry(op, 'test');
+    // Attach a catch handler synchronously so the rejection isn't classified
+    // as unhandled while fake timers advance.
+    const assertion = expect(promise).rejects.toThrow('always fails');
     await vi.runAllTimersAsync();
-    await expect(promise).rejects.toThrow('always fails');
+    await assertion;
     expect(op).toHaveBeenCalledTimes(3);
   });
 
