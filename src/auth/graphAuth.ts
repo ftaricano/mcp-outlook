@@ -15,6 +15,7 @@ export class GraphAuthProvider implements AuthenticationProvider {
   private config: GraphConfig;
   private accessToken: string | null = null;
   private tokenExpiresAt: Date | null = null;
+  private pendingAcquisition: Promise<string> | null = null;
 
   constructor(env: AppEnv) {
     this.config = {
