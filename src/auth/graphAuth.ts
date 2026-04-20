@@ -33,58 +33,51 @@ export class GraphAuthProvider implements AuthenticationProvider {
   }
 
   async getAccessToken(): Promise<string> {
-    if (this.accessToken && this.tokenExpiresAt && this.tokenExpiresAt > new Date()) {
+    // Refresh 60s before actual expiry to avoid racing Graph with a stale token.
+    const now = Date.now();
+    const refreshThreshold = 60_000;
+    if (
+      this.accessToken &&
+      this.tokenExpiresAt &&
+      this.tokenExpiresAt.getTime() - now > refreshThreshold
+    ) {
       return this.accessToken;
     }
-    
-    try {
-      this.ensureConfigured();
-      
-      const clientCredentialRequest: ClientCredentialRequest = {
-        scopes: this.config!.scopes,
-      };
 
-      const response = await this.msalInstance!.acquireTokenByClientCredential(clientCredentialRequest);
-      
-      if (!response || !response.accessToken) {
-        throw new Error('Falha ao obter token de acesso');
+    try {
+      const request: ClientCredentialRequest = { scopes: this.config.scopes };
+      const response = await this.msalInstance.acquireTokenByClientCredential(request);
+
+      if (!response?.accessToken) {
+        throw new Error('MSAL did not return an access token');
       }
 
       this.accessToken = response.accessToken;
-      this.tokenExpiresAt = response.expiresOn || new Date(Date.now() + 3600000); // 1 hora como fallback
-
+      this.tokenExpiresAt = response.expiresOn ?? new Date(now + 3_600_000);
       return this.accessToken;
     } catch (error) {
-      throw new Error(`Falha na autenticação: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
+      throw new Error(
+        `Authentication failed: ${error instanceof Error ? error.message : 'unknown error'}`
+      );
     }
   }
 
   getGraphClient(): Client {
-    return Client.initWithMiddleware({
-      authProvider: this
-    });
+    return Client.initWithMiddleware({ authProvider: this });
   }
 
+  /**
+   * Validate that the credentials resolve to a working Graph token.
+   * Returns true only if token acquisition succeeds. Avoids the previous
+   * `/users` top(1) probe which required `User.Read.All` even when the
+   * caller only needs Mail permissions.
+   */
   async validateConnection(): Promise<boolean> {
     try {
-      this.ensureConfigured();
-      const client = this.getGraphClient();
-      // Para Client Credentials flow, testamos com um endpoint que funciona para aplicações
-      await client.api('/users').top(1).get();
-      
+      await this.getAccessToken();
       return true;
-    } catch (error) {
+    } catch {
       return false;
-    }
-  }
-
-  private ensureConfigured(): void {
-    if (this.configError) {
-      throw this.configError;
-    }
-
-    if (!this.config || !this.msalInstance) {
-      throw new Error('Configuração do Microsoft Graph não inicializada');
     }
   }
 }
