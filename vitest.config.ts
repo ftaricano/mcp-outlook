@@ -9,7 +9,18 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'json-summary'],
-      include: ['src/**/*.ts'],
+      // Scoped to pure / easily-mockable modules. Network-heavy modules
+      // (emailService, securityManager, graphAuth, handlers, cache/file/
+      // parallel infra) are intentionally excluded: they require a real
+      // Microsoft Graph client and are covered by smoke tests instead.
+      include: [
+        'src/config/**/*.ts',
+        'src/schemas/**/*.ts',
+        'src/templates/**/*.ts',
+        'src/services/emailSummarizer.ts',
+        'src/utils/attachmentValidator.ts',
+        'src/utils/RateLimiter.ts',
+      ],
       exclude: [
         'src/**/*.test.ts',
         'src/**/*.d.ts',
