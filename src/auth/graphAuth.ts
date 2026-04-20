@@ -45,6 +45,18 @@ export class GraphAuthProvider implements AuthenticationProvider {
       return this.accessToken;
     }
 
+    // De-dup concurrent cold-cache callers onto a single acquisition.
+    if (this.pendingAcquisition) {
+      return this.pendingAcquisition;
+    }
+
+    this.pendingAcquisition = this.acquireToken().finally(() => {
+      this.pendingAcquisition = null;
+    });
+    return this.pendingAcquisition;
+  }
+
+  private async acquireToken(): Promise<string> {
     try {
       const request: ClientCredentialRequest = { scopes: this.config.scopes };
       const response = await this.msalInstance.acquireTokenByClientCredential(request);
@@ -52,9 +64,12 @@ export class GraphAuthProvider implements AuthenticationProvider {
       if (!response?.accessToken) {
         throw new Error('MSAL did not return an access token');
       }
+      if (!response.expiresOn) {
+        throw new Error('MSAL did not return a token expiry; refusing to cache');
+      }
 
       this.accessToken = response.accessToken;
-      this.tokenExpiresAt = response.expiresOn ?? new Date(now + 3_600_000);
+      this.tokenExpiresAt = response.expiresOn;
       return this.accessToken;
     } catch (error) {
       throw new Error(
