@@ -9,6 +9,8 @@ import { FolderHandler } from './FolderHandler.js';
 import { SearchHandler } from './SearchHandler.js';
 import { BatchHandler } from './BatchHandler.js';
 import { HandlerResult } from './BaseHandler.js';
+import { validateToolInput } from '../schemas/toolSchemas.js';
+import { getToolSchemas as buildToolSchemas } from '../schemas/jsonSchemaFromZod.js';
 
 export class HandlerRegistry {
   private emailHandler: EmailHandler;
