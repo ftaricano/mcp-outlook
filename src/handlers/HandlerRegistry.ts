@@ -178,9 +178,16 @@ export class HandlerRegistry {
    * This method should be called from the main index.ts to register tools
    */
   static getToolSchemas(): any[] {
-    return [
-      // Email Management Tools
-      {
+    return buildToolSchemas();
+  }
+}
+
+// --- legacy inline schemas removed; see src/schemas/*.ts ---
+declare const __LEGACY_UNUSED__: any;
+const __legacyRemoved = (): any[] => {
+  return [
+    // placeholder to allow the old block below to be excised in one edit
+    {
         name: 'list_emails',
         description: 'Lista emails da caixa de entrada ou de uma pasta específica',
         inputSchema: {
