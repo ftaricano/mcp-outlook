@@ -59,7 +59,10 @@ describe('RateLimiter.executeWithRetry', () => {
     authErr.response = { status: 401 };
     const op = vi.fn().mockRejectedValue(authErr);
 
-    await expect(limiter.executeWithRetry(op, 'test')).rejects.toBe(authErr);
+    const promise = limiter.executeWithRetry(op, 'test');
+    const assertion = expect(promise).rejects.toBe(authErr);
+    await vi.runAllTimersAsync();
+    await assertion;
     expect(op).toHaveBeenCalledTimes(1);
   });
 
@@ -69,7 +72,10 @@ describe('RateLimiter.executeWithRetry', () => {
     err.response = { status: 404 };
     const op = vi.fn().mockRejectedValue(err);
 
-    await expect(limiter.executeWithRetry(op, 'test')).rejects.toBe(err);
+    const promise = limiter.executeWithRetry(op, 'test');
+    const assertion = expect(promise).rejects.toBe(err);
+    await vi.runAllTimersAsync();
+    await assertion;
     expect(op).toHaveBeenCalledTimes(1);
   });
 
