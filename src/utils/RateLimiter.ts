@@ -44,7 +44,7 @@ export class RateLimiter {
     operation: () => Promise<T>,
     context: string = 'operation'
   ): Promise<T> {
-    let lastError: Error;
+    let lastError: Error | undefined;
     
     for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
       try {
