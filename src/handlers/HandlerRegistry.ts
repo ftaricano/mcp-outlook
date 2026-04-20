@@ -182,11 +182,7 @@ export class HandlerRegistry {
   }
 }
 
-// --- legacy inline schemas removed; see src/schemas/*.ts ---
-declare const __LEGACY_UNUSED__: any;
-const __legacyRemoved = (): any[] => {
-  return [
-    // placeholder to allow the old block below to be excised in one edit
+const __LEGACY_STUB__: any[] = [
     {
         name: 'list_emails',
         description: 'Lista emails da caixa de entrada ou de uma pasta específica',
