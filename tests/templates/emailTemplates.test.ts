@@ -48,12 +48,19 @@ describe('EmailTemplateEngine.formatNewEmail', () => {
     expect(html).toContain('photo.jpg');
   });
 
-  it('omits header when showHeader=false', () => {
-    const html = engine.formatNewEmail(
+  it('omits header h2 when showHeader=false', () => {
+    const withHeader = engine.formatNewEmail(
+      { body: 'b' },
+      { showHeader: true, companyName: 'ACME Corp' }
+    );
+    const withoutHeader = engine.formatNewEmail(
       { body: 'b' },
       { showHeader: false, companyName: 'ACME Corp' }
     );
-    expect(html).not.toContain('ACME Corp');
+    // The header section renders an <h2> with the company name; the footer
+    // also uses the company name, so we assert on the header-only h2 markup.
+    expect(withHeader).toMatch(/<h2[^>]*>\s*\n?\s*ACME Corp/);
+    expect(withoutHeader).not.toMatch(/<h2[^>]*>\s*\n?\s*ACME Corp/);
   });
 
   it('renders footer by default with current year', () => {
