@@ -66,7 +66,7 @@ export class RateLimiter {
     }
     
     console.error(`❌ ${context} failed after ${this.maxRetries} attempts`);
-    throw lastError!;
+    throw lastError ?? new Error(`${context} failed after ${this.maxRetries} attempts`);
   }
 
   /**
