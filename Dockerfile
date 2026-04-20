@@ -36,10 +36,12 @@ RUN mkdir -p /app/downloads && chown -R node:node /app
 # Drop privileges.
 USER node
 
-# MCP stdio servers have no HTTP port to probe — the healthcheck instead
-# verifies that `node dist/index.js --help`-style syntax imports cleanly.
-# (A stdio server exits immediately if stdin closes, so we can't run it.)
+# MCP stdio servers have no HTTP port to probe. The healthcheck imports a
+# pure, side-effect-free module from the compiled output to verify the dist
+# is intact without booting the server (which would consume stdin/stdout and
+# conflict with the live stdio transport). The entrypoint is ESM, so we use
+# dynamic import, not require().
 HEALTHCHECK --interval=60s --timeout=10s --start-period=5s --retries=3 \
-  CMD node -e "require('./dist/index.js')" > /dev/null 2>&1 || exit 1
+  CMD node --input-type=module -e "await import('./dist/config/env.js')" > /dev/null 2>&1 || exit 1
 
 CMD ["node", "dist/index.js"]
