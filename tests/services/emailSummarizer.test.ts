@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { EmailSummarizer } from '../../src/services/emailSummarizer.js';
 
 function fakeEmail(overrides: any = {}) {
