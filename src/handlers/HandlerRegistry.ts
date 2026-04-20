@@ -38,6 +38,12 @@ export class HandlerRegistry {
    * Route tool request to appropriate handler
    */
   async handleTool(name: string, args: any): Promise<HandlerResult> {
+    const validation = validateToolInput(name, args);
+    if (!validation.ok) {
+      throw new Error(`Invalid arguments for ${name}: ${validation.error}`);
+    }
+    args = validation.data;
+
     switch (name) {
       // Email operations
       case 'list_emails':
