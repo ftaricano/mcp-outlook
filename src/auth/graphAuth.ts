@@ -1,6 +1,7 @@
 import { Client } from '@microsoft/microsoft-graph-client';
 import { AuthenticationProvider } from '@microsoft/microsoft-graph-client';
 import { ConfidentialClientApplication, ClientCredentialRequest } from '@azure/msal-node';
+import { AppEnv } from '../config/env.js';
 
 interface GraphConfig {
   clientId: string;
@@ -10,49 +11,25 @@ interface GraphConfig {
 }
 
 export class GraphAuthProvider implements AuthenticationProvider {
-  private msalInstance: ConfidentialClientApplication | null = null;
-  private config: GraphConfig | null = null;
-  private configError: Error | null = null;
+  private msalInstance: ConfidentialClientApplication;
+  private config: GraphConfig;
   private accessToken: string | null = null;
   private tokenExpiresAt: Date | null = null;
 
-  constructor() {
-    try {
-      this.config = this.getConfigFromEnv();
-      this.msalInstance = new ConfidentialClientApplication({
-        auth: {
-          clientId: this.config.clientId,
-          clientSecret: this.config.clientSecret,
-          authority: `https://login.microsoftonline.com/${this.config.tenantId}`,
-        },
-      });
-    } catch (error) {
-      this.configError = error instanceof Error ? error : new Error('Falha ao carregar configuração do Microsoft Graph');
-    }
-  }
-
-  private getConfigFromEnv(): GraphConfig {
-    const clientId = process.env.MICROSOFT_GRAPH_CLIENT_ID;
-    const clientSecret = process.env.MICROSOFT_GRAPH_CLIENT_SECRET;
-    const tenantId = process.env.MICROSOFT_GRAPH_TENANT_ID;
-
-    if (!clientId || !clientSecret || !tenantId) {
-      throw new Error(
-        'Variáveis de ambiente necessárias não foram definidas. ' +
-        'Defina MICROSOFT_GRAPH_CLIENT_ID, MICROSOFT_GRAPH_CLIENT_SECRET e MICROSOFT_GRAPH_TENANT_ID'
-      );
-    }
-
-    // Para Client Credentials flow, usar .default é obrigatório
-    // As permissões específicas são configuradas no Azure AD Portal
-    const scopes = ['https://graph.microsoft.com/.default'];
-
-    return {
-      clientId,
-      clientSecret,
-      tenantId,
-      scopes
+  constructor(env: AppEnv) {
+    this.config = {
+      clientId: env.MICROSOFT_GRAPH_CLIENT_ID,
+      clientSecret: env.MICROSOFT_GRAPH_CLIENT_SECRET,
+      tenantId: env.MICROSOFT_GRAPH_TENANT_ID,
+      scopes: ['https://graph.microsoft.com/.default'],
     };
+    this.msalInstance = new ConfidentialClientApplication({
+      auth: {
+        clientId: this.config.clientId,
+        clientSecret: this.config.clientSecret,
+        authority: `https://login.microsoftonline.com/${this.config.tenantId}`,
+      },
+    });
   }
 
   async getAccessToken(): Promise<string> {
