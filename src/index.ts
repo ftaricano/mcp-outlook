@@ -209,9 +209,24 @@ class EmailMCPServer {
   }
 }
 
+function bootstrap(): EmailMCPServer {
+  let env: AppEnv;
+  try {
+    env = loadEnv();
+  } catch (error) {
+    if (error instanceof EnvValidationError) {
+      console.error(`\n[mcp-email] ${error.message}\n`);
+    } else {
+      console.error('[mcp-email] Failed to load environment:', error);
+    }
+    process.exit(1);
+  }
+  return new EmailMCPServer(env);
+}
+
 // Run if this is the main file
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const server = new EmailMCPServer();
+  const server = bootstrap();
   
   // Graceful shutdown handling
   const gracefulShutdown = async (signal: string) => {
