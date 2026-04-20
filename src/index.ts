@@ -10,6 +10,7 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 
+import { AppEnv, EnvValidationError, loadEnv } from './config/env.js';
 import { GraphAuthProvider } from './auth/graphAuth.js';
 import { EmailService } from './services/emailService.js';
 import { EmailSummarizer } from './services/emailSummarizer.js';
@@ -31,21 +32,22 @@ class EmailMCPServer {
   public logger: AdvancedLogger;
   public integratedMonitoring: IntegratedMonitoring;
   private lockManager: LockManager;
+  private env: AppEnv;
 
-  constructor() {
-    // Acquire lock immediately
+  constructor(env: AppEnv) {
+    this.env = env;
     this.lockManager = new LockManager();
     try {
       this.lockManager.acquire();
     } catch (error) {
-      console.error('❌ Failed to acquire lock:', error);
+      console.error('Failed to acquire lock:', error);
       process.exit(1);
     }
 
     this.server = new Server(
       {
-        name: 'mcp-email-server',
-        version: '2.0.0',
+        name: this.env.MCP_SERVER_NAME,
+        version: this.env.MCP_SERVER_VERSION,
       },
       {
         capabilities: {
@@ -54,32 +56,29 @@ class EmailMCPServer {
       }
     );
 
-    this.authProvider = new GraphAuthProvider();
+    this.authProvider = new GraphAuthProvider(this.env);
     this.emailService = new EmailService(this.authProvider);
     this.emailSummarizer = new EmailSummarizer();
-    
-    // Initialize monitoring and logging
+
     this.logger = new AdvancedLogger({
-      enableFileLogging: false, // Desabilitado para evitar criação de arquivos de log
-      enableConsoleLogging: false, // Desabilitado para reduzir verbosidade
-      logLevel: 'error', // Apenas erros críticos
+      enableFileLogging: false,
+      enableConsoleLogging: false,
+      logLevel: this.env.LOG_LEVEL,
       logDirectory: './logs',
       enablePerformanceLogging: false,
-      enableAuditTrail: false
+      enableAuditTrail: false,
     });
 
     this.performanceMonitor = new PerformanceMonitor({
       responseTimeThreshold: 3000,
       errorRateThreshold: 5,
       memoryThreshold: 80,
-      throughputMinThreshold: 10
+      throughputMinThreshold: 10,
     });
-    
-    // Initialize security and MCP best practices
+
     const securityManager = new SecurityManager();
     const mcpBestPractices = new MCPBestPractices(securityManager);
-    
-    // Initialize integrated monitoring
+
     this.integratedMonitoring = new IntegratedMonitoring(
       this.performanceMonitor,
       this.logger,
@@ -89,14 +88,14 @@ class EmailMCPServer {
         enableAdvancedLogging: true,
         enableSecurityMonitoring: true,
         enableRealTimeAlerts: true,
-        monitoringInterval: 60000
+        monitoringInterval: 60_000,
       }
     );
-    
+
     this.handlerRegistry = new HandlerRegistry(
-      this.emailService, 
-      this.emailSummarizer, 
-      securityManager, 
+      this.emailService,
+      this.emailSummarizer,
+      securityManager,
       mcpBestPractices
     );
 
