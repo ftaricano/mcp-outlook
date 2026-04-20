@@ -43,6 +43,9 @@ jobs:
       - name: Test
         run: npm run test -- --reporter=default
 
+      - name: Smoke test (MCP protocol)
+        run: npm run smoke
+
       - name: Coverage
         if: matrix.node == '20'
         run: npm run test:coverage
