@@ -33,6 +33,7 @@
   "license": "MIT",
   "dependencies": {
     "@azure/msal-node": "^3.8.0",
+    "_comment_msal": "Pinned to 3.x — 4.x/5.x introduce ESM-only changes that require further migration. jws vuln mitigated via 3.x."
     "@microsoft/microsoft-graph-client": "^3.0.7",
     "@microsoft/microsoft-graph-types": "^2.40.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
