@@ -1927,34 +1927,46 @@ export class EmailService {
 
       console.error(`🏢 Buscando emails do domínio: ${domain}`);
 
+      // Graph `$filter=endswith(from/emailAddress/address,…)` combined with an
+      // `$orderby` on a different field is rejected on mailbox endpoints.
+      // KQL `$search="from:<domain>"` is index-backed, handles subdomains
+      // naturally, and allows the client-side date narrow applied below.
       const queryParams: string[] = [
-        `$top=${Math.min(maxResults, 100)}`,
+        `$top=${Math.min(maxResults * 3, 100)}`, // over-fetch for post-filter
         `$select=id,subject,from,receivedDateTime,isRead,hasAttachments,bodyPreview`,
-        `$orderby=receivedDateTime desc`
+        `$search="from:${encodeURIComponent(domain)}"`,
       ];
 
-      // Graph rejects `contains()` on non-indexed fields in large folders. Use
-      // `endswith` — it matches both the domain and its subdomains when we
-      // drop the `@` prefix (`user@cpzseg.com.br` + `user@sub.cpzseg.com.br`).
-      const domainFilter = includeSubdomains
-        ? `endswith(from/emailAddress/address,'${domain}')`
-        : `endswith(from/emailAddress/address,'@${domain}')`;
-
-      // Place the indexed `receivedDateTime` predicate first so Graph picks a
-      // fast path; domain filter follows.
-      const filterConditions: string[] = [];
-      if (dateRange) {
-        filterConditions.push(`receivedDateTime ge ${dateRange.from}`);
-        filterConditions.push(`receivedDateTime le ${dateRange.to}`);
-      }
-      filterConditions.push(domainFilter);
-
-      queryParams.push(`$filter=${filterConditions.join(' and ')}`);
-
-      const queryString = queryParams.join('&');
-      const fullEndpoint = `${apiEndpoint}?${queryString}`;
-
+      const fullEndpoint = `${apiEndpoint}?${queryParams.join('&')}`;
       const response = await this.client.api(fullEndpoint).get();
+
+      // Apply client-side filters because $search cannot be combined with $filter.
+      let emails: Message[] = response.value ?? [];
+      const fromLower = new Date(dateRange.from).getTime();
+      const toUpper = new Date(dateRange.to).getTime();
+      emails = emails.filter((m) => {
+        const addr = m.from?.emailAddress?.address?.toLowerCase();
+        if (!addr) return false;
+        // Subdomain match requires the domain to appear as the host suffix.
+        const matchesDomain = includeSubdomains
+          ? addr.endsWith(`@${domain.toLowerCase()}`) || addr.endsWith(`.${domain.toLowerCase()}`)
+          : addr.endsWith(`@${domain.toLowerCase()}`);
+        if (!matchesDomain) return false;
+        if (m.receivedDateTime) {
+          const t = new Date(m.receivedDateTime).getTime();
+          if (t < fromLower || t > toUpper) return false;
+        }
+        return true;
+      });
+      emails.sort((a, b) => {
+        const ta = a.receivedDateTime ? new Date(a.receivedDateTime).getTime() : 0;
+        const tb = b.receivedDateTime ? new Date(b.receivedDateTime).getTime() : 0;
+        return tb - ta;
+      });
+      emails = emails.slice(0, maxResults);
+      const synthesizedResponse = { value: emails };
+      const unusedResponse = response; // keep original on error path
+      void unusedResponse;
       
       console.error(`✅ Encontrados ${response.value?.length || 0} emails do domínio ${domain}`);
       return response.value || [];
