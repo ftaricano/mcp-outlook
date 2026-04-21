@@ -1921,17 +1921,21 @@ export class EmailService {
         `$orderby=receivedDateTime desc`
       ];
 
-      // Build domain filter
-      const domainFilter = includeSubdomains 
-        ? `contains(from/emailAddress/address,'${domain}')`
+      // Graph rejects `contains()` on non-indexed fields in large folders. Use
+      // `endswith` — it matches both the domain and its subdomains when we
+      // drop the `@` prefix (`user@cpzseg.com.br` + `user@sub.cpzseg.com.br`).
+      const domainFilter = includeSubdomains
+        ? `endswith(from/emailAddress/address,'${domain}')`
         : `endswith(from/emailAddress/address,'@${domain}')`;
 
-      const filterConditions = [domainFilter];
-
+      // Place the indexed `receivedDateTime` predicate first so Graph picks a
+      // fast path; domain filter follows.
+      const filterConditions: string[] = [];
       if (dateRange) {
         filterConditions.push(`receivedDateTime ge ${dateRange.from}`);
         filterConditions.push(`receivedDateTime le ${dateRange.to}`);
       }
+      filterConditions.push(domainFilter);
 
       queryParams.push(`$filter=${filterConditions.join(' and ')}`);
 
