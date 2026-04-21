@@ -180,6 +180,18 @@ export class EmailService {
     }
   }
 
+  async listOrgUsers(options: { limit?: number; search?: string } = {}): Promise<Array<{ id: string; displayName?: string; userPrincipalName?: string; mail?: string }>> {
+    const { limit = 10, search } = options;
+    let req = this.client.api('/users')
+      .top(Math.min(limit, 100))
+      .select('id,displayName,userPrincipalName,mail');
+    if (search) {
+      req = req.filter(`startswith(displayName,'${search.replace(/'/g, "''")}') or startswith(userPrincipalName,'${search.replace(/'/g, "''")}')`);
+    }
+    const response = await req.get();
+    return response.value ?? [];
+  }
+
   async getEmailById(emailId: string): Promise<Message> {
     try {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
