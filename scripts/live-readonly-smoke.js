@@ -97,12 +97,12 @@ async function run(label, fn, { check = (t) => t.length > 0 } = {}) {
   // --- EMAIL READ ---
   const listEmails = await run('list_emails limit:5', () => tool('list_emails', { limit: 5, folder: 'inbox' }));
 
-  // Parse a real email id from the textual output. Graph ids look like
-  // AAMkAD...= and contain letters, digits, _, -, =, /.
-  const idMatches = [...listEmails.text.matchAll(/\b([A-Za-z0-9][A-Za-z0-9_\-\/=]{80,})\b/g)]
-    .map(m => m[1]);
+  // EmailHandler renders "   ID: <full-id>\n" per email. Grab the full line.
+  const idMatches = [...listEmails.text.matchAll(/ID:\s+([^\n\r]+)/g)]
+    .map(m => m[1].trim())
+    .filter(id => id.length > 80);
   const firstEmailId = idMatches[0] ?? null;
-  console.error(`[info] parsed ${idMatches.length} candidate ids, first=${firstEmailId?.slice(0, 30)}...`);
+  console.error(`[info] parsed ${idMatches.length} candidate ids, firstLen=${firstEmailId?.length}`);
 
   await run('summarize_emails_batch limit:2', () => tool('summarize_emails_batch', { limit: 2, priorityOnly: false }));
 
