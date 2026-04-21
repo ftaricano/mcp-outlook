@@ -1964,12 +1964,9 @@ export class EmailService {
         return tb - ta;
       });
       emails = emails.slice(0, maxResults);
-      const synthesizedResponse = { value: emails };
-      const unusedResponse = response; // keep original on error path
-      void unusedResponse;
-      
-      console.error(`✅ Encontrados ${response.value?.length || 0} emails do domínio ${domain}`);
-      return response.value || [];
+
+      console.error(`✅ Encontrados ${emails.length} emails do domínio ${domain}`);
+      return emails;
     } catch (error) {
       console.error(`❌ Erro na busca por domínio ${domain}:`, error);
       throw error;
