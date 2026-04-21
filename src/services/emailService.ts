@@ -1965,11 +1965,17 @@ export class EmailService {
 
       console.error(`📎 Buscando emails com anexos dos tipos: ${fileTypes.join(', ')}`);
 
-      // First get emails with attachments
+      // Graph rejects bare `hasAttachments eq true` on large folders. Narrow
+      // by receivedDateTime first. Use the caller's range if provided;
+      // otherwise default to the last 90 days.
+      const fromIso = dateRange?.from ?? new Date(Date.now() - 90 * 86_400_000).toISOString();
+      const toIso = dateRange?.to ?? new Date().toISOString();
+      const attachmentFilter = `receivedDateTime ge ${fromIso} and receivedDateTime le ${toIso} and hasAttachments eq true`;
+
       const emailsWithAttachments = await this.listEmails({
         maxResults: maxResults * 2, // Get more to filter by attachment type
         folder,
-        filter: 'hasAttachments eq true'
+        filter: attachmentFilter,
       });
 
       const matchingEmails: Message[] = [];
