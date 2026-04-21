@@ -352,9 +352,24 @@ export class EmailHandler extends BaseHandler {
    * Handler for listing users
    */
   async handleListUsers(args: any): Promise<HandlerResult> {
-    const limit = args.limit || 10;
+    const limit = args.limit ?? 10;
     const search = args.search;
 
-    return this.formatError('Funcionalidade de listagem de usuários não implementada no EmailService');
+    try {
+      const users = await this.emailService.listOrgUsers({ limit, search });
+      if (users.length === 0) {
+        return this.formatSuccess('👥 Nenhum usuário encontrado');
+      }
+      let out = `👥 Usuários (${users.length}):\n\n`;
+      users.forEach((u, i) => {
+        out += `${i + 1}. **${u.displayName || '(sem nome)'}**\n`;
+        out += `   UPN: ${u.userPrincipalName || '-'}\n`;
+        if (u.mail) out += `   Email: ${u.mail}\n`;
+        out += `   ID: ${u.id}\n\n`;
+      });
+      return this.formatSuccess(out);
+    } catch (error) {
+      return this.formatError('Erro ao listar usuários (requer User.Read.All)', error);
+    }
   }
 }
