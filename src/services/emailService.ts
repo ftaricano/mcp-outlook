@@ -1900,10 +1900,16 @@ export class EmailService {
     } = {}
   ): Promise<Message[]> {
     try {
-      const { maxResults = 20, includeSubdomains = true, folder = 'inbox', dateRange } = options;
+      const { maxResults = 20, includeSubdomains = true, folder = 'inbox' } = options;
+      // Inject 90-day receivedDateTime narrow when caller didn't pass a date
+      // range, so Graph accepts the filter on large mailboxes.
+      const dateRange = options.dateRange ?? {
+        from: new Date(Date.now() - 90 * 86_400_000).toISOString(),
+        to: new Date().toISOString(),
+      };
 
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-      const apiEndpoint = userEmail === 'me' 
+      const apiEndpoint = userEmail === 'me'
         ? `/me/mailFolders/${folder}/messages`
         : `/users/${userEmail}/mailFolders/${folder}/messages`;
 
