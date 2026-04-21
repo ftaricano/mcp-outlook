@@ -131,7 +131,7 @@ export class EmailService {
       
       try {
         const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-        let apiEndpoint = userEmail === 'me' 
+        const apiEndpoint = userEmail === 'me' 
           ? `/me/mailFolders/${folder}/messages`
           : `/users/${userEmail}/mailFolders/${folder}/messages`;
 
@@ -1700,6 +1700,21 @@ export class EmailService {
     sortOrder?: string;
   }): Promise<Message[]> {
     try {
+      // Graph rejects `$filter` predicates that aren't indexed-first on large
+      // folders ("InefficientFilter"). Inject a 90-day receivedDateTime narrow
+      // when the caller provided any non-date predicate but no date range,
+      // so the query hits a fast path.
+      const needsDateNarrow =
+        !options.dateFrom && !options.dateTo &&
+        (options.hasAttachments !== undefined || options.isRead !== undefined ||
+         options.sender || options.subject);
+      if (needsDateNarrow) {
+        options = {
+          ...options,
+          dateFrom: new Date(Date.now() - 90 * 86_400_000).toISOString(),
+        };
+      }
+
       const {
         query,
         sender,
