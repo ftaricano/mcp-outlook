@@ -20,7 +20,7 @@ src/
   config/env.ts            # zod-validated environment (fail-fast on startup)
   auth/graphAuth.ts        # MSAL client-credentials token provider
   services/emailService.ts # Microsoft Graph wrapper (large — split pending)
-  schemas/toolSchemas.ts   # zod schemas for all 39 tool inputs
+  schemas/toolSchemas.ts   # zod schemas for all 40 tool inputs
   handlers/*.ts            # one handler class per tool domain
   handlers/HandlerRegistry # runtime input validation + dispatch
   logging/logger.ts        # minimal stderr JSON logger
