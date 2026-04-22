@@ -67,6 +67,8 @@ jobs:
         with:
           node-version: 20
           cache: npm
-      - run: npm ci --omit=dev
+      # --ignore-scripts prevents the `prepare` hook (which runs tsc) from
+      # executing without devDependencies available, avoiding a false failure.
+      - run: npm ci --omit=dev --ignore-scripts
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
