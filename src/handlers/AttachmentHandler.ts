@@ -240,7 +240,7 @@ export class AttachmentHandler extends BaseHandler {
   /**
    * Handler for getting download directory info
    */
-  async handleGetDownloadDirectoryInfo(args: any): Promise<HandlerResult> {
+  async handleGetDownloadDirectoryInfo(_args: any): Promise<HandlerResult> {
     try {
       const info = this.emailService.getDownloadDirectoryInfo();
       
