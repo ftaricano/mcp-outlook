@@ -136,7 +136,7 @@ export class EmailSummarizer {
     return summary || 'Resumo não disponível';
   }
 
-  private extractKeyPoints(body: string, subject: string): string[] {
+  private extractKeyPoints(body: string, _subject: string): string[] {
     const keyPoints: string[] = [];
     
     // Busca por listas numeradas ou com bullets
