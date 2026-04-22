@@ -110,26 +110,15 @@ let emailId = null;
   folderId = folderIds[0] ?? null;
   console.error(`[info] created folder id len=${folderId?.length}`);
 
-  // ---- 2. send_email to self ----
-  await run('send_email to self', () => tool('send_email', {
+  // ---- 2. create_draft (replaces send_email — only needs Mail.ReadWrite) ----
+  const draftCreated = await run('create_draft to self', () => tool('create_draft', {
     to: [TARGET],
     subject: SUBJECT,
     body: `Automated write-path smoke. stamp=${stamp}. Safe to delete.`,
   }));
-
-  // ---- 3. poll inbox until the test email shows up (Graph is eventually consistent) ----
-  console.error('[info] waiting for test email to land in inbox…');
-  for (let attempt = 0; attempt < 15 && !emailId; attempt++) {
-    await new Promise((r) => setTimeout(r, 2000));
-    const listed = await tool('list_emails', { limit: 5, folder: 'inbox', search: `__mcp-smoke__ ${stamp}` });
-    const ids = extractIds(txt(listed));
-    if (ids.length > 0) {
-      emailId = ids[0];
-      console.error(`[info] found test email after ${attempt + 1} tries, id len=${emailId.length}`);
-      break;
-    }
-  }
-  record('poll_for_test_email', !!emailId, emailId ? `found after poll` : 'never appeared in inbox');
+  const draftIds = extractIds(draftCreated.text);
+  emailId = draftIds[0] ?? null;
+  console.error(`[info] draft id len=${emailId?.length}`);
 
   // ---- 4. mark_as_read / mark_as_unread round-trip ----
   if (emailId) {
