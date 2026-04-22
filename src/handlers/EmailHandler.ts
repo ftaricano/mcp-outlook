@@ -7,7 +7,6 @@ export class EmailHandler extends BaseHandler {
    */
   async handleListEmails(args: any): Promise<HandlerResult> {
     const limit = args.limit || 10;
-    const skip = args.skip || 0;
     const folder = args.folder || 'inbox';
     const search = args.search;
 
