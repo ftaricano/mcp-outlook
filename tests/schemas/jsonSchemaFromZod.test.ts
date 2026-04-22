@@ -4,8 +4,8 @@ import { getToolSchemas } from '../../src/schemas/jsonSchemaFromZod.js';
 describe('getToolSchemas', () => {
   const entries = getToolSchemas();
 
-  it('returns exactly 39 tool entries', () => {
-    expect(entries.length).toBe(39);
+  it('returns exactly 40 tool entries', () => {
+    expect(entries.length).toBe(40);
   });
 
   it('every entry has a non-empty name and description', () => {
