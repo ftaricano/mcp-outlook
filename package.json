@@ -38,9 +38,9 @@
   "author": "Fernando Taricano",
   "license": "MIT",
   "dependencies": {
-    "@azure/msal-node": "^3.8.0",
+    "@azure/msal-node": "^5.1.4",
     "@microsoft/microsoft-graph-client": "^3.0.7",
-    "@microsoft/microsoft-graph-types": "^2.40.0",
+    "@microsoft/microsoft-graph-types": "^2.43.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "dotenv": "^17.2.1",
     "isomorphic-fetch": "^3.0.0",
