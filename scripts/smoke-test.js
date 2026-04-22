@@ -18,7 +18,7 @@ const repoRoot = resolve(__dirname, '..');
 const serverEntry = resolve(repoRoot, 'dist/index.js');
 const lockFile = resolve(repoRoot, 'mcp-server.lock');
 
-const EXPECTED_TOOL_COUNT = 39;
+const EXPECTED_TOOL_COUNT = 40;
 const TIMEOUT_MS = 15_000;
 
 function log(msg) {
