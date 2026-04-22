@@ -124,7 +124,7 @@ CI (`.github/workflows/ci.yml`) runs lint + typecheck + test + smoke on Node 20 
 
 See [CLAUDE.md](./CLAUDE.md) for the full tool catalog with parameter schemas and examples. Summary by category:
 
-- **Email**: `list_emails`, `send_email`, `reply_to_email`, `mark_as_read`, `mark_as_unread`, `delete_email`, `summarize_email`, `summarize_emails_batch`, `list_users`
+- **Email**: `list_emails`, `send_email`, `create_draft`, `reply_to_email`, `mark_as_read`, `mark_as_unread`, `delete_email`, `summarize_email`, `summarize_emails_batch`, `list_users`
 - **Attachments**: `list_attachments`, `download_attachment`, `download_attachment_to_file`, `download_all_attachments`, `list_downloaded_files`, `get_download_directory_info`, `cleanup_old_downloads`, `export_email_as_attachment`, `encode_file_for_attachment`
 - **Hybrid (large-file)**: `send_email_from_attachment`, `send_email_with_file`
 - **Folders**: `list_folders`, `create_folder`, `move_emails_to_folder`, `copy_emails_to_folder`, `delete_folder`, `get_folder_stats`, `organize_emails_by_rules`
