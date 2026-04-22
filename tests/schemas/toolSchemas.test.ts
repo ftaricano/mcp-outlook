@@ -162,6 +162,24 @@ describe('validateToolInput - realistic second inputs', () => {
 });
 
 describe('validateToolInput - negative cases', () => {
+  it('returns ok:false for invalid input instead of throwing (zod v4 regression)', () => {
+    expect(() =>
+      validateToolInput('send_email', {
+        to: ['not-an-email'],
+        subject: 'x',
+        body: 'y'
+      })
+    ).not.toThrow();
+
+    const r = validateToolInput('send_email', {
+      to: ['not-an-email'],
+      subject: 'x',
+      body: 'y'
+    });
+
+    expect(r.ok).toBe(false);
+  });
+
   it('rejects missing required field `to` in send_email', () => {
     const r = validateToolInput('send_email', { subject: 'x', body: 'y' });
     expect(r.ok).toBe(false);

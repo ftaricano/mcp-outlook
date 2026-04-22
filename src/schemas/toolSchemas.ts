@@ -437,7 +437,7 @@ export function validateToolInput(
     return { ok: true, data: parsed.data };
   }
 
-  const flattened = parsed.error.errors
+  const flattened = parsed.error.issues
     .map((err) => {
       const path = err.path.length > 0 ? err.path.join('.') : '(root)';
       return `${path}: ${err.message}`;
