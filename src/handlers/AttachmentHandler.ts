@@ -203,7 +203,7 @@ export class AttachmentHandler extends BaseHandler {
   /**
    * Handler for listing downloaded files
    */
-  async handleListDownloadedFiles(args: any): Promise<HandlerResult> {
+  async handleListDownloadedFiles(_args: any): Promise<HandlerResult> {
     try {
       const files = this.emailService.getDownloadedFiles();
       
