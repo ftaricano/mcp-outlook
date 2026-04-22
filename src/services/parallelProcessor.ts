@@ -150,7 +150,7 @@ export class ParallelProcessor<T, R> extends EventEmitter {
     });
 
     // Convert emails to tasks
-    const tasks: ParallelTask<any, any>[] = emails.map((email, index) => ({
+    const tasks: ParallelTask<any>[] = emails.map((email, index) => ({
       id: `email-${email.id || index}`,
       data: email,
       priority,
@@ -206,7 +206,7 @@ export class ParallelProcessor<T, R> extends EventEmitter {
     // Prioritize smaller attachments for faster completion
     const sortedAttachments = filteredAttachments.sort((a, b) => (a.size || 0) - (b.size || 0));
 
-    const tasks: ParallelTask<any, any>[] = sortedAttachments.map((attachment, index) => ({
+    const tasks: ParallelTask<any>[] = sortedAttachments.map((attachment, index) => ({
       id: `attachment-${attachment.id || index}`,
       data: attachment,
       priority: (attachment.size || 0) < 1024 * 1024 ? 'high' : 'normal', // Prioritize small files
