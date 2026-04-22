@@ -168,7 +168,14 @@ let emailId = null;
     record('get_folder_stats __mcp-smoke__', false, 'skipped: no folderId');
   }
 
-  // ---- 9. cleanup: delete_folder (this deletes the folder and its contents) ----
+  // ---- 9. delete_email (remove the moved draft — the copy stays in folder for delete_folder) ----
+  if (emailId) {
+    await run('delete_email (moved draft)', () => tool('delete_email', { emailId }));
+  } else {
+    record('delete_email', false, 'skipped: no emailId');
+  }
+
+  // ---- 10. cleanup: delete_folder (removes the folder + the remaining copy) ----
   if (folderId) {
     await run('delete_folder __mcp-smoke__', () => tool('delete_folder', {
       folderId,
