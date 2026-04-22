@@ -117,9 +117,9 @@ export class FileManager {
    * Salva Base64 para arquivo de forma otimizada usando streams
    */
   private async saveBase64ToFileOptimized(
-    base64Content: string, 
-    filePath: string, 
-    expectedSize: number
+    base64Content: string,
+    filePath: string,
+    _expectedSize: number
   ): Promise<{ success: boolean; fileSize: number; error?: string }> {
     return new Promise((resolve) => {
       try {
