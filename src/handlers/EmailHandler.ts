@@ -258,7 +258,7 @@ export class EmailHandler extends BaseHandler {
     }
 
     try {
-      const result = await this.emailService.markAsRead(args.emailId);
+      await this.emailService.markAsRead(args.emailId);
       return this.formatSuccess(`✅ Email marcado como lido`);
     } catch (error) {
       return this.formatError('Erro ao marcar email como lido', error);
