@@ -536,7 +536,7 @@ export class ParallelProcessor<T, R> extends EventEmitter {
     this.priorityQueues.forEach(queue => queue.length = 0);
     
     // Reject all active tasks
-    for (const [taskId, taskPromise] of this.activeTasks.entries()) {
+    for (const [_taskId, taskPromise] of this.activeTasks.entries()) {
       taskPromise.catch(() => {}); // Ignore errors
     }
     this.activeTasks.clear();
