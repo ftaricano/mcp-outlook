@@ -192,6 +192,10 @@ const sendEmailFromAttachmentSchema = z.object({
   bcc: z.array(emailAddress).optional(),
   useTemplate: z.boolean().optional(),
   templateTheme: templateTheme.optional(),
+  // templateCustomizationShape is spread here for schema consistency so zod
+  // does not strip these fields in transit. The hybrid handler currently does
+  // not forward them to templateOptions; that wiring is a follow-up task.
+  ...templateCustomizationShape,
   keepOriginalFile: z.boolean().optional(),
   customFilename: z.string().optional()
 });
@@ -205,6 +209,8 @@ const sendEmailWithFileSchema = z.object({
   bcc: z.array(emailAddress).optional(),
   useTemplate: z.boolean().optional(),
   templateTheme: templateTheme.optional(),
+  // see note on sendEmailFromAttachmentSchema above
+  ...templateCustomizationShape,
   customFilename: z.string().optional()
 });
 
