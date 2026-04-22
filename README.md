@@ -115,7 +115,7 @@ The `HEALTHCHECK` verifies the compiled entrypoint imports cleanly — full func
 | `npm run format` / `npm run format:check` | Prettier |
 | `npm test` | Vitest (unit) |
 | `npm run test:coverage` | Vitest with coverage thresholds |
-| `npm run smoke` | Spawn built server, verify `tools/list` returns 39 entries |
+| `npm run smoke` | Spawn built server, verify `tools/list` returns 40 entries |
 | `npm run audit:prod` | Audit runtime deps only |
 
 CI (`.github/workflows/ci.yml`) runs lint + typecheck + test + smoke on Node 20 and 22.
