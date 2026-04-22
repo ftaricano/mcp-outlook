@@ -8,6 +8,7 @@ import { validateToolInput, toolSchemas } from '../../src/schemas/toolSchemas.js
 const happyInputs: Record<string, unknown> = {
   list_emails: { limit: 10 },
   send_email: { to: ['a@b.com'], subject: 'Hi', body: 'Body text' },
+  create_draft: { to: ['a@b.com'], subject: 'Draft', body: 'Draft body' },
   reply_to_email: { emailId: 'abc123', body: 'Reply' },
   mark_as_read: { emailId: 'abc123' },
   mark_as_unread: { emailId: 'abc123' },
