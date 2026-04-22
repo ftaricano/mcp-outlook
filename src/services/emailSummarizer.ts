@@ -120,7 +120,7 @@ export class EmailSummarizer {
     return 'Geral';
   }
 
-  private generateSummary(body: string, subject: string): string {
+  private generateSummary(body: string, _subject: string): string {
     if (body.length < 100) {
       return body;
     }
