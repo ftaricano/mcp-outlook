@@ -92,7 +92,7 @@ async function run(label, fn, { check = (t) => t.length > 0 } = {}) {
   });
 
   const tl = await call('tools/list', {});
-  record('tools/list', tl.tools?.length === 39, `tools=${tl.tools?.length}`);
+  record('tools/list', tl.tools?.length === 40, `tools=${tl.tools?.length}`);
 
   // --- EMAIL READ ---
   const listEmails = await run('list_emails limit:5', () => tool('list_emails', { limit: 5, folder: 'inbox' }));
