@@ -411,6 +411,110 @@ export class EmailService {
     }
   }
 
+  /**
+   * Create a draft message in the mailbox without sending it.
+   *
+   * Requires only `Mail.ReadWrite` (not `Mail.Send`) — useful when the tenant
+   * policy restricts the app-only sendMail scope but still allows message
+   * creation. The draft lands in the user's Drafts folder and can be reviewed
+   * or sent manually from Outlook.
+   *
+   * Accepts the same payload shape as `sendEmail` (recipients, body, CC/BCC,
+   * attachments, HTML template options) and returns the created draft's id so
+   * callers can chain follow-up operations (update, attach, send).
+   */
+  async createDraft(
+    to: string[],
+    subject: string,
+    body: string,
+    cc?: string[],
+    bcc?: string[],
+    attachments?: EmailAttachment[],
+    enhancedOptions?: EnhancedEmailOptions
+  ): Promise<{
+    success: boolean;
+    draftId: string;
+    webLink?: string;
+    attachmentsCount: number;
+  }> {
+    try {
+      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+      const apiPath =
+        userEmail === 'me' ? '/me/messages' : `/users/${userEmail}/messages`;
+
+      let emailBody = body;
+      if (enhancedOptions?.useTemplate) {
+        console.error('🎨 Aplicando template HTML ao rascunho...');
+        const emailContent: EmailContent = {
+          title: enhancedOptions.emailContent?.title,
+          body,
+          signature: enhancedOptions.emailContent?.signature,
+          attachmentList: attachments?.map((att) => att.name),
+        };
+        emailBody = emailTemplateEngine.formatNewEmail(
+          emailContent,
+          enhancedOptions.templateOptions || {}
+        );
+      }
+
+      const draft: any = {
+        subject,
+        body: { contentType: 'HTML', content: emailBody },
+        toRecipients: to.map((email) => ({ emailAddress: { address: email } })),
+        ccRecipients: cc
+          ? cc.map((email) => ({ emailAddress: { address: email } }))
+          : [],
+        bccRecipients: bcc
+          ? bcc.map((email) => ({ emailAddress: { address: email } }))
+          : [],
+      };
+
+      if (attachments && attachments.length > 0) {
+        console.error(
+          `📎 Anexando ${attachments.length} arquivo(s) ao rascunho...`
+        );
+        draft.attachments = attachments.map((att) => {
+          const clean = this.cleanBase64ForMSGraph(att.content);
+          let size: number;
+          try {
+            size = Buffer.from(clean, 'base64').length;
+          } catch (e) {
+            throw new Error(
+              `Anexo "${att.name}" tem Base64 inválido: ${e instanceof Error ? e.message : 'formato incorreto'}`
+            );
+          }
+          if (size > 15 * 1024 * 1024) {
+            throw new Error(
+              `Anexo "${att.name}" muito grande: ${(size / 1024 / 1024).toFixed(2)}MB. Limite: 15MB`
+            );
+          }
+          return {
+            '@odata.type': '#microsoft.graph.fileAttachment',
+            name: att.name,
+            contentType: att.contentType,
+            contentBytes: clean,
+          };
+        });
+      }
+
+      console.error('📝 Criando rascunho no Microsoft Graph...');
+      const response = await this.client.api(apiPath).post(draft);
+      console.error(`✅ Rascunho criado (id len=${response?.id?.length ?? 0})`);
+
+      return {
+        success: true,
+        draftId: response?.id,
+        webLink: response?.webLink,
+        attachmentsCount: attachments?.length ?? 0,
+      };
+    } catch (error) {
+      const errorMsg =
+        error instanceof Error ? error.message : 'Erro desconhecido';
+      console.error('❌ Erro ao criar rascunho:', errorMsg);
+      throw new Error(`Falha ao criar rascunho: ${errorMsg}`);
+    }
+  }
+
   async replyToEmail(emailId: string, body: string, replyAll: boolean = false, enhancedOptions?: EnhancedEmailOptions): Promise<any> {
     try {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
