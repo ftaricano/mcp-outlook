@@ -1,7 +1,6 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import crypto from 'crypto';
 
 /**
  * FileManager - Gerencia downloads e salvamento de arquivos grandes
@@ -66,8 +65,7 @@ export class FileManager {
         const ext = path.extname(filename);
         const nameWithoutExt = path.basename(filename, ext);
         const newFilename = `${nameWithoutExt}_${timestamp}${ext}`;
-        const newFilePath = path.join(targetDir, newFilename);
-        return this.saveAttachmentToDisk(attachment, { 
+        return this.saveAttachmentToDisk(attachment, {
           ...options, 
           filename: newFilename,
           targetDirectory: targetDir 
@@ -119,9 +117,9 @@ export class FileManager {
    * Salva Base64 para arquivo de forma otimizada usando streams
    */
   private async saveBase64ToFileOptimized(
-    base64Content: string, 
-    filePath: string, 
-    expectedSize: number
+    base64Content: string,
+    filePath: string,
+    _expectedSize: number
   ): Promise<{ success: boolean; fileSize: number; error?: string }> {
     return new Promise((resolve) => {
       try {

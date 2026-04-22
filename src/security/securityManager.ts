@@ -407,7 +407,7 @@ export class SecurityManager extends EventEmitter {
   /**
    * Validate operation permissions
    */
-  validatePermissions(operation: string, user: string, context: any): {
+  validatePermissions(operation: string, user: string, _context: any): {
     allowed: boolean;
     reason?: string;
   } {
@@ -778,7 +778,7 @@ export class SecurityManager extends EventEmitter {
       ];
 
       return suspiciousPatterns.some(pattern => pattern.test(urlObj.hostname));
-    } catch (error) {
+    } catch {
       // Invalid URL
       return true;
     }

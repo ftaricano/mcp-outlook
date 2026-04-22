@@ -10,250 +10,185 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 
+import { AppEnv, EnvValidationError, loadEnv } from './config/env.js';
 import { GraphAuthProvider } from './auth/graphAuth.js';
 import { EmailService } from './services/emailService.js';
 import { EmailSummarizer } from './services/emailSummarizer.js';
 import { SecurityManager } from './security/securityManager.js';
 import { MCPBestPractices } from './utils/mcpBestPractices.js';
 import { HandlerRegistry } from './handlers/HandlerRegistry.js';
-import { PerformanceMonitor } from './monitoring/performanceMonitor.js';
-import { AdvancedLogger } from './logging/advancedLogger.js';
-import { IntegratedMonitoring } from './monitoring/integratedMonitoring.js';
+import { Logger } from './logging/logger.js';
 import { LockManager } from './utils/lockManager.js';
 
 class EmailMCPServer {
-  private server: Server;
-  private authProvider: GraphAuthProvider;
-  private emailService: EmailService;
-  private emailSummarizer: EmailSummarizer;
-  private handlerRegistry: HandlerRegistry;
-  public performanceMonitor: PerformanceMonitor;
-  public logger: AdvancedLogger;
-  public integratedMonitoring: IntegratedMonitoring;
-  private lockManager: LockManager;
+  private readonly server: Server;
+  private readonly authProvider: GraphAuthProvider;
+  private readonly emailService: EmailService;
+  private readonly emailSummarizer: EmailSummarizer;
+  private readonly handlerRegistry: HandlerRegistry;
+  private readonly lockManager: LockManager;
+  private readonly env: AppEnv;
+  public readonly logger: Logger;
 
-  constructor() {
-    // Acquire lock immediately
+  constructor(env: AppEnv) {
+    this.env = env;
+    this.logger = new Logger({ level: env.LOG_LEVEL, name: env.MCP_SERVER_NAME });
+
     this.lockManager = new LockManager();
     try {
       this.lockManager.acquire();
     } catch (error) {
-      console.error('❌ Failed to acquire lock:', error);
+      this.logger.error('Failed to acquire lock', error);
       process.exit(1);
     }
 
     this.server = new Server(
-      {
-        name: 'mcp-email-server',
-        version: '2.0.0',
-      },
-      {
-        capabilities: {
-          tools: {},
-        },
-      }
+      { name: env.MCP_SERVER_NAME, version: env.MCP_SERVER_VERSION },
+      { capabilities: { tools: {} } }
     );
 
-    this.authProvider = new GraphAuthProvider();
+    this.authProvider = new GraphAuthProvider(env);
     this.emailService = new EmailService(this.authProvider);
     this.emailSummarizer = new EmailSummarizer();
-    
-    // Initialize monitoring and logging
-    this.logger = new AdvancedLogger({
-      enableFileLogging: false, // Desabilitado para evitar criação de arquivos de log
-      enableConsoleLogging: false, // Desabilitado para reduzir verbosidade
-      logLevel: 'error', // Apenas erros críticos
-      logDirectory: './logs',
-      enablePerformanceLogging: false,
-      enableAuditTrail: false
-    });
 
-    this.performanceMonitor = new PerformanceMonitor({
-      responseTimeThreshold: 3000,
-      errorRateThreshold: 5,
-      memoryThreshold: 80,
-      throughputMinThreshold: 10
-    });
-    
-    // Initialize security and MCP best practices
     const securityManager = new SecurityManager();
     const mcpBestPractices = new MCPBestPractices(securityManager);
-    
-    // Initialize integrated monitoring
-    this.integratedMonitoring = new IntegratedMonitoring(
-      this.performanceMonitor,
-      this.logger,
-      securityManager,
-      {
-        enablePerformanceMonitoring: true,
-        enableAdvancedLogging: true,
-        enableSecurityMonitoring: true,
-        enableRealTimeAlerts: true,
-        monitoringInterval: 60000
-      }
-    );
-    
+
     this.handlerRegistry = new HandlerRegistry(
-      this.emailService, 
-      this.emailSummarizer, 
-      securityManager, 
+      this.emailService,
+      this.emailSummarizer,
+      securityManager,
       mcpBestPractices
     );
 
     this.setupToolHandlers();
   }
 
-  private setupToolHandlers() {
-    // Register tools using the HandlerRegistry
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
-      return {
-        tools: HandlerRegistry.getToolSchemas()
-      };
-    });
+  private setupToolHandlers(): void {
+    this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+      tools: HandlerRegistry.getToolSchemas(),
+    }));
 
-    // Route all tool requests to the HandlerRegistry with performance monitoring
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
-      const operationId = this.performanceMonitor.startOperation(`tool_${name}`, { args });
-      
+      const startedAt = Date.now();
+
       try {
-        this.logger.info(`Executing tool: ${name}`, {
-          operation: `tool_${name}`,
-          context: { toolName: name, args }
-        });
-
+        this.logger.debug('tool start', { operation: 'call_tool', toolName: name });
         const result = await this.handlerRegistry.handleTool(name, args);
-        
-        this.performanceMonitor.endOperation(operationId, true);
-        this.logger.info(`Tool ${name} completed successfully`, {
-          operation: `tool_${name}`,
-          context: { success: true, contentLength: result.content.length }
+        this.logger.debug('tool ok', {
+          operation: 'call_tool',
+          toolName: name,
+          durationMs: Date.now() - startedAt,
         });
-
-        return {
-          content: result.content,
-          isError: result.isError
-        };
+        return { content: result.content, isError: result.isError };
       } catch (error) {
-        this.performanceMonitor.endOperation(operationId, false, error instanceof Error ? error.message : 'Unknown error');
-        this.logger.error(`Tool ${name} execution failed`, error instanceof Error ? error : undefined, {
-          operation: `tool_${name}`,
-          context: { toolName: name, args }
+        this.logger.error('tool failed', error, {
+          operation: 'call_tool',
+          toolName: name,
+          durationMs: Date.now() - startedAt,
         });
-
         return {
           content: [
             {
               type: 'text',
-              text: `❌ Erro ao executar ${name}: ${error instanceof Error ? error.message : 'Erro desconhecido'}`
-            }
+              text: `Erro ao executar ${name}: ${error instanceof Error ? error.message : 'Erro desconhecido'}`,
+            },
           ],
-          isError: true
+          isError: true,
         };
       }
     });
   }
 
-  async run() {
+  async run(): Promise<void> {
+    this.logger.info('starting server', {
+      operation: 'server_startup',
+      context: { version: this.env.MCP_SERVER_VERSION, nodeEnv: this.env.NODE_ENV },
+    });
+
+    const transport = new StdioServerTransport();
+    await this.server.connect(transport);
+
+    // Validate Graph auth early — a fail here means credentials are wrong
+    // and no tool call will ever succeed. We log but do NOT exit: the MCP
+    // protocol channel is already open and callers need a clean error.
     try {
-      // Start integrated monitoring
-      this.integratedMonitoring.startMonitoring();
-      this.logger.info('Starting MCP Email Server v2.0', {
-        operation: 'server_startup'
-      });
-
-      const transport = new StdioServerTransport();
-      await this.server.connect(transport);
-      
-      // Validate Microsoft Graph connection on startup
-      const authValidationId = this.performanceMonitor.startOperation('auth_validation');
-      try {
-        await this.authProvider.validateConnection();
-        this.performanceMonitor.endOperation(authValidationId, true);
-        this.logger.info('Microsoft Graph connection validated successfully', {
-          operation: 'auth_validation'
+      const ok = await this.authProvider.validateConnection();
+      if (ok) {
+        this.logger.info('graph auth ok', { operation: 'auth_validation' });
+      } else {
+        this.logger.warn('graph auth failed — tool calls will error until fixed', {
+          operation: 'auth_validation',
         });
-      } catch (authError) {
-        this.performanceMonitor.endOperation(authValidationId, false, authError instanceof Error ? authError.message : 'Auth failed');
-        this.logger.error('Microsoft Graph connection validation failed', authError instanceof Error ? authError : undefined, {
-          operation: 'auth_validation'
-        });
-        throw authError;
       }
-      
-      this.logger.info('🚀 MCP Email Server v2.0 successfully started', {
-        operation: 'server_startup',
-        context: {
-          version: '2.0.0',
-          features: [
-            'Modular Architecture',
-            'Consolidated AttachmentValidator',
-            'Handler Registry',
-            'Advanced Performance Monitoring',
-            'Comprehensive Logging',
-            'Integrated Security',
-            'Real-time Health Monitoring'
-          ]
-        }
-      });
-
-      console.error('🚀 MCP Email Server v2.0 - Enterprise Architecture Running on stdio');
-      console.error('📧 Enhanced with Performance Monitoring, Advanced Logging & Security');
-      console.error('🛡️ Real-time Health Monitoring and Comprehensive Analytics Active');
     } catch (error) {
-      this.logger.critical('Failed to start MCP Email Server', error instanceof Error ? error : undefined, {
-        operation: 'server_startup_error'
+      this.logger.error('graph auth validation threw', error, {
+        operation: 'auth_validation',
       });
-      console.error('Erro ao iniciar servidor:', error);
-      throw error;
+    }
+
+    this.logger.info('server ready', { operation: 'server_startup' });
+  }
+
+  async shutdown(signal: string): Promise<void> {
+    this.logger.info('shutting down', { operation: 'shutdown', context: { signal } });
+    try {
+      this.lockManager.release();
+    } catch (error) {
+      this.logger.error('lock release failed', error, { operation: 'shutdown' });
     }
   }
 }
 
-// Run if this is the main file
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const server = new EmailMCPServer();
-  
-  // Graceful shutdown handling
-  const gracefulShutdown = async (signal: string) => {
-    console.error(`\n📊 Received ${signal}. Initiating graceful shutdown...`);
-    try {
-      // Stop monitoring and cleanup
-      if (server.integratedMonitoring) {
-        await server.integratedMonitoring.destroy();
-      }
-        await server.logger.destroy();
+function bootstrap(): EmailMCPServer {
+  let env: AppEnv;
+  try {
+    env = loadEnv();
+  } catch (error) {
+    if (error instanceof EnvValidationError) {
+      process.stderr.write(`\n[mcp-email] ${error.message}\n\n`);
+    } else {
+      process.stderr.write(
+        `[mcp-email] Failed to load environment: ${error instanceof Error ? error.message : String(error)}\n`
+      );
+    }
+    process.exit(1);
+  }
+  return new EmailMCPServer(env);
+}
 
-      if (server.performanceMonitor) {
-        server.performanceMonitor.destroy();
-      }
-      
-      // Release lock
-      // @ts-ignore - access private property for shutdown
-      server.lockManager.release();
-      
-      console.error('✅ Graceful shutdown completed');
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const server = bootstrap();
+
+  let shuttingDown = false;
+  const gracefulShutdown = async (signal: string): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    try {
+      await server.shutdown(signal);
       process.exit(0);
     } catch (error) {
-      console.error('❌ Error during shutdown:', error);
+      process.stderr.write(
+        `[mcp-email] shutdown error: ${error instanceof Error ? error.message : String(error)}\n`
+      );
       process.exit(1);
     }
   };
 
-  // Register shutdown handlers
-  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
+  process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
   process.on('uncaughtException', (error) => {
-    console.error('❌ Uncaught Exception:', error);
-    gracefulShutdown('uncaughtException');
+    server.logger.error('uncaught exception', error);
+    void gracefulShutdown('uncaughtException');
   });
-  process.on('unhandledRejection', (reason, promise) => {
-    console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
-    gracefulShutdown('unhandledRejection');
+  process.on('unhandledRejection', (reason) => {
+    server.logger.error('unhandled rejection', reason);
+    void gracefulShutdown('unhandledRejection');
   });
 
   server.run().catch((error) => {
-    console.error('Erro fatal ao iniciar servidor:', error);
+    server.logger.error('fatal startup error', error);
     process.exit(1);
   });
 }

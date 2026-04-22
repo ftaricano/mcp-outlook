@@ -131,7 +131,7 @@ export class EmailService {
       
       try {
         const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-        let apiEndpoint = userEmail === 'me' 
+        const apiEndpoint = userEmail === 'me' 
           ? `/me/mailFolders/${folder}/messages`
           : `/users/${userEmail}/mailFolders/${folder}/messages`;
 
@@ -178,6 +178,18 @@ export class EmailService {
         throw new Error(`Falha ao listar emails: ${errorMessage}`);
       }
     }
+  }
+
+  async listOrgUsers(options: { limit?: number; search?: string } = {}): Promise<Array<{ id: string; displayName?: string; userPrincipalName?: string; mail?: string }>> {
+    const { limit = 10, search } = options;
+    let req = this.client.api('/users')
+      .top(Math.min(limit, 100))
+      .select('id,displayName,userPrincipalName,mail');
+    if (search) {
+      req = req.filter(`startswith(displayName,'${search.replace(/'/g, "''")}') or startswith(userPrincipalName,'${search.replace(/'/g, "''")}')`);
+    }
+    const response = await req.get();
+    return response.value ?? [];
   }
 
   async getEmailById(emailId: string): Promise<Message> {
@@ -396,6 +408,110 @@ export class EmailService {
       }
       
       throw new Error(`Falha ao enviar email: ${errorMsg}`);
+    }
+  }
+
+  /**
+   * Create a draft message in the mailbox without sending it.
+   *
+   * Requires only `Mail.ReadWrite` (not `Mail.Send`) — useful when the tenant
+   * policy restricts the app-only sendMail scope but still allows message
+   * creation. The draft lands in the user's Drafts folder and can be reviewed
+   * or sent manually from Outlook.
+   *
+   * Accepts the same payload shape as `sendEmail` (recipients, body, CC/BCC,
+   * attachments, HTML template options) and returns the created draft's id so
+   * callers can chain follow-up operations (update, attach, send).
+   */
+  async createDraft(
+    to: string[],
+    subject: string,
+    body: string,
+    cc?: string[],
+    bcc?: string[],
+    attachments?: EmailAttachment[],
+    enhancedOptions?: EnhancedEmailOptions
+  ): Promise<{
+    success: boolean;
+    draftId: string;
+    webLink?: string;
+    attachmentsCount: number;
+  }> {
+    try {
+      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+      const apiPath =
+        userEmail === 'me' ? '/me/messages' : `/users/${userEmail}/messages`;
+
+      let emailBody = body;
+      if (enhancedOptions?.useTemplate) {
+        console.error('🎨 Aplicando template HTML ao rascunho...');
+        const emailContent: EmailContent = {
+          title: enhancedOptions.emailContent?.title,
+          body,
+          signature: enhancedOptions.emailContent?.signature,
+          attachmentList: attachments?.map((att) => att.name),
+        };
+        emailBody = emailTemplateEngine.formatNewEmail(
+          emailContent,
+          enhancedOptions.templateOptions || {}
+        );
+      }
+
+      const draft: any = {
+        subject,
+        body: { contentType: 'HTML', content: emailBody },
+        toRecipients: to.map((email) => ({ emailAddress: { address: email } })),
+        ccRecipients: cc
+          ? cc.map((email) => ({ emailAddress: { address: email } }))
+          : [],
+        bccRecipients: bcc
+          ? bcc.map((email) => ({ emailAddress: { address: email } }))
+          : [],
+      };
+
+      if (attachments && attachments.length > 0) {
+        console.error(
+          `📎 Anexando ${attachments.length} arquivo(s) ao rascunho...`
+        );
+        draft.attachments = attachments.map((att) => {
+          const clean = this.cleanBase64ForMSGraph(att.content);
+          let size: number;
+          try {
+            size = Buffer.from(clean, 'base64').length;
+          } catch (e) {
+            throw new Error(
+              `Anexo "${att.name}" tem Base64 inválido: ${e instanceof Error ? e.message : 'formato incorreto'}`
+            );
+          }
+          if (size > 15 * 1024 * 1024) {
+            throw new Error(
+              `Anexo "${att.name}" muito grande: ${(size / 1024 / 1024).toFixed(2)}MB. Limite: 15MB`
+            );
+          }
+          return {
+            '@odata.type': '#microsoft.graph.fileAttachment',
+            name: att.name,
+            contentType: att.contentType,
+            contentBytes: clean,
+          };
+        });
+      }
+
+      console.error('📝 Criando rascunho no Microsoft Graph...');
+      const response = await this.client.api(apiPath).post(draft);
+      console.error(`✅ Rascunho criado (id len=${response?.id?.length ?? 0})`);
+
+      return {
+        success: true,
+        draftId: response?.id,
+        webLink: response?.webLink,
+        attachmentsCount: attachments?.length ?? 0,
+      };
+    } catch (error) {
+      const errorMsg =
+        error instanceof Error ? error.message : 'Erro desconhecido';
+      console.error('❌ Erro ao criar rascunho:', errorMsg);
+      throw new Error(`Falha ao criar rascunho: ${errorMsg}`);
     }
   }
 
@@ -1416,10 +1532,11 @@ export class EmailService {
         results.push({
           emailId,
           success: true,
+          newId: result.id,
           newLocation: result.parentFolderId
         });
 
-        console.error(`✅ Email movido com sucesso`);
+        console.error(`✅ Email movido com sucesso (novo id len=${result?.id?.length ?? 0})`);
       } catch (error) {
         console.error(`❌ Erro ao mover email ${emailId}:`, error);
         results.push({
@@ -1700,6 +1817,21 @@ export class EmailService {
     sortOrder?: string;
   }): Promise<Message[]> {
     try {
+      // Graph rejects `$filter` predicates that aren't indexed-first on large
+      // folders ("InefficientFilter"). Inject a 90-day receivedDateTime narrow
+      // when the caller provided any non-date predicate but no date range,
+      // so the query hits a fast path.
+      const needsDateNarrow =
+        !options.dateFrom && !options.dateTo &&
+        (options.hasAttachments !== undefined || options.isRead !== undefined ||
+         options.sender || options.subject);
+      if (needsDateNarrow) {
+        options = {
+          ...options,
+          dateFrom: new Date(Date.now() - 90 * 86_400_000).toISOString(),
+        };
+      }
+
       const {
         query,
         sender,
@@ -1885,42 +2017,61 @@ export class EmailService {
     } = {}
   ): Promise<Message[]> {
     try {
-      const { maxResults = 20, includeSubdomains = true, folder = 'inbox', dateRange } = options;
+      const { maxResults = 20, includeSubdomains = true, folder = 'inbox' } = options;
+      // Inject 90-day receivedDateTime narrow when caller didn't pass a date
+      // range, so Graph accepts the filter on large mailboxes.
+      const dateRange = options.dateRange ?? {
+        from: new Date(Date.now() - 90 * 86_400_000).toISOString(),
+        to: new Date().toISOString(),
+      };
 
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-      const apiEndpoint = userEmail === 'me' 
+      const apiEndpoint = userEmail === 'me'
         ? `/me/mailFolders/${folder}/messages`
         : `/users/${userEmail}/mailFolders/${folder}/messages`;
 
       console.error(`🏢 Buscando emails do domínio: ${domain}`);
 
+      // Graph `$filter=endswith(from/emailAddress/address,…)` combined with an
+      // `$orderby` on a different field is rejected on mailbox endpoints.
+      // KQL `$search="from:<domain>"` is index-backed, handles subdomains
+      // naturally, and allows the client-side date narrow applied below.
       const queryParams: string[] = [
-        `$top=${Math.min(maxResults, 100)}`,
+        `$top=${Math.min(maxResults * 3, 100)}`, // over-fetch for post-filter
         `$select=id,subject,from,receivedDateTime,isRead,hasAttachments,bodyPreview`,
-        `$orderby=receivedDateTime desc`
+        `$search="from:${encodeURIComponent(domain)}"`,
       ];
 
-      // Build domain filter
-      const domainFilter = includeSubdomains 
-        ? `contains(from/emailAddress/address,'${domain}')`
-        : `endswith(from/emailAddress/address,'@${domain}')`;
-
-      const filterConditions = [domainFilter];
-
-      if (dateRange) {
-        filterConditions.push(`receivedDateTime ge ${dateRange.from}`);
-        filterConditions.push(`receivedDateTime le ${dateRange.to}`);
-      }
-
-      queryParams.push(`$filter=${filterConditions.join(' and ')}`);
-
-      const queryString = queryParams.join('&');
-      const fullEndpoint = `${apiEndpoint}?${queryString}`;
-
+      const fullEndpoint = `${apiEndpoint}?${queryParams.join('&')}`;
       const response = await this.client.api(fullEndpoint).get();
-      
-      console.error(`✅ Encontrados ${response.value?.length || 0} emails do domínio ${domain}`);
-      return response.value || [];
+
+      // Apply client-side filters because $search cannot be combined with $filter.
+      let emails: Message[] = response.value ?? [];
+      const fromLower = new Date(dateRange.from).getTime();
+      const toUpper = new Date(dateRange.to).getTime();
+      emails = emails.filter((m) => {
+        const addr = m.from?.emailAddress?.address?.toLowerCase();
+        if (!addr) return false;
+        // Subdomain match requires the domain to appear as the host suffix.
+        const matchesDomain = includeSubdomains
+          ? addr.endsWith(`@${domain.toLowerCase()}`) || addr.endsWith(`.${domain.toLowerCase()}`)
+          : addr.endsWith(`@${domain.toLowerCase()}`);
+        if (!matchesDomain) return false;
+        if (m.receivedDateTime) {
+          const t = new Date(m.receivedDateTime).getTime();
+          if (t < fromLower || t > toUpper) return false;
+        }
+        return true;
+      });
+      emails.sort((a, b) => {
+        const ta = a.receivedDateTime ? new Date(a.receivedDateTime).getTime() : 0;
+        const tb = b.receivedDateTime ? new Date(b.receivedDateTime).getTime() : 0;
+        return tb - ta;
+      });
+      emails = emails.slice(0, maxResults);
+
+      console.error(`✅ Encontrados ${emails.length} emails do domínio ${domain}`);
+      return emails;
     } catch (error) {
       console.error(`❌ Erro na busca por domínio ${domain}:`, error);
       throw error;
@@ -1944,11 +2095,17 @@ export class EmailService {
 
       console.error(`📎 Buscando emails com anexos dos tipos: ${fileTypes.join(', ')}`);
 
-      // First get emails with attachments
+      // Graph rejects bare `hasAttachments eq true` on large folders. Narrow
+      // by receivedDateTime first. Use the caller's range if provided;
+      // otherwise default to the last 90 days.
+      const fromIso = dateRange?.from ?? new Date(Date.now() - 90 * 86_400_000).toISOString();
+      const toIso = dateRange?.to ?? new Date().toISOString();
+      const attachmentFilter = `receivedDateTime ge ${fromIso} and receivedDateTime le ${toIso} and hasAttachments eq true`;
+
       const emailsWithAttachments = await this.listEmails({
         maxResults: maxResults * 2, // Get more to filter by attachment type
         folder,
-        filter: 'hasAttachments eq true'
+        filter: attachmentFilter,
       });
 
       const matchingEmails: Message[] = [];
@@ -2460,7 +2617,7 @@ export class EmailService {
     fileNames?: string[];
     error?: string;
   }>> {
-    const { maxConcurrent = 3, sizeLimit = 25 } = options;
+    const { maxConcurrent = 3, sizeLimit: _sizeLimit = 25 } = options;
     const results: Array<{
       success: boolean;
       filesDownloaded: number;

@@ -51,7 +51,7 @@ export class LockManager {
           );
           try {
             fs.unlinkSync(this.lockFilePath);
-          } catch (unlinkError) {
+          } catch {
             // Ignore if it's already gone
           }
         }

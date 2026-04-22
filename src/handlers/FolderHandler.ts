@@ -98,11 +98,16 @@ export class FolderHandler extends BaseHandler {
         result += `📋 **Detalhes:**\n`;
         results.forEach((moveResult, index) => {
           const status = moveResult.success ? '✅' : '❌';
-          const details = moveResult.success 
-            ? `Movido para ${targetFolderId}` 
+          const details = moveResult.success
+            ? `Movido para ${targetFolderId}`
             : `Erro: ${moveResult.error}`;
-          
+
           result += `   ${index + 1}. ${status} Email ${emailArray[index].substring(0, 8)}... - ${details}\n`;
+          // Surface new id so callers can chain follow-up ops (Graph issues a
+          // new message id on move; the original id is no longer addressable).
+          if (moveResult.success && moveResult.newId) {
+            result += `      ID: ${moveResult.newId}\n`;
+          }
         });
       }
       
@@ -153,11 +158,14 @@ export class FolderHandler extends BaseHandler {
         result += `📋 **Detalhes:**\n`;
         results.forEach((copyResult, index) => {
           const status = copyResult.success ? '✅' : '❌';
-          const details = copyResult.success 
-            ? `Copiado para ${targetFolderId}` 
+          const details = copyResult.success
+            ? `Copiado para ${targetFolderId}`
             : `Erro: ${copyResult.error}`;
-          
+
           result += `   ${index + 1}. ${status} Email ${emailArray[index].substring(0, 8)}... - ${details}\n`;
+          if (copyResult.success && copyResult.copiedId) {
+            result += `      ID: ${copyResult.copiedId}\n`;
+          }
         });
       }
       

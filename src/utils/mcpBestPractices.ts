@@ -37,7 +37,7 @@ export class MCPBestPractices {
       if (JSON.stringify(sanitizedInput) !== JSON.stringify(input)) {
         result.warnings.push('Input was sanitized for security reasons');
       }
-    } catch (error) {
+    } catch {
       result.errors.push('Failed to sanitize input');
       result.isValid = false;
     }
@@ -386,7 +386,7 @@ export class MCPBestPractices {
       const exampleArgs: string[] = [];
       for (const [propName, propSchema] of Object.entries(schema.inputSchema.properties)) {
         const prop = propSchema as any;
-        let exampleValue = this.generateExampleValue(prop.type);
+        const exampleValue = this.generateExampleValue(prop.type);
         exampleArgs.push(`    "${propName}": ${JSON.stringify(exampleValue)}`);
       }
       doc += exampleArgs.join(',\n') + '\n';

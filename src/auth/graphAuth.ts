@@ -1,6 +1,7 @@
 import { Client } from '@microsoft/microsoft-graph-client';
 import { AuthenticationProvider } from '@microsoft/microsoft-graph-client';
 import { ConfidentialClientApplication, ClientCredentialRequest } from '@azure/msal-node';
+import { AppEnv } from '../config/env.js';
 
 interface GraphConfig {
   clientId: string;
@@ -10,104 +11,89 @@ interface GraphConfig {
 }
 
 export class GraphAuthProvider implements AuthenticationProvider {
-  private msalInstance: ConfidentialClientApplication | null = null;
-  private config: GraphConfig | null = null;
-  private configError: Error | null = null;
+  private msalInstance: ConfidentialClientApplication;
+  private config: GraphConfig;
   private accessToken: string | null = null;
   private tokenExpiresAt: Date | null = null;
+  private pendingAcquisition: Promise<string> | null = null;
 
-  constructor() {
-    try {
-      this.config = this.getConfigFromEnv();
-      this.msalInstance = new ConfidentialClientApplication({
-        auth: {
-          clientId: this.config.clientId,
-          clientSecret: this.config.clientSecret,
-          authority: `https://login.microsoftonline.com/${this.config.tenantId}`,
-        },
-      });
-    } catch (error) {
-      this.configError = error instanceof Error ? error : new Error('Falha ao carregar configuração do Microsoft Graph');
-    }
-  }
-
-  private getConfigFromEnv(): GraphConfig {
-    const clientId = process.env.MICROSOFT_GRAPH_CLIENT_ID;
-    const clientSecret = process.env.MICROSOFT_GRAPH_CLIENT_SECRET;
-    const tenantId = process.env.MICROSOFT_GRAPH_TENANT_ID;
-
-    if (!clientId || !clientSecret || !tenantId) {
-      throw new Error(
-        'Variáveis de ambiente necessárias não foram definidas. ' +
-        'Defina MICROSOFT_GRAPH_CLIENT_ID, MICROSOFT_GRAPH_CLIENT_SECRET e MICROSOFT_GRAPH_TENANT_ID'
-      );
-    }
-
-    // Para Client Credentials flow, usar .default é obrigatório
-    // As permissões específicas são configuradas no Azure AD Portal
-    const scopes = ['https://graph.microsoft.com/.default'];
-
-    return {
-      clientId,
-      clientSecret,
-      tenantId,
-      scopes
+  constructor(env: AppEnv) {
+    this.config = {
+      clientId: env.MICROSOFT_GRAPH_CLIENT_ID,
+      clientSecret: env.MICROSOFT_GRAPH_CLIENT_SECRET,
+      tenantId: env.MICROSOFT_GRAPH_TENANT_ID,
+      scopes: ['https://graph.microsoft.com/.default'],
     };
+    this.msalInstance = new ConfidentialClientApplication({
+      auth: {
+        clientId: this.config.clientId,
+        clientSecret: this.config.clientSecret,
+        authority: `https://login.microsoftonline.com/${this.config.tenantId}`,
+      },
+    });
   }
 
   async getAccessToken(): Promise<string> {
-    if (this.accessToken && this.tokenExpiresAt && this.tokenExpiresAt > new Date()) {
+    // Refresh 60s before actual expiry to avoid racing Graph with a stale token.
+    const now = Date.now();
+    const refreshThreshold = 60_000;
+    if (
+      this.accessToken &&
+      this.tokenExpiresAt &&
+      this.tokenExpiresAt.getTime() - now > refreshThreshold
+    ) {
       return this.accessToken;
     }
-    
-    try {
-      this.ensureConfigured();
-      
-      const clientCredentialRequest: ClientCredentialRequest = {
-        scopes: this.config!.scopes,
-      };
 
-      const response = await this.msalInstance!.acquireTokenByClientCredential(clientCredentialRequest);
-      
-      if (!response || !response.accessToken) {
-        throw new Error('Falha ao obter token de acesso');
+    // De-dup concurrent cold-cache callers onto a single acquisition.
+    if (this.pendingAcquisition) {
+      return this.pendingAcquisition;
+    }
+
+    this.pendingAcquisition = this.acquireToken().finally(() => {
+      this.pendingAcquisition = null;
+    });
+    return this.pendingAcquisition;
+  }
+
+  private async acquireToken(): Promise<string> {
+    try {
+      const request: ClientCredentialRequest = { scopes: this.config.scopes };
+      const response = await this.msalInstance.acquireTokenByClientCredential(request);
+
+      if (!response?.accessToken) {
+        throw new Error('MSAL did not return an access token');
+      }
+      if (!response.expiresOn) {
+        throw new Error('MSAL did not return a token expiry; refusing to cache');
       }
 
       this.accessToken = response.accessToken;
-      this.tokenExpiresAt = response.expiresOn || new Date(Date.now() + 3600000); // 1 hora como fallback
-
+      this.tokenExpiresAt = response.expiresOn;
       return this.accessToken;
     } catch (error) {
-      throw new Error(`Falha na autenticação: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
+      throw new Error(
+        `Authentication failed: ${error instanceof Error ? error.message : 'unknown error'}`
+      );
     }
   }
 
   getGraphClient(): Client {
-    return Client.initWithMiddleware({
-      authProvider: this
-    });
+    return Client.initWithMiddleware({ authProvider: this });
   }
 
+  /**
+   * Validate that the credentials resolve to a working Graph token.
+   * Returns true only if token acquisition succeeds. Avoids the previous
+   * `/users` top(1) probe which required `User.Read.All` even when the
+   * caller only needs Mail permissions.
+   */
   async validateConnection(): Promise<boolean> {
     try {
-      this.ensureConfigured();
-      const client = this.getGraphClient();
-      // Para Client Credentials flow, testamos com um endpoint que funciona para aplicações
-      await client.api('/users').top(1).get();
-      
+      await this.getAccessToken();
       return true;
-    } catch (error) {
+    } catch {
       return false;
-    }
-  }
-
-  private ensureConfigured(): void {
-    if (this.configError) {
-      throw this.configError;
-    }
-
-    if (!this.config || !this.msalInstance) {
-      throw new Error('Configuração do Microsoft Graph não inicializada');
     }
   }
 }

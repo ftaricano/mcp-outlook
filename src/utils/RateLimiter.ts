@@ -44,7 +44,7 @@ export class RateLimiter {
     operation: () => Promise<T>,
     context: string = 'operation'
   ): Promise<T> {
-    let lastError: Error;
+    let lastError: Error | undefined;
     
     for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
       try {
@@ -66,7 +66,7 @@ export class RateLimiter {
     }
     
     console.error(`❌ ${context} failed after ${this.maxRetries} attempts`);
-    throw lastError!;
+    throw lastError ?? new Error(`${context} failed after ${this.maxRetries} attempts`);
   }
 
   /**

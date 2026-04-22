@@ -7,7 +7,6 @@ export class EmailHandler extends BaseHandler {
    */
   async handleListEmails(args: any): Promise<HandlerResult> {
     const limit = args.limit || 10;
-    const skip = args.skip || 0;
     const folder = args.folder || 'inbox';
     const search = args.search;
 
@@ -135,6 +134,96 @@ export class EmailHandler extends BaseHandler {
   }
 
   /**
+   * Handler for creating a draft message (no send).
+   * Requires only Mail.ReadWrite; useful when the tenant policy blocks
+   * application sendMail but still permits message creation.
+   */
+  async handleCreateDraft(args: any): Promise<HandlerResult> {
+    const validationError = this.validateRequiredArgs(args, ['to', 'subject', 'body']);
+    if (validationError) {
+      return this.formatError(validationError);
+    }
+
+    const validatedArgs = {
+      to: args.to || [],
+      subject: args.subject || '',
+      body: args.body || '',
+      cc: args.cc,
+      bcc: args.bcc,
+      attachments: args.attachments,
+    };
+
+    if (validatedArgs.attachments && validatedArgs.attachments.length > 0) {
+      const validation = AttachmentValidator.validateAttachments(validatedArgs.attachments);
+      if (!validation.isValid) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `❌ Erro na validação dos anexos:\n\n${validation.errors.join('\n')}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+      if (validation.warnings.length > 0) {
+        console.warn('⚠️ Avisos sobre anexos do rascunho:', validation.warnings);
+      }
+    }
+
+    const enhancedOptions = args.useTemplate
+      ? {
+          useTemplate: true,
+          templateOptions: {
+            theme: args.templateTheme || 'professional',
+            showHeader: !!args.companyName || !!args.logoUrl,
+            showFooter: true,
+            companyName: args.companyName,
+            logoUrl: args.logoUrl,
+          },
+          emailContent: {
+            title: args.emailTitle,
+            signature: args.signature,
+          },
+        }
+      : undefined;
+
+    try {
+      const result = await this.emailService.createDraft(
+        validatedArgs.to,
+        validatedArgs.subject,
+        validatedArgs.body,
+        validatedArgs.cc,
+        validatedArgs.bcc,
+        validatedArgs.attachments,
+        enhancedOptions
+      );
+
+      const ccLine = validatedArgs.cc ? `CC: ${validatedArgs.cc.join(', ')}\n` : '';
+      const bccLine = validatedArgs.bcc ? `BCC: ${validatedArgs.bcc.join(', ')}\n` : '';
+      const attachLine =
+        validatedArgs.attachments && validatedArgs.attachments.length > 0
+          ? `📎 Anexos: ${validatedArgs.attachments.length} arquivo(s) — ${validatedArgs.attachments
+              .map((att: any) => att.name)
+              .join(', ')}\n`
+          : '';
+      const webLinkLine = result.webLink ? `Link: ${result.webLink}\n` : '';
+
+      return this.formatSuccess(
+        `📝 Rascunho criado com sucesso!\n\n` +
+          `Para: ${validatedArgs.to.join(', ')}\n` +
+          `Assunto: ${validatedArgs.subject}\n` +
+          `${ccLine}${bccLine}${attachLine}\n` +
+          `ID: ${result.draftId}\n` +
+          `${webLinkLine}` +
+          `\n💡 Rascunho salvo em "Rascunhos". Abra no Outlook para revisar e enviar.`
+      );
+    } catch (error) {
+      return this.formatError('Erro ao criar rascunho', error);
+    }
+  }
+
+  /**
    * Handler for replying to email
    */
   async handleReplyToEmail(args: any): Promise<HandlerResult> {
@@ -169,7 +258,7 @@ export class EmailHandler extends BaseHandler {
     }
 
     try {
-      const result = await this.emailService.markAsRead(args.emailId);
+      await this.emailService.markAsRead(args.emailId);
       return this.formatSuccess(`✅ Email marcado como lido`);
     } catch (error) {
       return this.formatError('Erro ao marcar email como lido', error);
@@ -186,7 +275,7 @@ export class EmailHandler extends BaseHandler {
     }
 
     try {
-      const result = await this.emailService.markAsUnread(args.emailId);
+      await this.emailService.markAsUnread(args.emailId);
       return this.formatSuccess(`✅ Email marcado como não lido`);
     } catch (error) {
       return this.formatError('Erro ao marcar email como não lido', error);
@@ -266,7 +355,6 @@ export class EmailHandler extends BaseHandler {
    */
   async handleSummarizeEmailsBatch(args: any): Promise<HandlerResult> {
     const limit = args.limit || 5;
-    const skip = args.skip || 0;
     const folder = args.folder || 'inbox';
     const priorityOnly = args.priorityOnly || false;
 
@@ -352,9 +440,24 @@ export class EmailHandler extends BaseHandler {
    * Handler for listing users
    */
   async handleListUsers(args: any): Promise<HandlerResult> {
-    const limit = args.limit || 10;
+    const limit = args.limit ?? 10;
     const search = args.search;
 
-    return this.formatError('Funcionalidade de listagem de usuários não implementada no EmailService');
+    try {
+      const users = await this.emailService.listOrgUsers({ limit, search });
+      if (users.length === 0) {
+        return this.formatSuccess('👥 Nenhum usuário encontrado');
+      }
+      let out = `👥 Usuários (${users.length}):\n\n`;
+      users.forEach((u, i) => {
+        out += `${i + 1}. **${u.displayName || '(sem nome)'}**\n`;
+        out += `   UPN: ${u.userPrincipalName || '-'}\n`;
+        if (u.mail) out += `   Email: ${u.mail}\n`;
+        out += `   ID: ${u.id}\n\n`;
+      });
+      return this.formatSuccess(out);
+    } catch (error) {
+      return this.formatError('Erro ao listar usuários (requer User.Read.All)', error);
+    }
   }
 }

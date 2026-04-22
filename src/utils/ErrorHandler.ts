@@ -112,7 +112,6 @@ export class ErrorHandler {
    */
   private static handleGraphAPIError(error: any, context: ErrorContext): StandardError {
     const statusCode = error?.response?.status || error?.status;
-    const errorCode = error?.response?.data?.error?.code || error?.code;
     const errorMessage = error?.response?.data?.error?.message || error?.message;
     
     switch (statusCode) {

@@ -93,7 +93,7 @@ export abstract class BaseHandler {
 
       // Log suggestions for optimization
       if (validation.suggestions.length > 0) {
-        console.info(`💡 Sugestões para ${toolName}:`, validation.suggestions);
+        console.error(`💡 Sugestões para ${toolName}:`, validation.suggestions);
       }
 
       return null; // No validation errors

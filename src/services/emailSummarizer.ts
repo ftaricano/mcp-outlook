@@ -1,5 +1,5 @@
 import { Message } from '@microsoft/microsoft-graph-types';
-import { EmailService, EmailSummaryData } from './emailService.js';
+import { EmailService } from './emailService.js';
 
 export interface EmailSummary {
   id: string;
@@ -120,7 +120,7 @@ export class EmailSummarizer {
     return 'Geral';
   }
 
-  private generateSummary(body: string, subject: string): string {
+  private generateSummary(body: string, _subject: string): string {
     if (body.length < 100) {
       return body;
     }
@@ -136,7 +136,7 @@ export class EmailSummarizer {
     return summary || 'Resumo não disponível';
   }
 
-  private extractKeyPoints(body: string, subject: string): string[] {
+  private extractKeyPoints(body: string, _subject: string): string[] {
     const keyPoints: string[] = [];
     
     // Busca por listas numeradas ou com bullets
