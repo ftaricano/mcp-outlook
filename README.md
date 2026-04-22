@@ -178,6 +178,7 @@ This server handles Azure AD client secrets with broad mailbox access. Keep thes
 - Store secrets in your OS keychain or a secrets manager, not in plaintext files
 - Rotate the client secret in Azure AD immediately if it is ever exposed
 - Scope `Mail.Send` only if you need outbound email — `Mail.ReadWrite` alone is sufficient for drafts, search, and folder management
+- **Known limitation:** HTML email templates do not escape user-supplied body content or branding fields (companyName, logoUrl, etc.). Do not render untrusted input directly into templates.
 
 Report vulnerabilities privately: [Security advisories](https://github.com/ftaricano/mcp-outlook/security/advisories/new)
 
