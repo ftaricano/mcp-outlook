@@ -1532,10 +1532,11 @@ export class EmailService {
         results.push({
           emailId,
           success: true,
+          newId: result.id,
           newLocation: result.parentFolderId
         });
 
-        console.error(`✅ Email movido com sucesso`);
+        console.error(`✅ Email movido com sucesso (novo id len=${result?.id?.length ?? 0})`);
       } catch (error) {
         console.error(`❌ Erro ao mover email ${emailId}:`, error);
         results.push({
