@@ -110,7 +110,8 @@ const createDraftSchema = z.object({
   bcc: z.array(emailAddress).optional(),
   attachments: z.array(attachmentInput).optional(),
   useTemplate: z.boolean().optional(),
-  templateTheme: templateTheme.optional()
+  templateTheme: templateTheme.optional(),
+  ...templateCustomizationShape
 });
 
 const markAsReadSchema = z.object({ emailId: nonEmptyString });
