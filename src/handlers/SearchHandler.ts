@@ -389,7 +389,7 @@ export class SearchHandler extends BaseHandler {
             return this.formatError('Nome e critérios de busca são obrigatórios para salvar');
           }
           
-          const saved = await this.emailService.saveSearchCriteria(name, searchCriteria);
+          await this.emailService.saveSearchCriteria(name, searchCriteria);
           return this.formatSuccess(`💾 Busca salva: "${name}"\n\nCritérios salvos:\n${JSON.stringify(searchCriteria, null, 2)}`);
 
         case 'list':
