@@ -100,8 +100,8 @@ describe('HandlerRegistry.handleTool', () => {
 });
 
 describe('HandlerRegistry.getToolSchemas (static)', () => {
-  it('exposes the 39-entry schema list', () => {
+  it('exposes the 40-entry schema list', () => {
     const schemas = HandlerRegistry.getToolSchemas();
-    expect(schemas.length).toBe(39);
+    expect(schemas.length).toBe(40);
   });
 });
