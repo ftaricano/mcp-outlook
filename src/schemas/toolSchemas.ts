@@ -349,6 +349,7 @@ export const toolSchemas: Record<string, z.ZodTypeAny> = {
   // Email Management
   list_emails: listEmailsSchema,
   send_email: sendEmailSchema,
+  create_draft: createDraftSchema,
   reply_to_email: replyToEmailSchema,
   mark_as_read: markAsReadSchema,
   mark_as_unread: markAsUnreadSchema,
