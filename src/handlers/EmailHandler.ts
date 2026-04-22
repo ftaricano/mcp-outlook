@@ -355,7 +355,6 @@ export class EmailHandler extends BaseHandler {
    */
   async handleSummarizeEmailsBatch(args: any): Promise<HandlerResult> {
     const limit = args.limit || 5;
-    const skip = args.skip || 0;
     const folder = args.folder || 'inbox';
     const priorityOnly = args.priorityOnly || false;
 
