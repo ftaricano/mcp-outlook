@@ -1,6 +1,6 @@
 # MCP Email Server
 
-Production-grade MCP (Model Context Protocol) server for Microsoft Outlook / Exchange via Microsoft Graph API. Exposes 39 email tools over stdio — send, search, organize, batch, and handle attachments (including large-file hybrid flows that sidestep MCP token limits).
+Production-grade MCP (Model Context Protocol) server for Microsoft Outlook / Exchange via Microsoft Graph API. Exposes **40 email tools** over stdio — send, draft, search, organize, batch, and handle attachments (including large-file hybrid flows that sidestep MCP token limits).
 
 ## Status
 
