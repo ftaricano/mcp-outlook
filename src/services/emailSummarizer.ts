@@ -1,5 +1,5 @@
 import { Message } from '@microsoft/microsoft-graph-types';
-import { EmailService, EmailSummaryData } from './emailService.js';
+import { EmailService } from './emailService.js';
 
 export interface EmailSummary {
   id: string;
