@@ -37,7 +37,7 @@ export class MCPBestPractices {
       if (JSON.stringify(sanitizedInput) !== JSON.stringify(input)) {
         result.warnings.push('Input was sanitized for security reasons');
       }
-    } catch (error) {
+    } catch {
       result.errors.push('Failed to sanitize input');
       result.isValid = false;
     }
