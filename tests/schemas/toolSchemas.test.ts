@@ -72,8 +72,8 @@ describe('validateToolInput - happy path', () => {
     });
   }
 
-  it('covers all 39 tools registered', () => {
-    expect(Object.keys(toolSchemas).length).toBe(39);
+  it('covers all 40 tools registered', () => {
+    expect(Object.keys(toolSchemas).length).toBe(40);
     // Every registered tool has a happy-path input.
     for (const toolName of Object.keys(toolSchemas)) {
       expect(happyInputs, `${toolName} missing happy input`).toHaveProperty(toolName);
