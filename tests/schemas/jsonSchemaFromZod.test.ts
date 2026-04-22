@@ -48,6 +48,7 @@ describe('getToolSchemas', () => {
     const expected = [
       'list_emails',
       'send_email',
+      'create_draft',
       'reply_to_email',
       'mark_as_read',
       'mark_as_unread',
