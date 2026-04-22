@@ -107,7 +107,7 @@ function toMcpInputSchema(schema: any): Record<string, any> {
     resolved = refKey ? json.definitions[refKey] : json;
   }
 
-  const { $schema, definitions, ...rest } = resolved || {};
+  const { $schema: _schema, definitions: _definitions, ...rest } = resolved || {};
 
   if (rest.type !== 'object') {
     return { type: 'object', properties: {} };
