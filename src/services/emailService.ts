@@ -2617,7 +2617,7 @@ export class EmailService {
     fileNames?: string[];
     error?: string;
   }>> {
-    const { maxConcurrent = 3, sizeLimit = 25 } = options;
+    const { maxConcurrent = 3, sizeLimit: _sizeLimit = 25 } = options;
     const results: Array<{
       success: boolean;
       filesDownloaded: number;
