@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 
-export interface ParallelTask<T, R> {
+export interface ParallelTask<T> {
   id: string;
   data: T;
   priority: 'low' | 'normal' | 'high' | 'critical';
