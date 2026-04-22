@@ -25,3 +25,7 @@ Thumbs.db
 *.tsbuildinfologs/
 *.log
 *.jsonl
+
+# Runtime artifacts
+mcp-server.lock
+coverage/
