@@ -386,7 +386,7 @@ export class MCPBestPractices {
       const exampleArgs: string[] = [];
       for (const [propName, propSchema] of Object.entries(schema.inputSchema.properties)) {
         const prop = propSchema as any;
-        let exampleValue = this.generateExampleValue(prop.type);
+        const exampleValue = this.generateExampleValue(prop.type);
         exampleArgs.push(`    "${propName}": ${JSON.stringify(exampleValue)}`);
       }
       doc += exampleArgs.join(',\n') + '\n';
