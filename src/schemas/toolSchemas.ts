@@ -23,6 +23,17 @@ const isoDateString = z.string().min(1);
 
 const templateTheme = z.enum(['professional', 'modern', 'minimal', 'corporate']);
 
+// Shared optional template customization fields. Kept here as a reusable shape
+// so every schema that accepts template rendering can carry them — otherwise
+// the zod strip default silently drops branding fields on the way to the
+// handler (see EmailHandler.handleSendEmail / handleCreateDraft).
+const templateCustomizationShape = {
+  companyName: z.string().optional(),
+  logoUrl: z.string().optional(),
+  emailTitle: z.string().optional(),
+  signature: z.string().optional()
+} as const;
+
 const stringOrStringArray = z.union([nonEmptyString, z.array(nonEmptyString).min(1)]);
 
 const folderName = z.string().min(1);
