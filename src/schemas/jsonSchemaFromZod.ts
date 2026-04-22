@@ -9,6 +9,8 @@ const toolDescriptions: Record<string, string> = {
   // Email Management
   list_emails: 'Lista emails da caixa de entrada ou de uma pasta específica',
   send_email: 'Envia um novo email com suporte a anexos e templates HTML',
+  create_draft:
+    'Cria um rascunho de email na pasta Rascunhos (apenas Mail.ReadWrite — não envia). Retorna o id do rascunho para revisão/envio posterior.',
   reply_to_email: 'Responde a um email existente',
   mark_as_read: 'Marca um email como lido',
   mark_as_unread: 'Marca um email como não lido',
