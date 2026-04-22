@@ -253,7 +253,7 @@ export class ParallelProcessor<T, R> extends EventEmitter {
       adaptiveConcurrency: true
     });
 
-    const tasks: ParallelTask<any, any[]>[] = queries.map((queryData, index) => ({
+    const tasks: ParallelTask<any>[] = queries.map((queryData, index) => ({
       id: `search-${index}`,
       data: { ...queryData, maxResults: maxResultsPerQuery },
       priority: 'normal'
