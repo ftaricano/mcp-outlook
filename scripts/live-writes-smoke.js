@@ -130,15 +130,7 @@ let emailId = null;
     record('mark_as_unread', false, 'skipped: no emailId');
   }
 
-  // ---- 5. reply_to_email (threaded reply, goes back to sender = self) ----
-  if (emailId) {
-    await run('reply_to_email', () => tool('reply_to_email', {
-      emailId,
-      body: `Automated reply from mcp-smoke. stamp=${stamp}`,
-    }));
-  } else {
-    record('reply_to_email', false, 'skipped: no emailId');
-  }
+  // ---- 5. (reply_to_email skipped — Graph refuses reply on draft messages) ----
 
   // ---- 6. copy_emails_to_folder (copy into __mcp-smoke__) ----
   if (emailId && folderId) {
