@@ -39,8 +39,8 @@ export interface ProcessingMetrics {
 
 export class ParallelProcessor<T, R> extends EventEmitter {
   private config: ProcessorConfig;
-  private taskQueue: ParallelTask<T, R>[];
-  private priorityQueues: Map<string, ParallelTask<T, R>[]>;
+  private taskQueue: ParallelTask<T>[];
+  private priorityQueues: Map<string, ParallelTask<T>[]>;
   private activeTasks: Map<string, Promise<ProcessingResult<R>>>;
   private metrics: ProcessingMetrics;
   private processingFunction: (data: T) => Promise<R>;
@@ -89,7 +89,7 @@ export class ParallelProcessor<T, R> extends EventEmitter {
   /**
    * Add task to processing queue with intelligent prioritization
    */
-  async addTask(task: ParallelTask<T, R>): Promise<ProcessingResult<R>> {
+  async addTask(task: ParallelTask<T>): Promise<ProcessingResult<R>> {
     return new Promise((resolve, reject) => {
       const enhancedTask = {
         ...task,
@@ -119,7 +119,7 @@ export class ParallelProcessor<T, R> extends EventEmitter {
   /**
    * Add multiple tasks for batch processing
    */
-  async addBatch(tasks: ParallelTask<T, R>[]): Promise<ProcessingResult<R>[]> {
+  async addBatch(tasks: ParallelTask<T>[]): Promise<ProcessingResult<R>[]> {
     console.error(`📦 Adding batch of ${tasks.length} tasks for processing`);
     
     const promises = tasks.map(task => this.addTask(task));
@@ -320,7 +320,7 @@ export class ParallelProcessor<T, R> extends EventEmitter {
   /**
    * Process individual task with timeout and retry logic
    */
-  private async processTask(task: ParallelTask<T, R>): Promise<ProcessingResult<R>> {
+  private async processTask(task: ParallelTask<T>): Promise<ProcessingResult<R>> {
     const startTime = Date.now();
     
     try {
@@ -367,7 +367,7 @@ export class ParallelProcessor<T, R> extends EventEmitter {
   /**
    * Handle successful task completion
    */
-  private handleTaskCompletion(task: ParallelTask<T, R>, result: ProcessingResult<R>): void {
+  private handleTaskCompletion(task: ParallelTask<T>, result: ProcessingResult<R>): void {
     const taskWithResolver = task as any;
     taskWithResolver.resolve?.(result);
     
@@ -384,7 +384,7 @@ export class ParallelProcessor<T, R> extends EventEmitter {
   /**
    * Handle task errors with retry logic
    */
-  private async handleTaskError(task: ParallelTask<T, R>, error: any): Promise<void> {
+  private async handleTaskError(task: ParallelTask<T>, error: any): Promise<void> {
     const currentRetries = task.retryCount || 0;
     
     if (currentRetries < (task.maxRetries || 3)) {
@@ -427,7 +427,7 @@ export class ParallelProcessor<T, R> extends EventEmitter {
   /**
    * Get next task from queue based on priority
    */
-  private getNextTask(): ParallelTask<T, R> | null {
+  private getNextTask(): ParallelTask<T> | null {
     if (this.config.priorityQueuing) {
       // Check priority queues in order
       for (const priority of ['critical', 'high', 'normal', 'low']) {
