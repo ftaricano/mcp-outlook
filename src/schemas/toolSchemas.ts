@@ -23,6 +23,17 @@ const isoDateString = z.string().min(1);
 
 const templateTheme = z.enum(['professional', 'modern', 'minimal', 'corporate']);
 
+// Shared optional template customization fields. Kept here as a reusable shape
+// so every schema that accepts template rendering can carry them — otherwise
+// the zod strip default silently drops branding fields on the way to the
+// handler (see EmailHandler.handleSendEmail / handleCreateDraft).
+const templateCustomizationShape = {
+  companyName: z.string().optional(),
+  logoUrl: z.string().optional(),
+  emailTitle: z.string().optional(),
+  signature: z.string().optional()
+} as const;
+
 const stringOrStringArray = z.union([nonEmptyString, z.array(nonEmptyString).min(1)]);
 
 const folderName = z.string().min(1);
@@ -81,7 +92,8 @@ const sendEmailSchema = z.object({
   bcc: z.array(emailAddress).optional(),
   attachments: z.array(attachmentInput).optional(),
   useTemplate: z.boolean().optional(),
-  templateTheme: templateTheme.optional()
+  templateTheme: templateTheme.optional(),
+  ...templateCustomizationShape
 });
 
 const replyToEmailSchema = z.object({
@@ -98,7 +110,8 @@ const createDraftSchema = z.object({
   bcc: z.array(emailAddress).optional(),
   attachments: z.array(attachmentInput).optional(),
   useTemplate: z.boolean().optional(),
-  templateTheme: templateTheme.optional()
+  templateTheme: templateTheme.optional(),
+  ...templateCustomizationShape
 });
 
 const markAsReadSchema = z.object({ emailId: nonEmptyString });
@@ -179,6 +192,10 @@ const sendEmailFromAttachmentSchema = z.object({
   bcc: z.array(emailAddress).optional(),
   useTemplate: z.boolean().optional(),
   templateTheme: templateTheme.optional(),
+  // templateCustomizationShape is spread here for schema consistency so zod
+  // does not strip these fields in transit. The hybrid handler currently does
+  // not forward them to templateOptions; that wiring is a follow-up task.
+  ...templateCustomizationShape,
   keepOriginalFile: z.boolean().optional(),
   customFilename: z.string().optional()
 });
@@ -192,6 +209,8 @@ const sendEmailWithFileSchema = z.object({
   bcc: z.array(emailAddress).optional(),
   useTemplate: z.boolean().optional(),
   templateTheme: templateTheme.optional(),
+  // see note on sendEmailFromAttachmentSchema above
+  ...templateCustomizationShape,
   customFilename: z.string().optional()
 });
 

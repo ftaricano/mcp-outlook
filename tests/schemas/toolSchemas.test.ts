@@ -98,6 +98,51 @@ describe('validateToolInput - realistic second inputs', () => {
     expect(r.ok).toBe(true);
   });
 
+  it('send_email preserves template customization fields (regression)', () => {
+    // Regression: zod strip default was silently dropping companyName, logoUrl,
+    // emailTitle and signature before they reached EmailHandler. The handler
+    // then passed undefined into the rendered template.
+    const r = validateToolInput('send_email', {
+      to: ['a@b.com'],
+      subject: 'Brand check',
+      body: '<p>Hi</p>',
+      useTemplate: true,
+      templateTheme: 'corporate',
+      companyName: 'ACME',
+      logoUrl: 'https://example.com/logo.png',
+      emailTitle: 'Quarterly update',
+      signature: '— Team ACME'
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.companyName).toBe('ACME');
+      expect(r.data.logoUrl).toBe('https://example.com/logo.png');
+      expect(r.data.emailTitle).toBe('Quarterly update');
+      expect(r.data.signature).toBe('— Team ACME');
+    }
+  });
+
+  it('create_draft preserves template customization fields (regression)', () => {
+    const r = validateToolInput('create_draft', {
+      to: ['a@b.com'],
+      subject: 'Draft brand check',
+      body: '<p>Hi</p>',
+      useTemplate: true,
+      templateTheme: 'professional',
+      companyName: 'ACME',
+      logoUrl: 'https://example.com/logo.png',
+      emailTitle: 'Draft title',
+      signature: '— Team'
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.companyName).toBe('ACME');
+      expect(r.data.logoUrl).toBe('https://example.com/logo.png');
+      expect(r.data.emailTitle).toBe('Draft title');
+      expect(r.data.signature).toBe('— Team');
+    }
+  });
+
   it('advanced_search accepts all filters', () => {
     const r = validateToolInput('advanced_search', {
       query: 'x',
