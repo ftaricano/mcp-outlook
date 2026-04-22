@@ -120,6 +120,13 @@ The `HEALTHCHECK` verifies the compiled entrypoint imports cleanly — full func
 
 CI (`.github/workflows/ci.yml`) runs lint + typecheck + test + smoke on Node 20 and 22.
 
+Live integration smoke scripts (require Graph credentials):
+
+| Script | Coverage |
+|---|---|
+| `node scripts/live-readonly-smoke.js` | 20 read-only + dry-run tools |
+| `node scripts/live-writes-smoke.js` | 9 write-path tools (self-contained, safe to run) |
+
 ## Tools
 
 See [CLAUDE.md](./CLAUDE.md) for the full tool catalog with parameter schemas and examples. Summary by category:
