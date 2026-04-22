@@ -6,8 +6,8 @@ Production-grade MCP (Model Context Protocol) server for Microsoft Outlook / Exc
 
 | Metric | Value |
 |---|---|
-| Tools | 39 |
-| Tests | 144 passing (8 files) |
+| Tools | 40 |
+| Tests | 145 passing (8 files) |
 | Coverage | ~93% on scoped modules |
 | Node | >=20 |
 | MCP SDK | ^1.29.0 |
