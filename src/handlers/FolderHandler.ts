@@ -158,11 +158,14 @@ export class FolderHandler extends BaseHandler {
         result += `📋 **Detalhes:**\n`;
         results.forEach((copyResult, index) => {
           const status = copyResult.success ? '✅' : '❌';
-          const details = copyResult.success 
-            ? `Copiado para ${targetFolderId}` 
+          const details = copyResult.success
+            ? `Copiado para ${targetFolderId}`
             : `Erro: ${copyResult.error}`;
-          
+
           result += `   ${index + 1}. ${status} Email ${emailArray[index].substring(0, 8)}... - ${details}\n`;
+          if (copyResult.success && copyResult.copiedId) {
+            result += `      ID: ${copyResult.copiedId}\n`;
+          }
         });
       }
       
