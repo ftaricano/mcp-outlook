@@ -52,6 +52,9 @@ export class HandlerRegistry {
       case 'send_email':
         return await this.emailHandler.handleSendEmail(args);
 
+      case 'create_draft':
+        return await this.emailHandler.handleCreateDraft(args);
+
       case 'reply_to_email':
         return await this.emailHandler.handleReplyToEmail(args);
 
