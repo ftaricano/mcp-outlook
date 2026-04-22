@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /**
- * Runtime validation schemas for all 39 MCP tool inputs.
+ * Runtime validation schemas for all 40 MCP tool inputs.
  *
  * These mirror the JSON Schema semantics that were previously declared inline
  * in HandlerRegistry.ts, while adding sensible runtime constraints (email
