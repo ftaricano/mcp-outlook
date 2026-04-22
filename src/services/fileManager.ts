@@ -65,8 +65,7 @@ export class FileManager {
         const ext = path.extname(filename);
         const nameWithoutExt = path.basename(filename, ext);
         const newFilename = `${nameWithoutExt}_${timestamp}${ext}`;
-        const newFilePath = path.join(targetDir, newFilename);
-        return this.saveAttachmentToDisk(attachment, { 
+        return this.saveAttachmentToDisk(attachment, {
           ...options, 
           filename: newFilename,
           targetDirectory: targetDir 
