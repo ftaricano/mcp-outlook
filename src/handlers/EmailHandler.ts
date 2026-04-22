@@ -135,6 +135,96 @@ export class EmailHandler extends BaseHandler {
   }
 
   /**
+   * Handler for creating a draft message (no send).
+   * Requires only Mail.ReadWrite; useful when the tenant policy blocks
+   * application sendMail but still permits message creation.
+   */
+  async handleCreateDraft(args: any): Promise<HandlerResult> {
+    const validationError = this.validateRequiredArgs(args, ['to', 'subject', 'body']);
+    if (validationError) {
+      return this.formatError(validationError);
+    }
+
+    const validatedArgs = {
+      to: args.to || [],
+      subject: args.subject || '',
+      body: args.body || '',
+      cc: args.cc,
+      bcc: args.bcc,
+      attachments: args.attachments,
+    };
+
+    if (validatedArgs.attachments && validatedArgs.attachments.length > 0) {
+      const validation = AttachmentValidator.validateAttachments(validatedArgs.attachments);
+      if (!validation.isValid) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `❌ Erro na validação dos anexos:\n\n${validation.errors.join('\n')}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+      if (validation.warnings.length > 0) {
+        console.warn('⚠️ Avisos sobre anexos do rascunho:', validation.warnings);
+      }
+    }
+
+    const enhancedOptions = args.useTemplate
+      ? {
+          useTemplate: true,
+          templateOptions: {
+            theme: args.templateTheme || 'professional',
+            showHeader: !!args.companyName || !!args.logoUrl,
+            showFooter: true,
+            companyName: args.companyName,
+            logoUrl: args.logoUrl,
+          },
+          emailContent: {
+            title: args.emailTitle,
+            signature: args.signature,
+          },
+        }
+      : undefined;
+
+    try {
+      const result = await this.emailService.createDraft(
+        validatedArgs.to,
+        validatedArgs.subject,
+        validatedArgs.body,
+        validatedArgs.cc,
+        validatedArgs.bcc,
+        validatedArgs.attachments,
+        enhancedOptions
+      );
+
+      const ccLine = validatedArgs.cc ? `CC: ${validatedArgs.cc.join(', ')}\n` : '';
+      const bccLine = validatedArgs.bcc ? `BCC: ${validatedArgs.bcc.join(', ')}\n` : '';
+      const attachLine =
+        validatedArgs.attachments && validatedArgs.attachments.length > 0
+          ? `📎 Anexos: ${validatedArgs.attachments.length} arquivo(s) — ${validatedArgs.attachments
+              .map((att: any) => att.name)
+              .join(', ')}\n`
+          : '';
+      const webLinkLine = result.webLink ? `Link: ${result.webLink}\n` : '';
+
+      return this.formatSuccess(
+        `📝 Rascunho criado com sucesso!\n\n` +
+          `Para: ${validatedArgs.to.join(', ')}\n` +
+          `Assunto: ${validatedArgs.subject}\n` +
+          `${ccLine}${bccLine}${attachLine}\n` +
+          `ID: ${result.draftId}\n` +
+          `${webLinkLine}` +
+          `\n💡 Rascunho salvo em "Rascunhos". Abra no Outlook para revisar e enviar.`
+      );
+    } catch (error) {
+      return this.formatError('Erro ao criar rascunho', error);
+    }
+  }
+
+  /**
    * Handler for replying to email
    */
   async handleReplyToEmail(args: any): Promise<HandlerResult> {
