@@ -296,8 +296,7 @@ export class CacheManager extends EventEmitter {
    */
   private cleanup(): void {
     let cleaned = 0;
-    const now = Date.now();
-    
+
     for (const [key, entry] of this.cache.entries()) {
       if (this.isExpired(entry)) {
         this.cache.delete(key);
