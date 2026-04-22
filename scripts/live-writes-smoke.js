@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Live write-path smoke against the real tenant.
-// Creates a transient folder "__mcp-smoke__", sends a test email to self,
-// round-trips status/move/copy/reply, then cleans up (delete email + folder).
+// Creates a transient folder "__mcp-smoke__", creates a draft message
+// (via create_draft — needs only Mail.ReadWrite, not Mail.Send), then
+// round-trips status/move/copy and finally cleans up (delete email + folder).
 // Every artifact is self-created — nothing touches existing user mail.
 //
 // Uses the same stdio JSON-RPC harness shape as live-readonly-smoke.js.
