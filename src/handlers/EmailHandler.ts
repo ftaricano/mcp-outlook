@@ -275,7 +275,7 @@ export class EmailHandler extends BaseHandler {
     }
 
     try {
-      const result = await this.emailService.markAsUnread(args.emailId);
+      await this.emailService.markAsUnread(args.emailId);
       return this.formatSuccess(`✅ Email marcado como não lido`);
     } catch (error) {
       return this.formatError('Erro ao marcar email como não lido', error);
