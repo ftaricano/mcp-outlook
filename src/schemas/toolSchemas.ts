@@ -90,6 +90,17 @@ const replyToEmailSchema = z.object({
   replyAll: z.boolean().optional()
 });
 
+const createDraftSchema = z.object({
+  to: emailAddressList,
+  subject: nonEmptyString,
+  body: z.string(),
+  cc: z.array(emailAddress).optional(),
+  bcc: z.array(emailAddress).optional(),
+  attachments: z.array(attachmentInput).optional(),
+  useTemplate: z.boolean().optional(),
+  templateTheme: templateTheme.optional()
+});
+
 const markAsReadSchema = z.object({ emailId: nonEmptyString });
 const markAsUnreadSchema = z.object({ emailId: nonEmptyString });
 const deleteEmailSchema = z.object({ emailId: nonEmptyString });
