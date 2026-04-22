@@ -778,7 +778,7 @@ export class SecurityManager extends EventEmitter {
       ];
 
       return suspiciousPatterns.some(pattern => pattern.test(urlObj.hostname));
-    } catch (error) {
+    } catch {
       // Invalid URL
       return true;
     }
