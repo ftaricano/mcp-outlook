@@ -35,7 +35,11 @@ export class SecurityManager extends EventEmitter {
   private auditLog: AuditEntry[];
   private rateLimitTracking: Map<string, { count: number; resetTime: number }>;
   private securityEvents: SecurityEvent[];
-  private encryptionKey: string;
+  private encryptionKey: Buffer;
+
+  private static readonly ENCRYPTION_ALGORITHM = 'aes-256-cbc';
+  private static readonly IV_LENGTH = 16;
+  private static readonly ENCRYPTION_FORMAT_VERSION = 'enc-v1';
 
   constructor(config: Partial<SecurityConfig> = {}) {
     super();
@@ -368,10 +372,15 @@ export class SecurityManager extends EventEmitter {
     }
 
     try {
-      const cipher = crypto.createCipher('aes-256-cbc', this.encryptionKey);
-      let encrypted = cipher.update(data, 'utf8', 'hex');
-      encrypted += cipher.final('hex');
-      return encrypted;
+      const iv = crypto.randomBytes(SecurityManager.IV_LENGTH);
+      const cipher = crypto.createCipheriv(SecurityManager.ENCRYPTION_ALGORITHM, this.encryptionKey, iv);
+      const encrypted = Buffer.concat([cipher.update(data, 'utf8'), cipher.final()]);
+
+      return [
+        SecurityManager.ENCRYPTION_FORMAT_VERSION,
+        iv.toString('hex'),
+        encrypted.toString('hex')
+      ].join(':');
     } catch (error) {
       console.error('❌ Encryption failed:', error);
       return data;
@@ -387,10 +396,28 @@ export class SecurityManager extends EventEmitter {
     }
 
     try {
-      const decipher = crypto.createDecipher('aes-256-cbc', this.encryptionKey);
-      let decrypted = decipher.update(encryptedData, 'hex', 'utf8');
-      decrypted += decipher.final('utf8');
-      return decrypted;
+      const [version, ivHex, payloadHex] = encryptedData.split(':');
+
+      if (
+        version !== SecurityManager.ENCRYPTION_FORMAT_VERSION ||
+        !ivHex ||
+        !payloadHex
+      ) {
+        throw new Error('Unsupported encrypted payload format');
+      }
+
+      const iv = Buffer.from(ivHex, 'hex');
+      if (iv.length !== SecurityManager.IV_LENGTH) {
+        throw new Error('Invalid IV length');
+      }
+
+      const decipher = crypto.createDecipheriv(SecurityManager.ENCRYPTION_ALGORITHM, this.encryptionKey, iv);
+      const decrypted = Buffer.concat([
+        decipher.update(Buffer.from(payloadHex, 'hex')),
+        decipher.final()
+      ]);
+
+      return decrypted.toString('utf8');
     } catch (error) {
       console.error('❌ Decryption failed:', error);
       return encryptedData;
@@ -444,8 +471,9 @@ export class SecurityManager extends EventEmitter {
   /**
    * Generate encryption key
    */
-  private generateEncryptionKey(): string {
-    return process.env.ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex');
+  private generateEncryptionKey(): Buffer {
+    const sourceKey = process.env.ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex');
+    return crypto.createHash('sha256').update(sourceKey).digest();
   }
 
   /**
