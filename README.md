@@ -12,8 +12,7 @@ Works with any MCP-compatible client (Claude Desktop, Cursor, custom agents, etc
 | Metric | Value |
 |---|---|
 | Tools | 40 |
-| Tests | 147 passing |
-| Coverage | ~93% (scoped modules) |
+| Tests | 174 passing |
 | Node | ≥ 20 |
 | MCP SDK | ^1.29.0 |
 | License | MIT |
@@ -51,7 +50,8 @@ cp .env.example .env
 | `MICROSOFT_GRAPH_TENANT_ID` | yes | Azure AD tenant UUID |
 | `TARGET_USER_EMAIL` | yes | Mailbox to operate on |
 | `LOG_LEVEL` | no | `error` / `warn` / `info` (default) / `debug` |
-| `DOWNLOAD_DIR` | no | Absolute path for attachment downloads |
+| `DOWNLOAD_DIR` | no | Absolute write root. All attachment downloads land here; everything else is rejected. Default: `<cwd>/downloads`. |
+| `MCP_EMAIL_UPLOAD_DIRS` | no | Colon-separated read allowlist for `send_email_with_file` / `encode_file_for_attachment`. Anything outside — including symlinks pointing out and files in `~/.ssh`, `~/.aws`, `*.env`, `*.pem`, etc. — is rejected. Defaults to `DOWNLOAD_DIR`. |
 | `MAX_ATTACHMENT_MB` | no | Attachment size cap (default: 25) |
 
 After setting permissions in Azure AD, click **Grant admin consent** — without this step every call returns 403.
@@ -171,12 +171,23 @@ node scripts/live-writes-smoke.js     # 9 write-path tools (self-contained, safe
 
 ## Security
 
-This server handles Azure AD client secrets with broad mailbox access. Keep these practices:
+This server handles Azure AD client secrets with broad mailbox access, and it is driven by an LLM that sees untrusted email bodies. Treat every tool call as potentially attacker-influenced.
+
+**Filesystem allowlist (`pathGuard`)** — `send_email_with_file`, `encode_file_for_attachment`, and all attachment download paths go through a central allowlist (`src/security/pathGuard.ts`):
+
+- **Writes** are confined to `DOWNLOAD_DIR`.
+- **Reads** are confined to `MCP_EMAIL_UPLOAD_DIRS` (defaults to `DOWNLOAD_DIR`).
+- Symlinks, `..` traversal, NUL bytes, and files in secret-bearing locations (`~/.ssh`, `~/.aws`, `~/.gnupg`, `.env*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `credentials.json`, `id_rsa*`, etc.) are rejected before the file is read.
+
+Without this guard, an attacker who controls an email body could instruct the agent to attach `~/.ssh/id_rsa` to an outbound email. The guard blocks that class of confused-deputy attack at the boundary.
+
+Keep these practices:
 
 - **Never commit** `.env` — it is in `.gitignore`
 - **Never commit** `*.log` or `*.jsonl` files — also in `.gitignore`
 - Store secrets in your OS keychain or a secrets manager, not in plaintext files
 - Rotate the client secret in Azure AD immediately if it is ever exposed
+- Set `MCP_EMAIL_UPLOAD_DIRS` to the *minimum* set of directories the server actually needs to read. Do not set it to `$HOME` or `/`.
 - Scope `Mail.Send` only if you need outbound email — `Mail.ReadWrite` alone is sufficient for drafts, search, and folder management
 - **Known limitation:** HTML email templates do not escape user-supplied body content or branding fields (companyName, logoUrl, etc.). Do not render untrusted input directly into templates.
 

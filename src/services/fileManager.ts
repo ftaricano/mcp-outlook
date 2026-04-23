@@ -1,17 +1,23 @@
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
+import { PathGuard } from '../security/pathGuard.js';
 
 /**
  * FileManager - Gerencia downloads e salvamento de arquivos grandes
  * Otimizado para trabalhar com anexos do Microsoft Graph via MCP
+ *
+ * Every path that enters this class comes from `pathGuard`, which enforces
+ * the allowlist / symlink / denylist rules. If you add a new fs entry point,
+ * route it through pathGuard.resolveSafe() or pathGuard.resolveTargetDirectory()
+ * first. No exceptions.
  */
 export class FileManager {
-  private downloadDir: string;
-  
-  constructor(customDownloadDir?: string) {
-    // Usar diretório personalizado ou criar um padrão
-    this.downloadDir = customDownloadDir || path.join(os.homedir(), 'Downloads', 'mcp-email-attachments');
+  private readonly downloadDir: string;
+  private readonly pathGuard: PathGuard;
+
+  constructor(pathGuard: PathGuard) {
+    this.pathGuard = pathGuard;
+    this.downloadDir = pathGuard.getDownloadRoot();
     this.ensureDownloadDirectory();
   }
 
@@ -51,13 +57,27 @@ export class FileManager {
     error?: string;
   }> {
     try {
-      // Determinar diretório de destino
-      const targetDir = options.targetDirectory || this.downloadDir;
+      // pathGuard enforces that targetDirectory lives inside the download
+      // root. Without this, an LLM could aim the writer at /tmp, /etc, or
+      // anywhere the process can write.
+      const targetDir = this.pathGuard.resolveTargetDirectory(options.targetDirectory);
       this.ensureDirectoryExists(targetDir);
 
-      // Determinar nome do arquivo
-      const filename = options.filename || this.sanitizeFilename(attachment.name);
-      const filePath = path.join(targetDir, filename);
+      // Sanitize regardless of allowlist as defence-in-depth: an operator
+      // who extends the allowlist shouldn't accidentally allow "../" in a
+      // filename to escape targetDir either.
+      const rawFilename = options.filename || attachment.name;
+      const filename = this.sanitizeFilename(rawFilename);
+      const candidatePath = path.join(targetDir, filename);
+      // Final belt-and-braces: reject if path.join lets us out of targetDir.
+      const resolvedCandidate = path.resolve(candidatePath);
+      if (
+        resolvedCandidate !== path.resolve(targetDir) &&
+        !resolvedCandidate.startsWith(path.resolve(targetDir) + path.sep)
+      ) {
+        throw new Error(`filename escapes targetDir: ${filename}`);
+      }
+      const filePath = resolvedCandidate;
 
       // Verificar se arquivo já existe
       if (fs.existsSync(filePath) && !options.overwrite) {
@@ -121,61 +141,72 @@ export class FileManager {
     filePath: string,
     _expectedSize: number
   ): Promise<{ success: boolean; fileSize: number; error?: string }> {
+    // Base64 arrives as a single string, not a stream, so the chunking
+    // below is only about back-pressuring writes — we still hold the full
+    // base64 in memory. For attachments under Graph's ~15MB cap this is
+    // fine. Callers can swap to a streaming pipeline later if we grow.
     return new Promise((resolve) => {
-      try {
-        // Criar stream de escrita
-        const writeStream = fs.createWriteStream(filePath);
-        
-        writeStream.on('error', (error) => {
-          console.error('❌ Erro no stream de escrita:', error);
-          resolve({ success: false, fileSize: 0, error: error.message });
-        });
+      const writeStream = fs.createWriteStream(filePath);
+      let settled = false;
 
-        writeStream.on('finish', () => {
-          // Verificar tamanho final
+      const settle = (value: { success: boolean; fileSize: number; error?: string }) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+
+      writeStream.on('error', (error) => {
+        console.error('❌ Erro no stream de escrita:', error);
+        settle({ success: false, fileSize: 0, error: error.message });
+      });
+
+      writeStream.on('finish', () => {
+        try {
           const stats = fs.statSync(filePath);
           console.error(`✅ Arquivo salvo: ${stats.size} bytes`);
-          resolve({ success: true, fileSize: stats.size });
-        });
+          settle({ success: true, fileSize: stats.size });
+        } catch (statErr) {
+          settle({
+            success: false,
+            fileSize: 0,
+            error: statErr instanceof Error ? statErr.message : 'stat failed',
+          });
+        }
+      });
 
-        // Processar Base64 em chunks para evitar sobrecarga de memória
-        const chunkSize = 8192; // 8KB chunks
-        let offset = 0;
+      const chunkSize = 8192;
+      let offset = 0;
 
-        const processChunk = () => {
-          if (offset >= base64Content.length) {
-            writeStream.end();
-            return;
-          }
-
+      const processChunk = (): void => {
+        if (settled) return;
+        if (offset >= base64Content.length) {
+          writeStream.end();
+          return;
+        }
+        try {
           const chunk = base64Content.slice(offset, offset + chunkSize);
           const buffer = Buffer.from(chunk, 'base64');
-          
           writeStream.write(buffer, (error) => {
             if (error) {
               console.error('❌ Erro ao escrever chunk:', error);
               writeStream.destroy();
-              resolve({ success: false, fileSize: 0, error: error.message });
+              settle({ success: false, fileSize: 0, error: error.message });
               return;
             }
-            
             offset += chunkSize;
-            // Processar próximo chunk de forma assíncrona
             setImmediate(processChunk);
           });
-        };
+        } catch (error) {
+          writeStream.destroy();
+          settle({
+            success: false,
+            fileSize: 0,
+            error: error instanceof Error ? error.message : 'Erro na conversão',
+          });
+        }
+      };
 
-        // Iniciar processamento
-        processChunk();
-
-      } catch (error) {
-        console.error('❌ Erro na conversão Base64:', error);
-        resolve({ 
-          success: false, 
-          fileSize: 0, 
-          error: error instanceof Error ? error.message : 'Erro na conversão' 
-        });
-      }
+      processChunk();
     });
   }
 
@@ -318,17 +349,17 @@ export class FileManager {
     error?: string;
   }> {
     try {
-      console.error(`📎 Codificando arquivo para anexo: ${filePath}`);
+      // CRITICAL: resolveSafe(read) applies the allowlist + symlink + secret-
+      // filename guard. Without this, an LLM-driven prompt injection could
+      // read ~/.ssh/id_rsa and exfiltrate via send_email.
+      const safePath = this.pathGuard.resolveSafe(filePath, 'read');
+      console.error(`📎 Codificando arquivo para anexo: ${safePath}`);
 
-      // 1. Verificar se arquivo existe
-      if (!fs.existsSync(filePath)) {
-        throw new Error(`Arquivo não encontrado: ${filePath}`);
-      }
-
-      // 2. Obter informações do arquivo
-      const stats = fs.statSync(filePath);
+      // 2. Obter informações do arquivo (safePath is already validated as a
+      // regular file by pathGuard, so statSync won't surprise us)
+      const stats = fs.statSync(safePath);
       const fileSize = stats.size;
-      const fileName = path.basename(filePath);
+      const fileName = path.basename(safePath);
 
       console.error(`   Nome: ${fileName}`);
       console.error(`   Tamanho: ${(fileSize / 1024).toFixed(1)}KB`);
@@ -340,12 +371,12 @@ export class FileManager {
       }
 
       // 4. Detectar MIME type baseado na extensão
-      const contentType = this.detectContentType(filePath);
+      const contentType = this.detectContentType(safePath);
       console.error(`   Tipo MIME: ${contentType}`);
 
       // 5. Ler e codificar arquivo
       console.error('🔄 Lendo e codificando arquivo...');
-      const fileBuffer = fs.readFileSync(filePath);
+      const fileBuffer = fs.readFileSync(safePath);
       const base64Content = fileBuffer.toString('base64');
 
       // 6. Validar codificação
@@ -448,51 +479,41 @@ export class FileManager {
     warnings: string[];
   } {
     const warnings: string[] = [];
-    
+
     try {
-      // 1. Verificar existência
-      if (!fs.existsSync(filePath)) {
-        return { valid: false, error: `Arquivo não encontrado: ${filePath}`, warnings };
-      }
+      // Delegate path safety to pathGuard first — anything it rejects is
+      // unreachable by subsequent logic.
+      const safePath = this.pathGuard.resolveSafe(filePath, 'read');
 
-      // 2. Verificar se é arquivo (não diretório)
-      const stats = fs.statSync(filePath);
-      if (!stats.isFile()) {
-        return { valid: false, error: 'Caminho especificado não é um arquivo', warnings };
-      }
-
-      // 3. Verificar tamanho
+      const stats = fs.statSync(safePath);
       const fileSize = stats.size;
       const maxSize = 15 * 1024 * 1024; // 15MB
-      
+
       if (fileSize === 0) {
         return { valid: false, error: 'Arquivo está vazio (0 bytes)', warnings };
       }
-      
       if (fileSize > maxSize) {
-        return { 
-          valid: false, 
-          error: `Arquivo muito grande: ${(fileSize / (1024 * 1024)).toFixed(2)}MB. Limite: 15MB`, 
-          warnings 
+        return {
+          valid: false,
+          error: `Arquivo muito grande: ${(fileSize / (1024 * 1024)).toFixed(2)}MB. Limite: 15MB`,
+          warnings,
         };
       }
 
-      // 4. Avisos baseados no tamanho
-      if (fileSize > 1024 * 1024) { // 1MB
-        warnings.push(`Arquivo grande: ${(fileSize / (1024 * 1024)).toFixed(2)}MB - pode demorar para processar`);
+      if (fileSize > 1024 * 1024) {
+        warnings.push(
+          `Arquivo grande: ${(fileSize / (1024 * 1024)).toFixed(2)}MB - pode demorar para processar`
+        );
       }
 
-      // 5. Avisos baseados na extensão
-      const ext = path.extname(filePath).toLowerCase();
+      const ext = path.extname(safePath).toLowerCase();
       const executableExtensions = ['.exe', '.bat', '.cmd', '.scr', '.com', '.pif'];
-      
       if (executableExtensions.includes(ext)) {
         warnings.push('Arquivo executável pode ser bloqueado por filtros de email');
       }
 
-      // 6. Verificar permissões de leitura
       try {
-        fs.accessSync(filePath, fs.constants.R_OK);
+        fs.accessSync(safePath, fs.constants.R_OK);
       } catch {
         return { valid: false, error: 'Sem permissão para ler o arquivo', warnings };
       }

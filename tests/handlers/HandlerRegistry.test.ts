@@ -3,46 +3,26 @@ import { HandlerRegistry } from '../../src/handlers/HandlerRegistry.js';
 
 /**
  * Build a minimal mock set that is enough for HandlerRegistry construction +
- * dispatch of simple tools. The handlers themselves only call emailService /
- * securityManager / mcpBestPractices; we stub the bits they touch.
+ * dispatch of simple tools. The handlers themselves only call emailService
+ * and emailSummarizer — we stub the bits they touch.
  */
 function makeMocks() {
-  const securityManager: any = {
-    sanitizeInput: (args: any) => args,
-    validatePermissions: () => ({ allowed: true }),
-    createAuditEntry: vi.fn()
-  };
-
-  const mcpBestPractices: any = {
-    validateToolInput: () => ({
-      isValid: true,
-      errors: [],
-      warnings: [],
-      suggestions: []
-    })
-  };
-
   const emailSummarizer: any = {
     summarizeEmail: vi.fn(),
-    summarizeEmailsBatch: vi.fn()
+    summarizeEmailsBatch: vi.fn(),
   };
 
   const emailService: any = {
-    listEmails: vi.fn().mockResolvedValue([])
+    listEmails: vi.fn().mockResolvedValue([]),
   };
 
-  return { emailService, emailSummarizer, securityManager, mcpBestPractices };
+  return { emailService, emailSummarizer };
 }
 
 describe('HandlerRegistry.handleTool', () => {
   it('dispatches list_emails to EmailHandler and returns its result', async () => {
     const mocks = makeMocks();
-    const registry = new HandlerRegistry(
-      mocks.emailService,
-      mocks.emailSummarizer,
-      mocks.securityManager,
-      mocks.mcpBestPractices
-    );
+    const registry = new HandlerRegistry(mocks.emailService, mocks.emailSummarizer);
 
     const result = await registry.handleTool('list_emails', { limit: 5 });
     expect(mocks.emailService.listEmails).toHaveBeenCalledTimes(1);
@@ -53,43 +33,28 @@ describe('HandlerRegistry.handleTool', () => {
     expect(Array.isArray(result.content)).toBe(true);
   });
 
-  it('rejects invalid args (zod) before reaching the handler', async () => {
+  it('returns a structured error (not throw) for invalid args', async () => {
     const mocks = makeMocks();
-    const registry = new HandlerRegistry(
-      mocks.emailService,
-      mocks.emailSummarizer,
-      mocks.securityManager,
-      mocks.mcpBestPractices
-    );
+    const registry = new HandlerRegistry(mocks.emailService, mocks.emailSummarizer);
 
-    await expect(
-      registry.handleTool('list_emails', { limit: -1 })
-    ).rejects.toThrow(/Invalid arguments/);
+    const result = await registry.handleTool('list_emails', { limit: -1 });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/Invalid arguments for list_emails/);
     expect(mocks.emailService.listEmails).not.toHaveBeenCalled();
   });
 
-  it('rejects unknown tool names at the zod layer', async () => {
+  it('returns a structured error for unknown tool names', async () => {
     const mocks = makeMocks();
-    const registry = new HandlerRegistry(
-      mocks.emailService,
-      mocks.emailSummarizer,
-      mocks.securityManager,
-      mocks.mcpBestPractices
-    );
+    const registry = new HandlerRegistry(mocks.emailService, mocks.emailSummarizer);
 
-    await expect(registry.handleTool('does_not_exist', {})).rejects.toThrow(
-      /Invalid arguments|Ferramenta desconhecida|Unknown tool/
-    );
+    const result = await registry.handleTool('does_not_exist', {});
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/Unknown tool|Invalid arguments/);
   });
 
   it('propagates the parsed/defaulted args into the handler', async () => {
     const mocks = makeMocks();
-    const registry = new HandlerRegistry(
-      mocks.emailService,
-      mocks.emailSummarizer,
-      mocks.securityManager,
-      mocks.mcpBestPractices
-    );
+    const registry = new HandlerRegistry(mocks.emailService, mocks.emailSummarizer);
 
     await registry.handleTool('list_emails', {});
     // With empty input, defaults kick in inside EmailHandler (limit=10).

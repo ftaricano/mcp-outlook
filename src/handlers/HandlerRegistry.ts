@@ -1,7 +1,5 @@
 import { EmailService } from '../services/emailService.js';
 import { EmailSummarizer } from '../services/emailSummarizer.js';
-import { SecurityManager } from '../security/securityManager.js';
-import { MCPBestPractices } from '../utils/mcpBestPractices.js';
 import { EmailHandler } from './EmailHandler.js';
 import { AttachmentHandler } from './AttachmentHandler.js';
 import { HybridHandler } from './HybridHandler.js';
@@ -13,174 +11,148 @@ import { validateToolInput } from '../schemas/toolSchemas.js';
 import { getToolSchemas as buildToolSchemas } from '../schemas/jsonSchemaFromZod.js';
 
 export class HandlerRegistry {
-  private emailHandler: EmailHandler;
-  private attachmentHandler: AttachmentHandler;
-  private hybridHandler: HybridHandler;
-  private folderHandler: FolderHandler;
-  private searchHandler: SearchHandler;
-  private batchHandler: BatchHandler;
+  private readonly emailHandler: EmailHandler;
+  private readonly attachmentHandler: AttachmentHandler;
+  private readonly hybridHandler: HybridHandler;
+  private readonly folderHandler: FolderHandler;
+  private readonly searchHandler: SearchHandler;
+  private readonly batchHandler: BatchHandler;
 
-  constructor(
-    emailService: EmailService,
-    emailSummarizer: EmailSummarizer,
-    securityManager: SecurityManager,
-    mcpBestPractices: MCPBestPractices
-  ) {
-    this.emailHandler = new EmailHandler(emailService, emailSummarizer, securityManager, mcpBestPractices);
-    this.attachmentHandler = new AttachmentHandler(emailService, emailSummarizer, securityManager, mcpBestPractices);
-    this.hybridHandler = new HybridHandler(emailService, emailSummarizer, securityManager, mcpBestPractices);
-    this.folderHandler = new FolderHandler(emailService, emailSummarizer, securityManager, mcpBestPractices);
-    this.searchHandler = new SearchHandler(emailService, emailSummarizer, securityManager, mcpBestPractices);
-    this.batchHandler = new BatchHandler(emailService, emailSummarizer, securityManager, mcpBestPractices);
+  constructor(emailService: EmailService, emailSummarizer: EmailSummarizer) {
+    this.emailHandler = new EmailHandler(emailService, emailSummarizer);
+    this.attachmentHandler = new AttachmentHandler(emailService, emailSummarizer);
+    this.hybridHandler = new HybridHandler(emailService, emailSummarizer);
+    this.folderHandler = new FolderHandler(emailService, emailSummarizer);
+    this.searchHandler = new SearchHandler(emailService, emailSummarizer);
+    this.batchHandler = new BatchHandler(emailService, emailSummarizer);
   }
 
   /**
-   * Route tool request to appropriate handler
+   * Route a tool request to its handler. Input is validated by the Zod
+   * registry in `toolSchemas.ts`; validation failures are returned as a
+   * structured MCP error response (isError: true), never thrown, so the
+   * caller observes consistent behaviour regardless of which tool failed.
    */
-  async handleTool(name: string, args: any): Promise<HandlerResult> {
+  async handleTool(name: string, args: unknown): Promise<HandlerResult> {
     const validation = validateToolInput(name, args);
     if (!validation.ok) {
-      throw new Error(`Invalid arguments for ${name}: ${validation.error}`);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Invalid arguments for ${name}: ${validation.error}`,
+          },
+        ],
+        isError: true,
+      };
     }
-    args = validation.data;
+    const validated = validation.data;
 
     switch (name) {
       // Email operations
       case 'list_emails':
-        return await this.emailHandler.handleListEmails(args);
-
+        return this.emailHandler.handleListEmails(validated);
       case 'send_email':
-        return await this.emailHandler.handleSendEmail(args);
-
+        return this.emailHandler.handleSendEmail(validated);
       case 'create_draft':
-        return await this.emailHandler.handleCreateDraft(args);
-
+        return this.emailHandler.handleCreateDraft(validated);
       case 'reply_to_email':
-        return await this.emailHandler.handleReplyToEmail(args);
-
+        return this.emailHandler.handleReplyToEmail(validated);
       case 'mark_as_read':
-        return await this.emailHandler.handleMarkAsRead(args);
-
+        return this.emailHandler.handleMarkAsRead(validated);
       case 'mark_as_unread':
-        return await this.emailHandler.handleMarkAsUnread(args);
-
+        return this.emailHandler.handleMarkAsUnread(validated);
       case 'delete_email':
-        return await this.emailHandler.handleDeleteEmail(args);
-
+        return this.emailHandler.handleDeleteEmail(validated);
       case 'summarize_email':
-        return await this.emailHandler.handleSummarizeEmail(args);
-
+        return this.emailHandler.handleSummarizeEmail(validated);
       case 'summarize_emails_batch':
-        return await this.emailHandler.handleSummarizeEmailsBatch(args);
-
+        return this.emailHandler.handleSummarizeEmailsBatch(validated);
       case 'list_users':
-        return await this.emailHandler.handleListUsers(args);
+        return this.emailHandler.handleListUsers(validated);
 
       // Attachment operations
       case 'list_attachments':
-        return await this.attachmentHandler.handleListAttachments(args);
-
+        return this.attachmentHandler.handleListAttachments(validated);
       case 'download_attachment':
-        return await this.attachmentHandler.handleDownloadAttachment(args);
-
+        return this.attachmentHandler.handleDownloadAttachment(validated);
       case 'download_attachment_to_file':
-        return await this.attachmentHandler.handleDownloadAttachmentToFile(args);
-
+        return this.attachmentHandler.handleDownloadAttachmentToFile(validated);
       case 'download_all_attachments':
-        return await this.attachmentHandler.handleDownloadAllAttachments(args);
-
+        return this.attachmentHandler.handleDownloadAllAttachments(validated);
       case 'list_downloaded_files':
-        return await this.attachmentHandler.handleListDownloadedFiles(args);
-
+        return this.attachmentHandler.handleListDownloadedFiles(validated);
       case 'get_download_directory_info':
-        return await this.attachmentHandler.handleGetDownloadDirectoryInfo(args);
-
+        return this.attachmentHandler.handleGetDownloadDirectoryInfo(validated);
       case 'cleanup_old_downloads':
-        return await this.attachmentHandler.handleCleanupOldDownloads(args);
-
+        return this.attachmentHandler.handleCleanupOldDownloads(validated);
       case 'export_email_as_attachment':
-        return await this.attachmentHandler.handleExportEmailAsAttachment(args);
-
+        return this.attachmentHandler.handleExportEmailAsAttachment(validated);
       case 'encode_file_for_attachment':
-        return await this.attachmentHandler.handleEncodeFileForAttachment(args);
+        return this.attachmentHandler.handleEncodeFileForAttachment(validated);
 
       // Hybrid operations
       case 'send_email_from_attachment':
-        return await this.hybridHandler.handleSendEmailFromAttachment(args);
-
+        return this.hybridHandler.handleSendEmailFromAttachment(validated);
       case 'send_email_with_file':
-        return await this.hybridHandler.handleSendEmailWithFile(args);
+        return this.hybridHandler.handleSendEmailWithFile(validated);
 
       // Folder operations
       case 'list_folders':
-        return await this.folderHandler.handleListFolders(args);
-
+        return this.folderHandler.handleListFolders(validated);
       case 'create_folder':
-        return await this.folderHandler.handleCreateFolder(args);
-
+        return this.folderHandler.handleCreateFolder(validated);
       case 'move_emails_to_folder':
-        return await this.folderHandler.handleMoveEmailsToFolder(args);
-
+        return this.folderHandler.handleMoveEmailsToFolder(validated);
       case 'copy_emails_to_folder':
-        return await this.folderHandler.handleCopyEmailsToFolder(args);
-
+        return this.folderHandler.handleCopyEmailsToFolder(validated);
       case 'delete_folder':
-        return await this.folderHandler.handleDeleteFolder(args);
-
+        return this.folderHandler.handleDeleteFolder(validated);
       case 'get_folder_stats':
-        return await this.folderHandler.handleGetFolderStats(args);
-
+        return this.folderHandler.handleGetFolderStats(validated);
       case 'organize_emails_by_rules':
-        return await this.folderHandler.handleOrganizeEmailsByRules(args);
+        return this.folderHandler.handleOrganizeEmailsByRules(validated);
 
       // Search operations
       case 'advanced_search':
-        return await this.searchHandler.handleAdvancedSearch(args);
-
+        return this.searchHandler.handleAdvancedSearch(validated);
       case 'search_by_sender_domain':
-        return await this.searchHandler.handleSearchBySenderDomain(args);
-
+        return this.searchHandler.handleSearchBySenderDomain(validated);
       case 'search_by_attachment_type':
-        return await this.searchHandler.handleSearchByAttachmentType(args);
-
+        return this.searchHandler.handleSearchByAttachmentType(validated);
       case 'find_duplicate_emails':
-        return await this.searchHandler.handleFindDuplicateEmails(args);
-
+        return this.searchHandler.handleFindDuplicateEmails(validated);
       case 'search_by_size':
-        return await this.searchHandler.handleSearchBySize(args);
-
+        return this.searchHandler.handleSearchBySize(validated);
       case 'saved_searches':
-        return await this.searchHandler.handleSavedSearches(args);
+        return this.searchHandler.handleSavedSearches(validated);
 
       // Batch operations
       case 'batch_mark_as_read':
-        return await this.batchHandler.handleBatchMarkAsRead(args);
-
+        return this.batchHandler.handleBatchMarkAsRead(validated);
       case 'batch_mark_as_unread':
-        return await this.batchHandler.handleBatchMarkAsUnread(args);
-
+        return this.batchHandler.handleBatchMarkAsUnread(validated);
       case 'batch_delete_emails':
-        return await this.batchHandler.handleBatchDeleteEmails(args);
-
+        return this.batchHandler.handleBatchDeleteEmails(validated);
       case 'batch_move_emails':
-        return await this.batchHandler.handleBatchMoveEmails(args);
-
+        return this.batchHandler.handleBatchMoveEmails(validated);
       case 'batch_download_attachments':
-        return await this.batchHandler.handleBatchDownloadAttachments(args);
-
+        return this.batchHandler.handleBatchDownloadAttachments(validated);
       case 'email_cleanup_wizard':
-        return await this.batchHandler.handleEmailCleanupWizard(args);
+        return this.batchHandler.handleEmailCleanupWizard(validated);
 
       default:
-        throw new Error(`Ferramenta desconhecida: ${name}`);
+        return {
+          content: [{ type: 'text', text: `Unknown tool: ${name}` }],
+          isError: true,
+        };
     }
   }
 
   /**
-   * Get all available tools with their JSON schemas, generated from the
-   * zod registry in src/schemas/.
+   * JSON-Schema list for MCP ListTools handshake.
    */
-  static getToolSchemas(): any[] {
+  static getToolSchemas(): ReturnType<typeof buildToolSchemas> {
     return buildToolSchemas();
   }
 }

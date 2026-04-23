@@ -6,6 +6,7 @@ import { FileManager } from './fileManager.js';
 import { CacheManager } from './cacheManager.js';
 import { GraphOptimizer } from './graphOptimizer.js';
 import { ParallelProcessor } from './parallelProcessor.js';
+import { PathGuard } from '../security/pathGuard.js';
 
 export interface EmailListOptions {
   maxResults?: number;
@@ -46,9 +47,9 @@ export class EmailService {
   private graphOptimizer: GraphOptimizer;
   private parallelProcessor: ParallelProcessor<any, any>;
 
-  constructor(private authProvider: GraphAuthProvider, customDownloadDir?: string) {
+  constructor(private authProvider: GraphAuthProvider, pathGuard: PathGuard) {
     this.client = authProvider.getGraphClient();
-    this.fileManager = new FileManager(customDownloadDir);
+    this.fileManager = new FileManager(pathGuard);
     
     // Initialize performance optimization systems
     this.cacheManager = new CacheManager({
