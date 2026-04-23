@@ -14,8 +14,7 @@ import { AppEnv, EnvValidationError, loadEnv } from './config/env.js';
 import { GraphAuthProvider } from './auth/graphAuth.js';
 import { EmailService } from './services/emailService.js';
 import { EmailSummarizer } from './services/emailSummarizer.js';
-import { SecurityManager } from './security/securityManager.js';
-import { MCPBestPractices } from './utils/mcpBestPractices.js';
+import { createPathGuard } from './security/pathGuard.js';
 import { HandlerRegistry } from './handlers/HandlerRegistry.js';
 import { Logger } from './logging/logger.js';
 import { LockManager } from './utils/lockManager.js';
@@ -47,18 +46,22 @@ class EmailMCPServer {
       { capabilities: { tools: {} } }
     );
 
-    this.authProvider = new GraphAuthProvider(env);
-    this.emailService = new EmailService(this.authProvider);
-    this.emailSummarizer = new EmailSummarizer();
+    const pathGuard = createPathGuard();
+    this.logger.info('pathGuard ready', {
+      operation: 'bootstrap',
+      context: {
+        downloadRoot: pathGuard.getDownloadRoot(),
+        uploadRoots: pathGuard.getUploadRoots().join(':'),
+      },
+    });
 
-    const securityManager = new SecurityManager();
-    const mcpBestPractices = new MCPBestPractices(securityManager);
+    this.authProvider = new GraphAuthProvider(env);
+    this.emailService = new EmailService(this.authProvider, pathGuard);
+    this.emailSummarizer = new EmailSummarizer();
 
     this.handlerRegistry = new HandlerRegistry(
       this.emailService,
-      this.emailSummarizer,
-      securityManager,
-      mcpBestPractices
+      this.emailSummarizer
     );
 
     this.setupToolHandlers();

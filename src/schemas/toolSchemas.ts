@@ -160,8 +160,8 @@ const downloadAllAttachmentsSchema = z.object({
   maxConcurrent: positiveInt.optional()
 });
 
-const listDownloadedFilesSchema = z.object({}).passthrough();
-const getDownloadDirectoryInfoSchema = z.object({}).passthrough();
+const listDownloadedFilesSchema = z.object({}).strict();
+const getDownloadDirectoryInfoSchema = z.object({}).strict();
 
 const cleanupOldDownloadsSchema = z.object({
   daysOld: nonNegativeInt.optional(),
