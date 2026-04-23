@@ -44,6 +44,21 @@ describe('getToolSchemas', () => {
     expect(list!.inputSchema.properties.limit).toBeDefined();
   });
 
+  it('generated schemas keep non-empty properties for representative tools', () => {
+    for (const toolName of ['send_email', 'download_attachment', 'advanced_search']) {
+      const entry = entries.find((e) => e.name === toolName);
+      expect(entry).toBeDefined();
+      expect(Object.keys(entry!.inputSchema.properties ?? {}).length).toBeGreaterThan(0);
+    }
+  });
+
+  it('normalizes native Zod JSON schema output to MCP shape', () => {
+    const send = entries.find((e) => e.name === 'send_email');
+    expect(send).toBeDefined();
+    expect(send!.inputSchema.$schema).toBeUndefined();
+    expect(send!.inputSchema.additionalProperties).toBeUndefined();
+  });
+
   it('every expected tool name is present', () => {
     const expected = [
       'list_emails',

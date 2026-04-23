@@ -41,9 +41,9 @@ async function main() {
   const child = spawn(process.execPath, [serverEntry], {
     env: {
       ...process.env,
-      MICROSOFT_GRAPH_CLIENT_ID: '11111111-1111-1111-1111-111111111111',
+      MICROSOFT_GRAPH_CLIENT_ID: '11111111-1111-4111-8111-111111111111',
       MICROSOFT_GRAPH_CLIENT_SECRET: 'smoke-test-secret',
-      MICROSOFT_GRAPH_TENANT_ID: '22222222-2222-2222-2222-222222222222',
+      MICROSOFT_GRAPH_TENANT_ID: '22222222-2222-4222-8222-222222222222',
       NODE_ENV: 'test',
       LOG_LEVEL: 'error',
     },

@@ -1,4 +1,4 @@
-import { zodToJsonSchema } from 'zod-to-json-schema';
+import { toJSONSchema, type ZodType } from 'zod';
 import { toolSchemas } from './toolSchemas.js';
 
 /**
@@ -96,18 +96,9 @@ type ToolSchemaEntry = {
  * MCP does not need so the output stays identical in shape to the previous
  * hand-written schemas.
  */
-function toMcpInputSchema(schema: any): Record<string, any> {
-  const json = zodToJsonSchema(schema, { target: 'jsonSchema7' }) as any;
-
-  // zod-to-json-schema may return a wrapper with { $ref, definitions } when
-  // complex refs are used. Unwrap by inlining the referenced definition.
-  let resolved = json;
-  if (json.$ref && json.definitions) {
-    const refKey = json.$ref.split('/').pop();
-    resolved = refKey ? json.definitions[refKey] : json;
-  }
-
-  const { $schema: _schema, definitions: _definitions, ...rest } = resolved || {};
+function toMcpInputSchema(schema: ZodType): Record<string, any> {
+  const json = toJSONSchema(schema) as Record<string, any>;
+  const { $schema: _schema, additionalProperties: _additionalProperties, ...rest } = json;
 
   if (rest.type !== 'object') {
     return { type: 'object', properties: {} };
