@@ -153,7 +153,7 @@ Credentials (env vars or .env file):
   MICROSOFT_GRAPH_TENANT_ID
   TARGET_USER_EMAIL
 
-Repo: /Users/jarvis/repos/mcp-outlook
+Repo: ${REPO_ROOT}
 `.trimStart());
 }
 
