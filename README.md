@@ -85,6 +85,27 @@ Add to your MCP client config:
 npm start
 ```
 
+### `outlook` CLI (one-shot calls)
+
+The package ships with a standalone CLI — `./scripts/outlook.js`, registered as the `outlook` bin — that spawns the server, runs a single MCP request, and exits. Useful for scripts, cron, smoke-testing a tool, or inspecting a schema without wiring up an MCP client.
+
+```bash
+# Discover
+outlook list                          # all 40 tools with descriptions
+outlook schema list_emails            # input schema for a single tool
+
+# Call with flags
+outlook list_emails --limit=5 --folder=inbox
+outlook create_draft --to='["a@b.com"]' --subject="Hi" --body="Hello"
+
+# Call with raw JSON (useful for arrays/objects)
+outlook batch_mark_as_read --json '{"emailIds":["id1","id2"]}'
+
+# Flags: --env-file <path>, --timeout <ms>, --compact, --help
+```
+
+Credentials resolve in this order: `--env-file <path>` → `$OUTLOOK_ENV_FILE` → `<repo>/.env` → existing env vars.
+
 ### Docker
 
 ```bash
