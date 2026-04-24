@@ -12,7 +12,7 @@ Works with any MCP-compatible client (Claude Desktop, Cursor, custom agents, etc
 | Metric | Value |
 |---|---|
 | Tools | 40 |
-| Tests | 174 passing |
+| Tests | 178 passing |
 | Node | ≥ 20 |
 | MCP SDK | ^1.29.0 |
 | License | MIT |
