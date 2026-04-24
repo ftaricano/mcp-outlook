@@ -90,15 +90,15 @@ function canonicalReal(p: string): string {
     let current = resolved;
     const tail: string[] = [];
     while (true) {
+      tail.push(path.basename(current));
       const parent = path.dirname(current);
       if (parent === current) {
         return resolved;
       }
       try {
         const realParent = fs.realpathSync(parent);
-        return path.join(realParent, ...tail.reverse(), path.basename(current));
+        return path.join(realParent, ...tail.reverse());
       } catch {
-        tail.push(path.basename(current));
         current = parent;
       }
     }

@@ -241,6 +241,18 @@ describe('loadPathGuardConfig', () => {
     }
   });
 
+  it('preserves segment order when multiple DOWNLOAD_DIR ancestors are missing', () => {
+    const base = tmpdir('mcp-canon-');
+    const realBase = fs.realpathSync(base);
+    const missing = path.join(realBase, 'a', 'b', 'c');
+    try {
+      const cfg = loadPathGuardConfig({ DOWNLOAD_DIR: missing });
+      expect(cfg.downloadRoot).toBe(missing);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
   it('defaults uploadRoots to [downloadRoot] when MCP_EMAIL_UPLOAD_DIRS unset', () => {
     const cfg = loadPathGuardConfig({});
     expect(cfg.uploadRoots).toEqual([cfg.downloadRoot]);
