@@ -12,7 +12,7 @@ Works with any MCP-compatible client (Claude Desktop, Cursor, custom agents, etc
 | Metric | Value |
 |---|---|
 | Tools | 40 |
-| Tests | 174 passing |
+| Tests | 178 passing |
 | Node | ≥ 20 |
 | MCP SDK | ^1.29.0 |
 | License | MIT |
@@ -84,6 +84,27 @@ Add to your MCP client config:
 ```bash
 npm start
 ```
+
+### `outlook` CLI (one-shot calls)
+
+The package ships with a standalone CLI — `./scripts/outlook.js`, registered as the `outlook` bin — that spawns the server, runs a single MCP request, and exits. Useful for scripts, cron, smoke-testing a tool, or inspecting a schema without wiring up an MCP client.
+
+```bash
+# Discover
+outlook list                          # all 40 tools with descriptions
+outlook schema list_emails            # input schema for a single tool
+
+# Call with flags
+outlook list_emails --limit=5 --folder=inbox
+outlook create_draft --to='["a@b.com"]' --subject="Hi" --body="Hello"
+
+# Call with raw JSON (useful for arrays/objects)
+outlook batch_mark_as_read --json '{"emailIds":["id1","id2"]}'
+
+# Flags: --env-file <path>, --timeout <ms>, --compact, --help
+```
+
+Credentials resolve in this order: `--env-file <path>` → `$OUTLOOK_ENV_FILE` → `<repo>/.env` → existing env vars.
 
 ### Docker
 
@@ -202,6 +223,16 @@ npm run build && npm test && npm run smoke
 Pre-PR checklist: build passes, lint clean, all tests green, smoke returns 40 tools.
 
 Open an [issue](https://github.com/ftaricano/mcp-outlook/issues) before submitting large changes.
+
+### Development workflow
+
+Non-trivial changes follow a three-phase discipline borrowed from the [superpowers](https://github.com/obra/superpowers) skill set:
+
+1. **Plan first** (`writing-plans`) — for any change touching more than one file or subsystem, write the plan to `docs/superpowers/plans/YYYY-MM-DD-<feature>.md` before editing code. Plans are bite-sized (2–5 min steps), TDD-first, and list exact file paths.
+2. **Execute task-by-task** (`executing-plans`) — work through the plan one task at a time, checking boxes as you go. No batching, no skipping ahead. Commit at the end of each task.
+3. **Verify before declaring done** (`verification-before-completion`) — before marking any material change complete, re-run the pre-PR checklist above and read the actual diff. An agent's summary describes intent, not outcome — trust the diff, not the narrative.
+
+Skip the ceremony for one-line fixes or typo-class changes; apply it the moment a change spans multiple files, introduces new contracts, or touches security-sensitive paths (`src/security/`, credential handling, Graph permission scopes).
 
 ## License
 
