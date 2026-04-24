@@ -203,6 +203,16 @@ Pre-PR checklist: build passes, lint clean, all tests green, smoke returns 40 to
 
 Open an [issue](https://github.com/ftaricano/mcp-outlook/issues) before submitting large changes.
 
+### Development workflow
+
+Non-trivial changes follow a three-phase discipline borrowed from the [superpowers](https://github.com/obra/superpowers) skill set:
+
+1. **Plan first** (`writing-plans`) — for any change touching more than one file or subsystem, write the plan to `docs/superpowers/plans/YYYY-MM-DD-<feature>.md` before editing code. Plans are bite-sized (2–5 min steps), TDD-first, and list exact file paths.
+2. **Execute task-by-task** (`executing-plans`) — work through the plan one task at a time, checking boxes as you go. No batching, no skipping ahead. Commit at the end of each task.
+3. **Verify before declaring done** (`verification-before-completion`) — before marking any material change complete, re-run the pre-PR checklist above and read the actual diff. An agent's summary describes intent, not outcome — trust the diff, not the narrative.
+
+Skip the ceremony for one-line fixes or typo-class changes; apply it the moment a change spans multiple files, introduces new contracts, or touches security-sensitive paths (`src/security/`, credential handling, Graph permission scopes).
+
 ## License
 
 [MIT](LICENSE)
