@@ -50,6 +50,19 @@ Four required values feed both the server and the CLI:
 | `MCP_EMAIL_UPLOAD_DIRS` | no | Colon-separated read allowlist for `send_email_with_file` / `encode_file_for_attachment`. Anything outside — including symlinks pointing out and files in `~/.ssh`, `~/.aws`, `*.env`, `*.pem`, etc. — is rejected. Defaults to `DOWNLOAD_DIR`. |
 | `MAX_ATTACHMENT_MB` | no | Attachment size cap (default: 25) |
 
+Resolution order (first hit wins): `process.env` → `<repo>/.env` (if present) → **macOS Keychain** (`security find-generic-password -s "<KEY>" -a "$USER"`). On macOS, the server reads from the Keychain automatically — no `.env` needed for the default account. Tries `cpz::MICROSOFT_GRAPH_*` first, falls back to `cpz::SP_*` (since the SharePoint Graph app is the same Azure AD registration).
+
+To populate the Keychain:
+
+```bash
+security add-generic-password -U -s "cpz::MICROSOFT_GRAPH_CLIENT_ID"     -a "$USER" -w '<uuid>'
+security add-generic-password -U -s "cpz::MICROSOFT_GRAPH_CLIENT_SECRET" -a "$USER" -w '<secret>'
+security add-generic-password -U -s "cpz::MICROSOFT_GRAPH_TENANT_ID"     -a "$USER" -w '<uuid>'
+security add-generic-password -U -s "cpz::TARGET_USER_EMAIL"             -a "$USER" -w 'user@example.com'
+```
+
+For multi-account setups, pass an alternative `.env` via `--env-file` or `$OUTLOOK_ENV_FILE` — process env beats Keychain.
+
 After setting permissions in Azure AD, click **Grant admin consent** — without this step every call returns 403.
 
 ## Quickstart
