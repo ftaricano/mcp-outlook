@@ -113,7 +113,7 @@ outlook batch_mark_as_read --json '{"emailIds":["id1","id2"]}'
 # Flags: --env-file <path>, --timeout <ms>, --compact, --help
 ```
 
-Credentials resolve in this order: `--env-file <path>` → `$OUTLOOK_ENV_FILE` → `<repo>/.env` → existing env vars.
+Credentials resolve in this order: `--env-file <path>` → `$OUTLOOK_ENV_FILE` → `<repo>/.env` → existing env vars → macOS Keychain (same fallback chain as the server).
 
 ### Docker
 
