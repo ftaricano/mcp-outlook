@@ -30,6 +30,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
 const SERVER_ENTRY = resolve(REPO_ROOT, 'dist/index.js');
 
+const KEYCHAIN_BOOTSTRAP = resolve(REPO_ROOT, 'dist/config/keychain.js');
+if (existsSync(KEYCHAIN_BOOTSTRAP)) {
+  const mod = await import(KEYCHAIN_BOOTSTRAP);
+  mod.bootstrapKeychain();
+}
+
 // ---------------------------------------------------------------------------
 // Arg parsing
 // ---------------------------------------------------------------------------
