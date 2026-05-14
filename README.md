@@ -37,11 +37,7 @@ npm run build
 
 ## Configure
 
-Copy `.env.example` to `.env`:
-
-```bash
-cp .env.example .env
-```
+Four required values feed both the server and the CLI:
 
 | Variable | Required | Description |
 |---|---|---|
