@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+import { bootstrapKeychain } from './config/keychain.js';
+bootstrapKeychain();
+
 import dotenv from 'dotenv';
 dotenv.config({ quiet: true });
 

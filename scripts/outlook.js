@@ -30,6 +30,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
 const SERVER_ENTRY = resolve(REPO_ROOT, 'dist/index.js');
 
+const KEYCHAIN_BOOTSTRAP = resolve(REPO_ROOT, 'dist/config/keychain.js');
+
 // ---------------------------------------------------------------------------
 // Arg parsing
 // ---------------------------------------------------------------------------
@@ -329,11 +331,18 @@ if (opts.help || !opts.command) {
   process.exit(0);
 }
 
-// Load credentials
+// Load credentials. Order (first to set wins): process.env → .env → Keychain.
+// .env runs before Keychain so `--env-file` / `OUTLOOK_ENV_FILE` can override
+// the default mailbox stored in the chain (multi-account use).
 const envFile =
   opts.envFile ??
   process.env.OUTLOOK_ENV_FILE ??
   resolve(REPO_ROOT, '.env');
 loadEnvFile(envFile);
+
+if (existsSync(KEYCHAIN_BOOTSTRAP)) {
+  const mod = await import(KEYCHAIN_BOOTSTRAP);
+  mod.bootstrapKeychain();
+}
 
 await runMcp(opts);
