@@ -223,6 +223,11 @@ Keep these practices:
 
 Report vulnerabilities privately: [Security advisories](https://github.com/ftaricano/mcp-outlook/security/advisories/new)
 
+## Known limitations
+
+- HTML email templates (`src/templates/`) do not escape user-supplied content (body, `companyName`, `logoUrl`, etc.). Never render untrusted input directly into a template — an attacker who controls an email body could inject arbitrary HTML/JavaScript into outbound messages.
+- `TARGET_USER_EMAIL` is not validated at startup — omitting it produces a runtime Graph error rather than a clear startup failure.
+
 ## Contributing
 
 ```bash
