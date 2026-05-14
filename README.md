@@ -219,7 +219,7 @@ Keep these practices:
 - Rotate the client secret in Azure AD immediately if it is ever exposed
 - Set `MCP_EMAIL_UPLOAD_DIRS` to the *minimum* set of directories the server actually needs to read. Do not set it to `$HOME` or `/`.
 - Scope `Mail.Send` only if you need outbound email — `Mail.ReadWrite` alone is sufficient for drafts, search, and folder management
-- **Known limitation:** HTML email templates do not escape user-supplied body content or branding fields (companyName, logoUrl, etc.). Do not render untrusted input directly into templates.
+- **Template injection risk:** see [Known limitations](#known-limitations) — HTML templates do not escape user-supplied fields.
 
 Report vulnerabilities privately: [Security advisories](https://github.com/ftaricano/mcp-outlook/security/advisories/new)
 
