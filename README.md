@@ -44,7 +44,7 @@ Four required values feed both the server and the CLI:
 | `MICROSOFT_GRAPH_CLIENT_ID` | yes | Azure AD application (client) UUID |
 | `MICROSOFT_GRAPH_CLIENT_SECRET` | yes | Client secret value |
 | `MICROSOFT_GRAPH_TENANT_ID` | yes | Azure AD tenant UUID |
-| `TARGET_USER_EMAIL` | yes | Mailbox to operate on |
+| `TARGET_USER_EMAIL` | yes* | Mailbox to operate on. Strongly recommended — omitting it causes runtime errors from Graph rather than a clean startup failure. |
 | `LOG_LEVEL` | no | `error` / `warn` / `info` (default) / `debug` |
 | `DOWNLOAD_DIR` | no | Absolute write root. All attachment downloads land here; everything else is rejected. Default: `<cwd>/downloads`. |
 | `MCP_EMAIL_UPLOAD_DIRS` | no | Colon-separated read allowlist for `send_email_with_file` / `encode_file_for_attachment`. Anything outside — including symlinks pointing out and files in `~/.ssh`, `~/.aws`, `*.env`, `*.pem`, etc. — is rejected. Defaults to `DOWNLOAD_DIR`. |
