@@ -37,22 +37,31 @@ npm run build
 
 ## Configure
 
-Copy `.env.example` to `.env`:
-
-```bash
-cp .env.example .env
-```
+Four required values feed both the server and the CLI:
 
 | Variable | Required | Description |
 |---|---|---|
 | `MICROSOFT_GRAPH_CLIENT_ID` | yes | Azure AD application (client) UUID |
 | `MICROSOFT_GRAPH_CLIENT_SECRET` | yes | Client secret value |
 | `MICROSOFT_GRAPH_TENANT_ID` | yes | Azure AD tenant UUID |
-| `TARGET_USER_EMAIL` | yes | Mailbox to operate on |
+| `TARGET_USER_EMAIL` | yes* | Mailbox to operate on. Strongly recommended — omitting it causes runtime errors from Graph rather than a clean startup failure. |
 | `LOG_LEVEL` | no | `error` / `warn` / `info` (default) / `debug` |
 | `DOWNLOAD_DIR` | no | Absolute write root. All attachment downloads land here; everything else is rejected. Default: `<cwd>/downloads`. |
 | `MCP_EMAIL_UPLOAD_DIRS` | no | Colon-separated read allowlist for `send_email_with_file` / `encode_file_for_attachment`. Anything outside — including symlinks pointing out and files in `~/.ssh`, `~/.aws`, `*.env`, `*.pem`, etc. — is rejected. Defaults to `DOWNLOAD_DIR`. |
 | `MAX_ATTACHMENT_MB` | no | Attachment size cap (default: 25) |
+
+Resolution order (first hit wins): `process.env` → `<repo>/.env` (if present) → **macOS Keychain** (`security find-generic-password -s "<KEY>" -a "$USER"`). On macOS, the server reads from the Keychain automatically — no `.env` needed for the default account. Tries `cpz::MICROSOFT_GRAPH_*` first, falls back to `cpz::SP_*` (since the SharePoint Graph app is the same Azure AD registration).
+
+To populate the Keychain:
+
+```bash
+security add-generic-password -U -s "cpz::MICROSOFT_GRAPH_CLIENT_ID"     -a "$USER" -w '<uuid>'
+security add-generic-password -U -s "cpz::MICROSOFT_GRAPH_CLIENT_SECRET" -a "$USER" -w '<secret>'
+security add-generic-password -U -s "cpz::MICROSOFT_GRAPH_TENANT_ID"     -a "$USER" -w '<uuid>'
+security add-generic-password -U -s "cpz::TARGET_USER_EMAIL"             -a "$USER" -w 'user@example.com'
+```
+
+For multi-account setups, pass an alternative `.env` via `--env-file` or `$OUTLOOK_ENV_FILE` — process env beats Keychain.
 
 After setting permissions in Azure AD, click **Grant admin consent** — without this step every call returns 403.
 
@@ -104,7 +113,7 @@ outlook batch_mark_as_read --json '{"emailIds":["id1","id2"]}'
 # Flags: --env-file <path>, --timeout <ms>, --compact, --help
 ```
 
-Credentials resolve in this order: `--env-file <path>` → `$OUTLOOK_ENV_FILE` → `<repo>/.env` → existing env vars.
+Credentials resolve in this order: `--env-file <path>` → `$OUTLOOK_ENV_FILE` → `<repo>/.env` → existing env vars → macOS Keychain (same fallback chain as the server).
 
 ### Docker
 
@@ -210,9 +219,14 @@ Keep these practices:
 - Rotate the client secret in Azure AD immediately if it is ever exposed
 - Set `MCP_EMAIL_UPLOAD_DIRS` to the *minimum* set of directories the server actually needs to read. Do not set it to `$HOME` or `/`.
 - Scope `Mail.Send` only if you need outbound email — `Mail.ReadWrite` alone is sufficient for drafts, search, and folder management
-- **Known limitation:** HTML email templates do not escape user-supplied body content or branding fields (companyName, logoUrl, etc.). Do not render untrusted input directly into templates.
+- **Template injection risk:** see [Known limitations](#known-limitations) — HTML templates do not escape user-supplied fields.
 
 Report vulnerabilities privately: [Security advisories](https://github.com/ftaricano/mcp-outlook/security/advisories/new)
+
+## Known limitations
+
+- HTML email templates (`src/templates/`) do not escape user-supplied content (body, `companyName`, `logoUrl`, etc.). Never render untrusted input directly into a template — an attacker who controls an email body could inject arbitrary HTML/JavaScript into outbound messages.
+- `TARGET_USER_EMAIL` is not validated at startup — omitting it produces a runtime Graph error rather than a clear startup failure.
 
 ## Contributing
 
