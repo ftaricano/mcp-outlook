@@ -1,17 +1,14 @@
 #!/usr/bin/env node
 
-import { bootstrapKeychain } from './config/keychain.js';
-bootstrapKeychain();
-
 import dotenv from 'dotenv';
 dotenv.config({ quiet: true });
 
+import { bootstrapKeychain } from './config/keychain.js';
+bootstrapKeychain();
+
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
+import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 import { AppEnv, EnvValidationError, loadEnv } from './config/env.js';
 import { GraphAuthProvider } from './auth/graphAuth.js';
@@ -62,10 +59,7 @@ class EmailMCPServer {
     this.emailService = new EmailService(this.authProvider, pathGuard);
     this.emailSummarizer = new EmailSummarizer();
 
-    this.handlerRegistry = new HandlerRegistry(
-      this.emailService,
-      this.emailSummarizer
-    );
+    this.handlerRegistry = new HandlerRegistry(this.emailService, this.emailSummarizer);
 
     this.setupToolHandlers();
   }
@@ -153,10 +147,10 @@ function bootstrap(): EmailMCPServer {
     env = loadEnv();
   } catch (error) {
     if (error instanceof EnvValidationError) {
-      process.stderr.write(`\n[mcp-email] ${error.message}\n\n`);
+      process.stderr.write(`\n[mcp-outlook] ${error.message}\n\n`);
     } else {
       process.stderr.write(
-        `[mcp-email] Failed to load environment: ${error instanceof Error ? error.message : String(error)}\n`
+        `[mcp-outlook] Failed to load environment: ${error instanceof Error ? error.message : String(error)}\n`
       );
     }
     process.exit(1);
@@ -176,7 +170,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       process.exit(0);
     } catch (error) {
       process.stderr.write(
-        `[mcp-email] shutdown error: ${error instanceof Error ? error.message : String(error)}\n`
+        `[mcp-outlook] shutdown error: ${error instanceof Error ? error.message : String(error)}\n`
       );
       process.exit(1);
     }

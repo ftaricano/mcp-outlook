@@ -7,29 +7,29 @@ export class HybridHandler extends BaseHandler {
    */
   async handleSendEmailFromAttachment(args: any): Promise<HandlerResult> {
     const validationError = this.validateRequiredArgs(args, [
-      'sourceEmailId', 
-      'attachmentId', 
-      'to', 
-      'subject', 
-      'body'
+      'sourceEmailId',
+      'attachmentId',
+      'to',
+      'subject',
+      'body',
     ]);
-    
+
     if (validationError) {
       return this.formatError(validationError);
     }
 
-    const { 
-      sourceEmailId, 
-      attachmentId, 
-      to, 
-      subject, 
+    const {
+      sourceEmailId,
+      attachmentId,
+      to,
+      subject,
       body,
       cc,
       bcc,
       useTemplate = false,
       templateTheme = 'professional',
       keepOriginalFile = false,
-      customFilename
+      customFilename,
     } = args;
 
     console.error(`🚀 Iniciando envio híbrido de anexo...`);
@@ -46,12 +46,14 @@ export class HybridHandler extends BaseHandler {
         {
           cc,
           bcc,
-          enhancedOptions: useTemplate ? {
-            useTemplate: true,
-            templateOptions: { theme: templateTheme }
-          } : undefined,
+          enhancedOptions: useTemplate
+            ? {
+                useTemplate: true,
+                templateOptions: { theme: templateTheme },
+              }
+            : undefined,
           keepOriginalFile,
-          customFilename
+          customFilename,
         }
       );
 
@@ -65,23 +67,23 @@ export class HybridHandler extends BaseHandler {
       resultText += `   Assunto: ${subject}\n`;
       if (cc) resultText += `   CC: ${Array.isArray(cc) ? cc.join(', ') : cc}\n`;
       if (bcc) resultText += `   BCC: ${Array.isArray(bcc) ? bcc.join(', ') : bcc}\n\n`;
-      
+
       if (result.attachmentInfo) {
         resultText += `📎 Anexo transferido:\n`;
         resultText += `   Nome: ${result.attachmentInfo.name}\n`;
         resultText += `   Tamanho: ${(result.attachmentInfo.size / 1024).toFixed(2)}KB\n`;
         resultText += `   Tipo: ${result.attachmentInfo.contentType}\n\n`;
       }
-      
+
       resultText += `🔄 Processo híbrido:\n`;
       resultText += `   1. Download do anexo original ✅\n`;
       resultText += `   2. Processamento e validação ✅\n`;
       resultText += `   3. Envio com novo email ✅\n\n`;
-      
+
       if (result.sendResult?.messageId) {
         resultText += `📬 Message ID: ${result.sendResult.messageId}\n`;
       }
-      
+
       if (result.attachmentInfo?.filePath && !keepOriginalFile) {
         resultText += `\n🗑️ Arquivo temporário limpo automaticamente`;
       } else if (result.attachmentInfo?.filePath && keepOriginalFile) {
@@ -99,27 +101,22 @@ export class HybridHandler extends BaseHandler {
    * This function reads a file from disk and sends it as an attachment
    */
   async handleSendEmailWithFile(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, [
-      'filePath', 
-      'to', 
-      'subject', 
-      'body'
-    ]);
-    
+    const validationError = this.validateRequiredArgs(args, ['filePath', 'to', 'subject', 'body']);
+
     if (validationError) {
       return this.formatError(validationError);
     }
 
-    const { 
-      filePath, 
-      to, 
-      subject, 
+    const {
+      filePath,
+      to,
+      subject,
       body,
       cc,
       bcc,
       useTemplate = false,
       templateTheme = 'professional',
-      customFilename
+      customFilename,
     } = args;
 
     console.error(`📎 Enviando email com arquivo do disco: ${filePath}`);
@@ -133,11 +130,13 @@ export class HybridHandler extends BaseHandler {
         {
           cc,
           bcc,
-          enhancedOptions: useTemplate ? {
-            useTemplate: true,
-            templateOptions: { theme: templateTheme }
-          } : undefined,
-          customFilename
+          enhancedOptions: useTemplate
+            ? {
+                useTemplate: true,
+                templateOptions: { theme: templateTheme },
+              }
+            : undefined,
+          customFilename,
         }
       );
 
@@ -151,7 +150,7 @@ export class HybridHandler extends BaseHandler {
       resultText += `   Assunto: ${subject}\n`;
       if (cc) resultText += `   CC: ${Array.isArray(cc) ? cc.join(', ') : cc}\n`;
       if (bcc) resultText += `   BCC: ${Array.isArray(bcc) ? bcc.join(', ') : bcc}\n\n`;
-      
+
       if (result.attachmentInfo) {
         resultText += `📎 Arquivo anexado:\n`;
         resultText += `   Origem: ${filePath}\n`;
@@ -159,12 +158,12 @@ export class HybridHandler extends BaseHandler {
         resultText += `   Tamanho: ${(result.attachmentInfo.size / 1024).toFixed(2)}KB\n`;
         resultText += `   Tipo: ${result.attachmentInfo.contentType}\n\n`;
       }
-      
+
       resultText += `🔄 Processo direto:\n`;
       resultText += `   1. Leitura do arquivo do disco ✅\n`;
       resultText += `   2. Codificação Base64 ✅\n`;
       resultText += `   3. Envio como anexo ✅\n\n`;
-      
+
       if (result.sendResult?.messageId) {
         resultText += `📬 Message ID: ${result.sendResult.messageId}`;
       }

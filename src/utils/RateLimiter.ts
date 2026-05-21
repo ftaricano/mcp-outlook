@@ -10,29 +10,33 @@ export class RateLimiter {
   /**
    * Check if a request should be rate limited
    */
-  async checkRateLimit(endpoint: string, maxRequests: number = 60, windowMs: number = 60000): Promise<boolean> {
+  async checkRateLimit(
+    endpoint: string,
+    maxRequests: number = 60,
+    windowMs: number = 60000
+  ): Promise<boolean> {
     const now = Date.now();
     const key = endpoint;
-    
+
     let entry = this.requestCounts.get(key);
-    
+
     // Reset window if expired
     if (!entry || now >= entry.resetTime) {
       entry = { count: 0, resetTime: now + windowMs };
       this.requestCounts.set(key, entry);
     }
-    
+
     // Check if limit exceeded
     if (entry.count >= maxRequests) {
       const waitTime = entry.resetTime - now;
       console.warn(`⚠️ Rate limit reached for ${endpoint}. Waiting ${waitTime}ms`);
       await this.delay(waitTime);
-      
+
       // Reset after waiting
       entry.count = 0;
       entry.resetTime = now + windowMs;
     }
-    
+
     entry.count++;
     return true;
   }
@@ -45,26 +49,29 @@ export class RateLimiter {
     context: string = 'operation'
   ): Promise<T> {
     let lastError: Error | undefined;
-    
+
     for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
       try {
         return await operation();
       } catch (error) {
         lastError = error as Error;
-        
+
         // Don't retry on certain errors
         if (this.isNonRetryableError(error)) {
           throw error;
         }
-        
+
         if (attempt < this.maxRetries) {
           const delay = this.calculateBackoffDelay(attempt);
-          console.warn(`⚠️ ${context} failed (attempt ${attempt}/${this.maxRetries}). Retrying in ${delay}ms:`, error);
+          console.warn(
+            `⚠️ ${context} failed (attempt ${attempt}/${this.maxRetries}). Retrying in ${delay}ms:`,
+            error
+          );
           await this.delay(delay);
         }
       }
     }
-    
+
     console.error(`❌ ${context} failed after ${this.maxRetries} attempts`);
     throw lastError ?? new Error(`${context} failed after ${this.maxRetries} attempts`);
   }
@@ -83,19 +90,19 @@ export class RateLimiter {
    */
   private isNonRetryableError(error: any): boolean {
     if (!error?.response?.status) return false;
-    
+
     const status = error.response.status;
-    
+
     // Don't retry on client errors (except rate limiting)
     if (status >= 400 && status < 500 && status !== 429) {
       return true;
     }
-    
+
     // Don't retry on authentication errors
     if (status === 401 || status === 403) {
       return true;
     }
-    
+
     return false;
   }
 
@@ -103,7 +110,7 @@ export class RateLimiter {
    * Wait for specified time
    */
   private delay(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**
@@ -116,14 +123,16 @@ export class RateLimiter {
   /**
    * Get current rate limit status
    */
-  getRateLimitStatus(endpoint: string): { count: number; remaining: number; resetTime: number } | null {
+  getRateLimitStatus(
+    endpoint: string
+  ): { count: number; remaining: number; resetTime: number } | null {
     const entry = this.requestCounts.get(endpoint);
     if (!entry) return null;
-    
+
     return {
       count: entry.count,
       remaining: Math.max(0, 60 - entry.count), // Assuming 60 req/min default
-      resetTime: entry.resetTime
+      resetTime: entry.resetTime,
     };
   }
 }

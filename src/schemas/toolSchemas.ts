@@ -31,7 +31,7 @@ const templateCustomizationShape = {
   companyName: z.string().optional(),
   logoUrl: z.string().optional(),
   emailTitle: z.string().optional(),
-  signature: z.string().optional()
+  signature: z.string().optional(),
 } as const;
 
 const stringOrStringArray = z.union([nonEmptyString, z.array(nonEmptyString).min(1)]);
@@ -42,13 +42,13 @@ const attachmentInput = z.object({
   name: nonEmptyString,
   contentType: nonEmptyString,
   content: nonEmptyString,
-  size: nonNegativeInt.optional()
+  size: nonNegativeInt.optional(),
 });
 
 const dateRange = z
   .object({
     from: isoDateString.optional(),
-    to: isoDateString.optional()
+    to: isoDateString.optional(),
   })
   .optional();
 
@@ -57,7 +57,7 @@ const organizeRule = z.object({
   targetFolderId: z.string().optional(),
   subjectContains: z.array(z.string()).optional(),
   fromContains: z.array(z.string()).optional(),
-  olderThanDays: z.number().optional()
+  olderThanDays: z.number().optional(),
 });
 
 const searchCriteria = z
@@ -69,7 +69,7 @@ const searchCriteria = z
     dateTo: z.string().optional(),
     hasAttachments: z.boolean().optional(),
     isRead: z.boolean().optional(),
-    folder: z.string().optional()
+    folder: z.string().optional(),
   })
   .optional();
 
@@ -81,7 +81,7 @@ const listEmailsSchema = z.object({
   limit: nonNegativeInt.max(50).optional(),
   skip: nonNegativeInt.optional(),
   folder: z.string().optional(),
-  search: z.string().optional()
+  search: z.string().optional(),
 });
 
 const sendEmailSchema = z.object({
@@ -93,13 +93,13 @@ const sendEmailSchema = z.object({
   attachments: z.array(attachmentInput).optional(),
   useTemplate: z.boolean().optional(),
   templateTheme: templateTheme.optional(),
-  ...templateCustomizationShape
+  ...templateCustomizationShape,
 });
 
 const replyToEmailSchema = z.object({
   emailId: nonEmptyString,
   body: z.string(),
-  replyAll: z.boolean().optional()
+  replyAll: z.boolean().optional(),
 });
 
 const createDraftSchema = z.object({
@@ -111,7 +111,7 @@ const createDraftSchema = z.object({
   attachments: z.array(attachmentInput).optional(),
   useTemplate: z.boolean().optional(),
   templateTheme: templateTheme.optional(),
-  ...templateCustomizationShape
+  ...templateCustomizationShape,
 });
 
 const markAsReadSchema = z.object({ emailId: nonEmptyString });
@@ -123,12 +123,12 @@ const summarizeEmailsBatchSchema = z.object({
   limit: nonNegativeInt.max(20).optional(),
   skip: nonNegativeInt.optional(),
   folder: z.string().optional(),
-  priorityOnly: z.boolean().optional()
+  priorityOnly: z.boolean().optional(),
 });
 
 const listUsersSchema = z.object({
   limit: nonNegativeInt.optional(),
-  search: z.string().optional()
+  search: z.string().optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -140,7 +140,7 @@ const listAttachmentsSchema = z.object({ emailId: nonEmptyString });
 const downloadAttachmentSchema = z.object({
   emailId: nonEmptyString,
   attachmentId: nonEmptyString,
-  includeMetadata: z.boolean().optional()
+  includeMetadata: z.boolean().optional(),
 });
 
 const downloadAttachmentToFileSchema = z.object({
@@ -149,7 +149,7 @@ const downloadAttachmentToFileSchema = z.object({
   targetDirectory: z.string().optional(),
   customFilename: z.string().optional(),
   overwrite: z.boolean().optional(),
-  validateIntegrity: z.boolean().optional()
+  validateIntegrity: z.boolean().optional(),
 });
 
 const downloadAllAttachmentsSchema = z.object({
@@ -157,7 +157,7 @@ const downloadAllAttachmentsSchema = z.object({
   targetDirectory: z.string().optional(),
   overwrite: z.boolean().optional(),
   validateIntegrity: z.boolean().optional(),
-  maxConcurrent: positiveInt.optional()
+  maxConcurrent: positiveInt.optional(),
 });
 
 const listDownloadedFilesSchema = z.object({}).strict();
@@ -165,17 +165,17 @@ const getDownloadDirectoryInfoSchema = z.object({}).strict();
 
 const cleanupOldDownloadsSchema = z.object({
   daysOld: nonNegativeInt.optional(),
-  dryRun: z.boolean().optional()
+  dryRun: z.boolean().optional(),
 });
 
 const exportEmailAsAttachmentSchema = z.object({
   emailId: nonEmptyString,
-  format: z.enum(['eml', 'msg']).optional()
+  format: z.enum(['eml', 'msg']).optional(),
 });
 
 const encodeFileForAttachmentSchema = z.object({
   filePath: nonEmptyString,
-  customFilename: z.string().optional()
+  customFilename: z.string().optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -197,7 +197,7 @@ const sendEmailFromAttachmentSchema = z.object({
   // not forward them to templateOptions; that wiring is a follow-up task.
   ...templateCustomizationShape,
   keepOriginalFile: z.boolean().optional(),
-  customFilename: z.string().optional()
+  customFilename: z.string().optional(),
 });
 
 const sendEmailWithFileSchema = z.object({
@@ -211,7 +211,7 @@ const sendEmailWithFileSchema = z.object({
   templateTheme: templateTheme.optional(),
   // see note on sendEmailFromAttachmentSchema above
   ...templateCustomizationShape,
-  customFilename: z.string().optional()
+  customFilename: z.string().optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -220,39 +220,39 @@ const sendEmailWithFileSchema = z.object({
 
 const listFoldersSchema = z.object({
   includeSubfolders: z.boolean().optional(),
-  maxDepth: positiveInt.optional()
+  maxDepth: positiveInt.optional(),
 });
 
 const createFolderSchema = z.object({
   folderName,
-  parentFolderId: z.string().optional()
+  parentFolderId: z.string().optional(),
 });
 
 const moveEmailsToFolderSchema = z.object({
   emailIds: stringOrStringArray,
-  targetFolderId: nonEmptyString
+  targetFolderId: nonEmptyString,
 });
 
 const copyEmailsToFolderSchema = z.object({
   emailIds: stringOrStringArray,
-  targetFolderId: nonEmptyString
+  targetFolderId: nonEmptyString,
 });
 
 const deleteFolderSchema = z.object({
   folderId: nonEmptyString,
-  permanent: z.boolean().optional()
+  permanent: z.boolean().optional(),
 });
 
 const getFolderStatsSchema = z.object({
   folderId: nonEmptyString,
-  includeSubfolders: z.boolean().optional()
+  includeSubfolders: z.boolean().optional(),
 });
 
 const organizeEmailsByRulesSchema = z.object({
   sourceFolderId: nonEmptyString,
   rules: z.array(organizeRule).optional(),
   dryRun: z.boolean().optional(),
-  maxEmails: positiveInt.optional()
+  maxEmails: positiveInt.optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -270,7 +270,7 @@ const advancedSearchSchema = z.object({
   folder: z.string().optional(),
   maxResults: positiveInt.optional(),
   sortBy: z.enum(['receivedDateTime', 'subject', 'from']).optional(),
-  sortOrder: z.enum(['asc', 'desc']).optional()
+  sortOrder: z.enum(['asc', 'desc']).optional(),
 });
 
 const searchBySenderDomainSchema = z.object({
@@ -278,7 +278,7 @@ const searchBySenderDomainSchema = z.object({
   maxResults: positiveInt.optional(),
   includeSubdomains: z.boolean().optional(),
   folder: z.string().optional(),
-  dateRange
+  dateRange,
 });
 
 const searchByAttachmentTypeSchema = z.object({
@@ -286,7 +286,7 @@ const searchByAttachmentTypeSchema = z.object({
   maxResults: positiveInt.optional(),
   folder: z.string().optional(),
   sizeLimit: z.number().nonnegative().optional(),
-  dateRange
+  dateRange,
 });
 
 const findDuplicateEmailsSchema = z.object({
@@ -294,7 +294,7 @@ const findDuplicateEmailsSchema = z.object({
   folder: z.string().optional(),
   maxResults: positiveInt.optional(),
   includeRead: z.boolean().optional(),
-  dateRange
+  dateRange,
 });
 
 const searchBySizeSchema = z.object({
@@ -302,13 +302,13 @@ const searchBySizeSchema = z.object({
   maxSizeMB: z.number().nonnegative().optional(),
   folder: z.string().optional(),
   maxResults: positiveInt.optional(),
-  includeAttachments: z.boolean().optional()
+  includeAttachments: z.boolean().optional(),
 });
 
 const savedSearchesSchema = z.object({
   action: z.enum(['save', 'list', 'execute', 'delete']),
   name: z.string().optional(),
-  searchCriteria
+  searchCriteria,
 });
 
 // ---------------------------------------------------------------------------
@@ -320,25 +320,25 @@ const emailIdsBatch = (max: number) =>
 
 const batchMarkAsReadSchema = z.object({
   emailIds: emailIdsBatch(100),
-  maxConcurrent: positiveInt.optional()
+  maxConcurrent: positiveInt.optional(),
 });
 
 const batchMarkAsUnreadSchema = z.object({
   emailIds: emailIdsBatch(100),
-  maxConcurrent: positiveInt.optional()
+  maxConcurrent: positiveInt.optional(),
 });
 
 const batchDeleteEmailsSchema = z.object({
   emailIds: emailIdsBatch(50),
   permanent: z.boolean().optional(),
-  maxConcurrent: positiveInt.optional()
+  maxConcurrent: positiveInt.optional(),
 });
 
 const batchMoveEmailsSchema = z.object({
   emailIds: emailIdsBatch(100),
   targetFolderId: nonEmptyString,
   maxConcurrent: positiveInt.optional(),
-  validateTarget: z.boolean().optional()
+  validateTarget: z.boolean().optional(),
 });
 
 const batchDownloadAttachmentsSchema = z.object({
@@ -347,7 +347,7 @@ const batchDownloadAttachmentsSchema = z.object({
   maxConcurrent: positiveInt.optional(),
   overwrite: z.boolean().optional(),
   validateIntegrity: z.boolean().optional(),
-  sizeLimit: z.number().nonnegative().optional()
+  sizeLimit: z.number().nonnegative().optional(),
 });
 
 const emailCleanupWizardSchema = z.object({
@@ -357,7 +357,7 @@ const emailCleanupWizardSchema = z.object({
   deleteLargeAttachments: z.boolean().optional(),
   attachmentSizeLimitMB: z.number().nonnegative().optional(),
   excludeFolders: z.array(z.string()).optional(),
-  maxEmails: positiveInt.optional()
+  maxEmails: positiveInt.optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -415,7 +415,7 @@ export const toolSchemas: Record<string, z.ZodTypeAny> = {
   batch_delete_emails: batchDeleteEmailsSchema,
   batch_move_emails: batchMoveEmailsSchema,
   batch_download_attachments: batchDownloadAttachmentsSchema,
-  email_cleanup_wizard: emailCleanupWizardSchema
+  email_cleanup_wizard: emailCleanupWizardSchema,
 };
 
 /**

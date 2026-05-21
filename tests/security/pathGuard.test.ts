@@ -224,11 +224,9 @@ describe('PathGuard', () => {
 });
 
 describe('loadPathGuardConfig', () => {
-  it('defaults to ~/Downloads/mcp-email-attachments when DOWNLOAD_DIR unset', () => {
+  it('defaults to ~/Downloads/mcp-outlook-attachments when DOWNLOAD_DIR unset', () => {
     const cfg = loadPathGuardConfig({});
-    expect(cfg.downloadRoot).toBe(
-      path.join(os.homedir(), 'Downloads', 'mcp-email-attachments')
-    );
+    expect(cfg.downloadRoot).toBe(path.join(os.homedir(), 'Downloads', 'mcp-outlook-attachments'));
   });
 
   it('honours DOWNLOAD_DIR', () => {

@@ -6,6 +6,8 @@ dist/
 
 # Environment variables
 .env
+.env.*
+!.env.example
 
 # Logs
 *.log
@@ -22,7 +24,7 @@ Thumbs.db
 *.swo
 
 # TypeScript
-*.tsbuildinfologs/
+*.tsbuildinfo
 *.log
 *.jsonl
 

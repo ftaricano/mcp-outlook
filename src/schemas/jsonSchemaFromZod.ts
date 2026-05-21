@@ -16,10 +16,8 @@ const toolDescriptions: Record<string, string> = {
   mark_as_unread: 'Marca um email como não lido',
   delete_email: 'Deleta um email permanentemente',
   summarize_email: 'Resume um email específico com análise inteligente',
-  summarize_emails_batch:
-    'Resume múltiplos emails em lote com categorização por prioridade',
-  list_users:
-    'Lista usuários do diretório (requer permissões de administrador)',
+  summarize_emails_batch: 'Resume múltiplos emails em lote com categorização por prioridade',
+  list_users: 'Lista usuários do diretório (requer permissões de administrador)',
 
   // Attachment Management
   list_attachments: 'Lista todos os anexos de um email',
@@ -28,13 +26,10 @@ const toolDescriptions: Record<string, string> = {
     'Baixa um anexo diretamente para arquivo no disco (otimizado para arquivos grandes)',
   download_all_attachments: 'Baixa todos os anexos de um email em lote',
   list_downloaded_files: 'Lista arquivos baixados no diretório de downloads',
-  get_download_directory_info:
-    'Obtém informações sobre o diretório de downloads',
+  get_download_directory_info: 'Obtém informações sobre o diretório de downloads',
   cleanup_old_downloads: 'Limpa arquivos antigos do diretório de downloads',
-  export_email_as_attachment:
-    'Exporta um email como arquivo anexável (EML ou MSG)',
-  encode_file_for_attachment:
-    'Codifica um arquivo do disco para Base64 para usar como anexo',
+  export_email_as_attachment: 'Exporta um email como arquivo anexável (EML ou MSG)',
+  encode_file_for_attachment: 'Codifica um arquivo do disco para Base64 para usar como anexo',
 
   // Hybrid
   send_email_from_attachment:
@@ -43,8 +38,7 @@ const toolDescriptions: Record<string, string> = {
     'Envia email com arquivo do disco como anexo (sem transferência Base64 via MCP)',
 
   // Folder Management
-  list_folders:
-    'Lista todas as pastas de email do usuário com opção de incluir subpastas',
+  list_folders: 'Lista todas as pastas de email do usuário com opção de incluir subpastas',
   create_folder: 'Cria uma nova pasta de email',
   move_emails_to_folder: 'Move um ou mais emails para uma pasta específica',
   copy_emails_to_folder: 'Copia um ou mais emails para uma pasta específica',
@@ -56,29 +50,21 @@ const toolDescriptions: Record<string, string> = {
   // Advanced Search
   advanced_search:
     'Busca avançada de emails com múltiplos critérios (texto, remetente, assunto, data, anexos, status)',
-  search_by_sender_domain:
-    'Busca emails por domínio do remetente com análise estatística',
-  search_by_attachment_type:
-    'Busca emails por tipo de anexo com análise detalhada',
-  find_duplicate_emails:
-    'Encontra emails duplicados com base em diferentes critérios',
+  search_by_sender_domain: 'Busca emails por domínio do remetente com análise estatística',
+  search_by_attachment_type: 'Busca emails por tipo de anexo com análise detalhada',
+  find_duplicate_emails: 'Encontra emails duplicados com base em diferentes critérios',
   search_by_size: 'Busca emails por faixa de tamanho',
-  saved_searches:
-    'Gerencia buscas salvas (salvar, listar, executar, deletar)',
+  saved_searches: 'Gerencia buscas salvas (salvar, listar, executar, deletar)',
 
   // Batch Operations
-  batch_mark_as_read:
-    'Marca múltiplos emails como lidos em operação em lote otimizada',
-  batch_mark_as_unread:
-    'Marca múltiplos emails como não lidos em operação em lote otimizada',
-  batch_delete_emails:
-    'Deleta múltiplos emails em operação em lote com controle de permanência',
-  batch_move_emails:
-    'Move múltiplos emails para uma pasta específica em operação em lote',
+  batch_mark_as_read: 'Marca múltiplos emails como lidos em operação em lote otimizada',
+  batch_mark_as_unread: 'Marca múltiplos emails como não lidos em operação em lote otimizada',
+  batch_delete_emails: 'Deleta múltiplos emails em operação em lote com controle de permanência',
+  batch_move_emails: 'Move múltiplos emails para uma pasta específica em operação em lote',
   batch_download_attachments:
     'Baixa todos os anexos de múltiplos emails em operação em lote otimizada',
   email_cleanup_wizard:
-    'Assistente inteligente de limpeza de emails com critérios personalizáveis e modo simulação'
+    'Assistente inteligente de limpeza de emails com critérios personalizáveis e modo simulação',
 };
 
 type ToolSchemaEntry = {
@@ -114,6 +100,6 @@ export function getToolSchemas(): ToolSchemaEntry[] {
   return Object.entries(toolSchemas).map(([name, schema]) => ({
     name,
     description: toolDescriptions[name] ?? name,
-    inputSchema: toMcpInputSchema(schema)
+    inputSchema: toMcpInputSchema(schema),
   }));
 }

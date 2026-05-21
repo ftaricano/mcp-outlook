@@ -5,9 +5,10 @@ The unit suite (`npm test`) covers pure logic and MCP protocol framing. It does 
 ## Prerequisites
 
 - A dedicated **test** Azure AD tenant or mailbox. Never point these at a production mailbox.
-- Azure AD app with the permissions listed in [README](../README.md#azure-ad-permissions-application--client-credentials).
+- Azure AD app with the permissions listed in [README](../README.md#requirements).
 - Admin consent granted.
 - `.env` populated with the test credentials and `TARGET_USER_EMAIL` pointing at the test mailbox.
+- Optional: `LIVE_SMOKE_SENDER_DOMAIN` set to a sender domain that exists in the test mailbox. Defaults to `example.com`.
 
 Build once:
 

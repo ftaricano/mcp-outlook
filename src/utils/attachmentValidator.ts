@@ -51,7 +51,7 @@ export class AttachmentValidator {
     'image/gif',
     'image/bmp',
     'image/tiff',
-    'application/octet-stream'
+    'application/octet-stream',
   ];
 
   // MIME types for Brazilian boleto (payment slips)
@@ -62,7 +62,7 @@ export class AttachmentValidator {
     'image/jpg',
     'image/gif',
     'image/bmp',
-    'image/tiff'
+    'image/tiff',
   ];
 
   /**
@@ -74,7 +74,7 @@ export class AttachmentValidator {
       errors: [],
       warnings: [],
       totalSize: 0,
-      attachmentInfo: []
+      attachmentInfo: [],
     };
 
     if (!attachments || attachments.length === 0) {
@@ -93,12 +93,12 @@ export class AttachmentValidator {
     for (let i = 0; i < attachments.length; i++) {
       const attachment = attachments[i];
       const validation = this.validateSingleAttachment(attachment);
-      
+
       // Add index to errors and warnings for clarity
-      validation.errors.forEach(error => 
+      validation.errors.forEach((error) =>
         result.errors.push(`Attachment ${i + 1} (${attachment.name || 'unnamed'}): ${error}`)
       );
-      validation.warnings.forEach(warning => 
+      validation.warnings.forEach((warning) =>
         result.warnings.push(`Attachment ${i + 1} (${attachment.name || 'unnamed'}): ${warning}`)
       );
 
@@ -119,7 +119,7 @@ export class AttachmentValidator {
     }
 
     // Check if any attachment needs upload session
-    const needsUploadSession = result.attachmentInfo.some(info => info.needsUploadSession);
+    const needsUploadSession = result.attachmentInfo.some((info) => info.needsUploadSession);
     if (needsUploadSession) {
       result.warnings.push(
         'Some attachments are large (>3MB) and require upload session - this feature is not implemented yet'
@@ -142,8 +142,8 @@ export class AttachmentValidator {
         originalSize: 0,
         base64Size: 0,
         contentType: attachment.contentType || '',
-        needsUploadSession: false
-      }
+        needsUploadSession: false,
+      },
     };
 
     // 1. Validate file name
@@ -160,7 +160,7 @@ export class AttachmentValidator {
       result.isValid = false;
     } else {
       result.info.contentType = attachment.contentType;
-      
+
       // Check if MIME type is recognized
       if (!this.isValidMimeType(attachment.contentType)) {
         result.warnings.push(`Unrecognized MIME type: ${attachment.contentType}`);
@@ -189,8 +189,8 @@ export class AttachmentValidator {
       result.info.needsUploadSession = true;
       result.errors.push(
         `File too large: ${this.formatBytes(result.info.originalSize)}. ` +
-        `Maximum size for regular attachments: ${this.formatBytes(this.MAX_SMALL_ATTACHMENT_SIZE)}. ` +
-        `Large file upload session is not implemented yet.`
+          `Maximum size for regular attachments: ${this.formatBytes(this.MAX_SMALL_ATTACHMENT_SIZE)}. ` +
+          `Large file upload session is not implemented yet.`
       );
       result.isValid = false;
     }
@@ -201,7 +201,8 @@ export class AttachmentValidator {
     }
 
     // 6. Size warnings
-    if (result.info.originalSize > 1024 * 1024) { // >1MB
+    if (result.info.originalSize > 1024 * 1024) {
+      // >1MB
       result.warnings.push(
         `Large file (${this.formatBytes(result.info.originalSize)}) - may take longer to send`
       );
@@ -231,7 +232,7 @@ export class AttachmentValidator {
         isValid: false,
         error: 'Content is empty',
         originalSize: 0,
-        base64Size: 0
+        base64Size: 0,
       };
     }
 
@@ -245,7 +246,7 @@ export class AttachmentValidator {
         isValid: false,
         error: 'Invalid Base64 format - contains invalid characters',
         originalSize: 0,
-        base64Size: 0
+        base64Size: 0,
       };
     }
 
@@ -255,25 +256,25 @@ export class AttachmentValidator {
         isValid: false,
         error: 'Invalid Base64 format - incorrect padding',
         originalSize: 0,
-        base64Size: 0
+        base64Size: 0,
       };
     }
 
     try {
       // Try to decode to verify validity
       const buffer = Buffer.from(cleanBase64, 'base64');
-      
+
       return {
         isValid: true,
         originalSize: buffer.length,
-        base64Size: cleanBase64.length
+        base64Size: cleanBase64.length,
       };
     } catch (error) {
       return {
         isValid: false,
         error: `Error decoding Base64: ${error instanceof Error ? error.message : 'Unknown error'}`,
         originalSize: 0,
-        base64Size: 0
+        base64Size: 0,
       };
     }
   }
@@ -283,7 +284,7 @@ export class AttachmentValidator {
    */
   private static isValidMimeType(mimeType: string): boolean {
     const normalizedType = mimeType.toLowerCase();
-    
+
     // Check if it's in our common types list
     if (this.COMMON_MIME_TYPES.includes(normalizedType)) {
       return true;
@@ -300,7 +301,7 @@ export class AttachmentValidator {
   private static isBoletoAttachment(fileName: string, contentType: string): boolean {
     const name = fileName.toLowerCase();
     const type = contentType.toLowerCase();
-    
+
     // Common boleto patterns
     const boletoPatterns = [
       /boleto/i,
@@ -311,11 +312,12 @@ export class AttachmentValidator {
       /titulo/i,
       /título/i,
       /pagamento/i,
-      /payment/i
+      /payment/i,
     ];
 
-    return boletoPatterns.some(pattern => pattern.test(name)) ||
-           this.BOLETO_MIME_TYPES.includes(type);
+    return (
+      boletoPatterns.some((pattern) => pattern.test(name)) || this.BOLETO_MIME_TYPES.includes(type)
+    );
   }
 
   /**
@@ -333,14 +335,16 @@ export class AttachmentValidator {
     }
 
     // Check if file is too small (suspicious)
-    if (result.info.originalSize < 1024) { // <1KB
+    if (result.info.originalSize < 1024) {
+      // <1KB
       result.warnings.push(
         `File is too small (${this.formatBytes(result.info.originalSize)}) for a valid boleto`
       );
     }
 
     // Check if file is too large
-    if (result.info.originalSize > 10 * 1024 * 1024) { // >10MB
+    if (result.info.originalSize > 10 * 1024 * 1024) {
+      // >10MB
       result.warnings.push(
         `File is too large (${this.formatBytes(result.info.originalSize)}) for a typical boleto`
       );
@@ -352,11 +356,11 @@ export class AttachmentValidator {
    */
   private static formatBytes(bytes: number): string {
     if (bytes === 0) return '0 Bytes';
-    
+
     const k = 1024;
     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    
+
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   }
 

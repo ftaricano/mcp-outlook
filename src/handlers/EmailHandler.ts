@@ -11,23 +11,23 @@ export class EmailHandler extends BaseHandler {
     const search = args.search;
 
     try {
-      const emails = await this.emailService.listEmails({ 
-        maxResults: limit, 
-        folder: folder, 
-        search: search 
+      const emails = await this.emailService.listEmails({
+        maxResults: limit,
+        folder: folder,
+        search: search,
       });
-      
+
       if (!emails || emails.length === 0) {
         return this.formatSuccess('📭 Nenhum email encontrado');
       }
-      
+
       let result = `📧 Lista de emails (${emails.length}):\n\n`;
-      
+
       emails.forEach((email, index) => {
         const read = email.isRead ? '✓' : '○';
         const hasAttachment = email.hasAttachments ? '📎' : '';
         const preview = email.bodyPreview ? email.bodyPreview.substring(0, 100) + '...' : '';
-        
+
         result += `${index + 1}. [${read}] ${hasAttachment} **${email.subject || '(Sem assunto)'}**\n`;
         result += `   De: ${email.from?.emailAddress?.address || 'Desconhecido'}\n`;
         result += `   Data: ${email.receivedDateTime ? new Date(email.receivedDateTime).toLocaleString('pt-BR') : 'Data desconhecida'}\n`;
@@ -36,7 +36,7 @@ export class EmailHandler extends BaseHandler {
         }
         result += `   ID: ${email.id}\n\n`;
       });
-      
+
       return this.formatSuccess(result);
     } catch (error) {
       return this.formatError('Erro ao listar emails', error);
@@ -52,81 +52,85 @@ export class EmailHandler extends BaseHandler {
     if (validationError) {
       return this.formatError(validationError);
     }
-    
+
     const validatedArgs = {
       to: args.to || [],
       subject: args.subject || '',
       body: args.body || '',
       cc: args.cc,
       bcc: args.bcc,
-      attachments: args.attachments
+      attachments: args.attachments,
     };
-    
+
     // Validate attachments if present
     if (validatedArgs.attachments && validatedArgs.attachments.length > 0) {
       const validation = AttachmentValidator.validateAttachments(validatedArgs.attachments);
-      
+
       if (!validation.isValid) {
         return {
           content: [
             {
               type: 'text',
-              text: `❌ Erro na validação dos anexos:\n\n${validation.errors.join('\n')}`
-            }
+              text: `❌ Erro na validação dos anexos:\n\n${validation.errors.join('\n')}`,
+            },
           ],
-          isError: true
+          isError: true,
         };
       }
-      
+
       // Log warnings if any
       if (validation.warnings.length > 0) {
         console.warn('⚠️ Avisos sobre anexos:', validation.warnings);
       }
     }
-    
+
     // Prepare template options if requested
-    const enhancedOptions = args.useTemplate ? {
-      useTemplate: true,
-      templateOptions: {
-        theme: args.templateTheme || 'professional',
-        showHeader: !!args.companyName || !!args.logoUrl,
-        showFooter: true,
-        companyName: args.companyName,
-        logoUrl: args.logoUrl
-      },
-      emailContent: {
-        title: args.emailTitle,
-        signature: args.signature
-      }
-    } : undefined;
-    
+    const enhancedOptions = args.useTemplate
+      ? {
+          useTemplate: true,
+          templateOptions: {
+            theme: args.templateTheme || 'professional',
+            showHeader: !!args.companyName || !!args.logoUrl,
+            showFooter: true,
+            companyName: args.companyName,
+            logoUrl: args.logoUrl,
+          },
+          emailContent: {
+            title: args.emailTitle,
+            signature: args.signature,
+          },
+        }
+      : undefined;
+
     try {
       const result = await this.emailService.sendEmail(
-        validatedArgs.to, 
-        validatedArgs.subject, 
-        validatedArgs.body, 
-        validatedArgs.cc, 
+        validatedArgs.to,
+        validatedArgs.subject,
+        validatedArgs.body,
+        validatedArgs.cc,
         validatedArgs.bcc,
         validatedArgs.attachments,
         enhancedOptions
       );
-      
-      const attachmentInfo = validatedArgs.attachments && validatedArgs.attachments.length > 0 
-        ? `\n📎 Anexos: ${validatedArgs.attachments.length} arquivo(s) - ${validatedArgs.attachments.map((att: any) => att.name).join(', ')}`
-        : '';
-      
-      const attachmentDetails = result.attachmentInfo && result.attachmentInfo.count > 0
-        ? `\n\n📊 Detalhes dos Anexos:\n• Total: ${result.attachmentInfo.count}\n• Tamanho: ${result.attachmentInfo.totalSize}${result.warnings && result.warnings.length > 0 ? `\n⚠️ Avisos: ${result.warnings.join('; ')}` : ''}`
-        : '';
-      
+
+      const attachmentInfo =
+        validatedArgs.attachments && validatedArgs.attachments.length > 0
+          ? `\n📎 Anexos: ${validatedArgs.attachments.length} arquivo(s) - ${validatedArgs.attachments.map((att: any) => att.name).join(', ')}`
+          : '';
+
+      const attachmentDetails =
+        result.attachmentInfo && result.attachmentInfo.count > 0
+          ? `\n\n📊 Detalhes dos Anexos:\n• Total: ${result.attachmentInfo.count}\n• Tamanho: ${result.attachmentInfo.totalSize}${result.warnings && result.warnings.length > 0 ? `\n⚠️ Avisos: ${result.warnings.join('; ')}` : ''}`
+          : '';
+
       return this.formatSuccess(
         `✅ Email enviado com sucesso!\n\n` +
-        `Para: ${validatedArgs.to.join(', ')}\n` +
-        `Assunto: ${validatedArgs.subject}\n` +
-        `${validatedArgs.cc ? `CC: ${validatedArgs.cc.join(', ')}\n` : ''}` +
-        `${validatedArgs.bcc ? `BCC: ${validatedArgs.bcc.join(', ')}\n` : ''}` +
-        `${attachmentInfo}${attachmentDetails}\n\n` +
-        `Message ID: ${result.messageId}`
+          `Para: ${validatedArgs.to.join(', ')}\n` +
+          `Assunto: ${validatedArgs.subject}\n` +
+          `${validatedArgs.cc ? `CC: ${validatedArgs.cc.join(', ')}\n` : ''}` +
+          `${validatedArgs.bcc ? `BCC: ${validatedArgs.bcc.join(', ')}\n` : ''}` +
+          `${attachmentInfo}${attachmentDetails}\n\n` +
+          `Message ID: ${result.messageId}`
       );
     } catch (error) {
       return this.formatError('Erro ao enviar email', error);
@@ -233,15 +237,10 @@ export class EmailHandler extends BaseHandler {
     }
 
     try {
-      const result = await this.emailService.replyToEmail(
-        args.emailId, 
-        args.body,
-        args.replyAll
-      );
-      
+      const result = await this.emailService.replyToEmail(args.emailId, args.body, args.replyAll);
+
       return this.formatSuccess(
-        `✅ Resposta enviada com sucesso!\n\n` +
-        `Message ID: ${result.messageId}`
+        `✅ Resposta enviada com sucesso!\n\n` + `Message ID: ${result.messageId}`
       );
     } catch (error) {
       return this.formatError('Erro ao responder email', error);
@@ -315,7 +314,7 @@ export class EmailHandler extends BaseHandler {
       }
 
       const summary = await this.emailSummarizer.summarizeEmail(email);
-      
+
       let result = `📧 **Resumo do Email**\n\n`;
       result += `**Assunto:** ${summary.subject}\n`;
       result += `**De:** ${summary.from}\n`;
@@ -324,26 +323,26 @@ export class EmailHandler extends BaseHandler {
       result += `**Categoria:** ${summary.category}\n`;
       result += `**Sentimento:** ${summary.sentiment}\n\n`;
       result += `**Resumo:** ${summary.summary}\n\n`;
-      
+
       if (summary.keyPoints.length > 0) {
         result += `**Pontos Principais:**\n`;
-        summary.keyPoints.forEach(point => {
+        summary.keyPoints.forEach((point) => {
           result += `• ${point}\n`;
         });
         result += '\n';
       }
-      
+
       if (summary.actionRequired) {
         result += `⚠️ **Ação Requerida:** Sim\n\n`;
       }
-      
+
       if (summary.attachments && summary.attachments.length > 0) {
         result += `📎 **Anexos:**\n`;
-        summary.attachments.forEach(att => {
+        summary.attachments.forEach((att) => {
           result += `• ${att}\n`;
         });
       }
-      
+
       return this.formatSuccess(result);
     } catch (error) {
       return this.formatError('Erro ao resumir email', error);
@@ -359,57 +358,60 @@ export class EmailHandler extends BaseHandler {
     const priorityOnly = args.priorityOnly || false;
 
     try {
-      const emails = await this.emailService.listEmails({ 
-        maxResults: limit, 
-        folder: folder 
+      const emails = await this.emailService.listEmails({
+        maxResults: limit,
+        folder: folder,
       });
-      
+
       if (!emails || emails.length === 0) {
         return this.formatSuccess('📭 Nenhum email encontrado para resumir');
       }
-      
-      const emailIds = emails.map(email => email.id!);
-      const summaries = await this.emailSummarizer.summarizeEmailsBatch(emailIds, this.emailService);
-      
+
+      const emailIds = emails.map((email) => email.id!);
+      const summaries = await this.emailSummarizer.summarizeEmailsBatch(
+        emailIds,
+        this.emailService
+      );
+
       // Filter by priority if requested
-      const filteredSummaries = priorityOnly 
-        ? summaries.filter(s => s.priority === 'alta')
+      const filteredSummaries = priorityOnly
+        ? summaries.filter((s) => s.priority === 'alta')
         : summaries;
-      
+
       if (filteredSummaries.length === 0) {
         return this.formatSuccess('📭 Nenhum email prioritário encontrado');
       }
-      
+
       let result = `📧 **Resumo de ${filteredSummaries.length} emails**\n\n`;
-      
+
       // Group by priority
-      const highPriority = filteredSummaries.filter(s => s.priority === 'alta');
-      const mediumPriority = filteredSummaries.filter(s => s.priority === 'média');
-      const lowPriority = filteredSummaries.filter(s => s.priority === 'baixa');
-      
+      const highPriority = filteredSummaries.filter((s) => s.priority === 'alta');
+      const mediumPriority = filteredSummaries.filter((s) => s.priority === 'média');
+      const lowPriority = filteredSummaries.filter((s) => s.priority === 'baixa');
+
       if (highPriority.length > 0) {
         result += `🔴 **Alta Prioridade (${highPriority.length})**\n`;
-        highPriority.forEach(summary => {
+        highPriority.forEach((summary) => {
           result += this.formatEmailSummary(summary);
         });
         result += '\n';
       }
-      
+
       if (mediumPriority.length > 0) {
         result += `🟡 **Média Prioridade (${mediumPriority.length})**\n`;
-        mediumPriority.forEach(summary => {
+        mediumPriority.forEach((summary) => {
           result += this.formatEmailSummary(summary);
         });
         result += '\n';
       }
-      
+
       if (lowPriority.length > 0) {
         result += `🟢 **Baixa Prioridade (${lowPriority.length})**\n`;
-        lowPriority.forEach(summary => {
+        lowPriority.forEach((summary) => {
           result += this.formatEmailSummary(summary);
         });
       }
-      
+
       return this.formatSuccess(result);
     } catch (error) {
       return this.formatError('Erro ao resumir emails em lote', error);
@@ -424,15 +426,15 @@ export class EmailHandler extends BaseHandler {
     result += `De: ${summary.from} | ${summary.date}\n`;
     result += `Categoria: ${summary.category} | Sentimento: ${summary.sentiment}\n`;
     result += `Resumo: ${summary.summary}\n`;
-    
+
     if (summary.actionRequired) {
       result += `⚠️ Ação: Requerida\n`;
     }
-    
+
     if (summary.attachments && summary.attachments.length > 0) {
       result += `📎 Anexos: ${summary.attachments.join(', ')}\n`;
     }
-    
+
     return result;
   }
 

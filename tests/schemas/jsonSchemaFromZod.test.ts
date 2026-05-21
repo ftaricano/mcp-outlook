@@ -100,7 +100,7 @@ describe('getToolSchemas', () => {
       'batch_delete_emails',
       'batch_move_emails',
       'batch_download_attachments',
-      'email_cleanup_wizard'
+      'email_cleanup_wizard',
     ];
     const names = entries.map((e) => e.name);
     for (const tool of expected) {
