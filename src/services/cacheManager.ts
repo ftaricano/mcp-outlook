@@ -35,13 +35,13 @@ export class CacheManager extends EventEmitter {
 
   constructor(config: Partial<CacheConfig> = {}) {
     super();
-    
+
     this.config = {
       defaultTtl: 5 * 60 * 1000, // 5 minutes
       maxSize: 1000,
       cleanupInterval: 60 * 1000, // 1 minute
       enableStats: true,
-      ...config
+      ...config,
     };
 
     this.cache = new Map();
@@ -53,7 +53,7 @@ export class CacheManager extends EventEmitter {
       size: 0,
       maxSize: this.config.maxSize,
       evictions: 0,
-      memoryUsage: 0
+      memoryUsage: 0,
     };
 
     this.startCleanupTimer();
@@ -65,7 +65,7 @@ export class CacheManager extends EventEmitter {
    */
   get<T>(key: string): T | null {
     const entry = this.cache.get(key);
-    
+
     if (!entry) {
       this.stats.misses++;
       this.updateStats();
@@ -96,16 +96,16 @@ export class CacheManager extends EventEmitter {
   /**
    * Set item in cache with intelligent eviction
    */
-  set<T>(key: string, data: T, options: {
-    ttl?: number;
-    tags?: string[];
-    priority?: 'low' | 'normal' | 'high';
-  } = {}): void {
-    const {
-      ttl = this.config.defaultTtl,
-      tags = [],
-      priority = 'normal'
-    } = options;
+  set<T>(
+    key: string,
+    data: T,
+    options: {
+      ttl?: number;
+      tags?: string[];
+      priority?: 'low' | 'normal' | 'high';
+    } = {}
+  ): void {
+    const { ttl = this.config.defaultTtl, tags = [], priority = 'normal' } = options;
 
     // Check if we need to evict items
     if (this.cache.size >= this.config.maxSize) {
@@ -118,7 +118,7 @@ export class CacheManager extends EventEmitter {
       ttl,
       accessCount: 0,
       lastAccessed: Date.now(),
-      tags: [...tags, `priority:${priority}`]
+      tags: [...tags, `priority:${priority}`],
     };
 
     this.cache.set(key, entry);
@@ -134,9 +134,9 @@ export class CacheManager extends EventEmitter {
   generateEmailKey(operation: string, params: Record<string, any>): string {
     const sortedParams = Object.keys(params)
       .sort()
-      .map(key => `${key}:${JSON.stringify(params[key])}`)
+      .map((key) => `${key}:${JSON.stringify(params[key])}`)
       .join('|');
-    
+
     return `email:${operation}:${Buffer.from(sortedParams).toString('base64')}`;
   }
 
@@ -146,11 +146,11 @@ export class CacheManager extends EventEmitter {
   cacheEmails(key: string, emails: any[], folder?: string): void {
     const tags = ['emails'];
     if (folder) tags.push(`folder:${folder}`);
-    
+
     this.set(key, emails, {
       ttl: 2 * 60 * 1000, // 2 minutes for email lists
       tags,
-      priority: 'high'
+      priority: 'high',
     });
   }
 
@@ -161,7 +161,7 @@ export class CacheManager extends EventEmitter {
     this.set(key, folders, {
       ttl: 10 * 60 * 1000, // 10 minutes for folder structure
       tags: ['folders', 'metadata'],
-      priority: 'high'
+      priority: 'high',
     });
   }
 
@@ -172,24 +172,28 @@ export class CacheManager extends EventEmitter {
     this.set(key, users, {
       ttl: 30 * 60 * 1000, // 30 minutes for user data
       tags: ['users', 'metadata'],
-      priority: 'normal'
+      priority: 'normal',
     });
   }
 
   /**
    * Cache search results with dynamic TTL based on complexity
    */
-  cacheSearchResults(key: string, results: any[], complexity: 'simple' | 'moderate' | 'complex'): void {
+  cacheSearchResults(
+    key: string,
+    results: any[],
+    complexity: 'simple' | 'moderate' | 'complex'
+  ): void {
     const ttlMap = {
-      simple: 5 * 60 * 1000,   // 5 minutes
+      simple: 5 * 60 * 1000, // 5 minutes
       moderate: 3 * 60 * 1000, // 3 minutes
-      complex: 1 * 60 * 1000   // 1 minute
+      complex: 1 * 60 * 1000, // 1 minute
     };
 
     this.set(key, results, {
       ttl: ttlMap[complexity],
       tags: ['search', `complexity:${complexity}`],
-      priority: complexity === 'complex' ? 'low' : 'normal'
+      priority: complexity === 'complex' ? 'low' : 'normal',
     });
   }
 
@@ -198,9 +202,9 @@ export class CacheManager extends EventEmitter {
    */
   invalidateByTags(tags: string[]): number {
     let invalidated = 0;
-    
+
     for (const [key, entry] of this.cache.entries()) {
-      if (tags.some(tag => entry.tags.includes(tag))) {
+      if (tags.some((tag) => entry.tags.includes(tag))) {
         this.cache.delete(key);
         invalidated++;
         this.emit('cache-invalidated', key, tags);
@@ -251,7 +255,7 @@ export class CacheManager extends EventEmitter {
 
     // If no low/normal priority candidates, evict from high priority
     const toEvict = candidates.length > 0 ? candidates : Array.from(this.cache.entries());
-    
+
     if (toEvict.length > 0) {
       const [keyToEvict] = toEvict[0];
       this.cache.delete(keyToEvict);
@@ -374,15 +378,15 @@ export class CacheManager extends EventEmitter {
   async preloadCommonPatterns(emailService: any): Promise<void> {
     try {
       console.error('🔄 Preloading common cache patterns...');
-      
+
       // Preload folders (commonly accessed)
       const folders = await emailService.listFolders(false, 2);
       this.cacheFolders('folders:root', folders);
-      
+
       // Preload inbox emails (most common operation)
       const inboxEmails = await emailService.listEmails({ maxResults: 20, folder: 'inbox' });
       this.cacheEmails('emails:inbox:recent', inboxEmails, 'inbox');
-      
+
       console.error('✅ Cache preloading completed');
     } catch (error) {
       console.warn('⚠️ Cache preloading failed:', error);

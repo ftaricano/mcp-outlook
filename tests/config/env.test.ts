@@ -7,7 +7,7 @@ const validTenantId = '22222222-2222-4222-8222-222222222222';
 const baseValid: NodeJS.ProcessEnv = {
   MICROSOFT_GRAPH_CLIENT_ID: validClientId,
   MICROSOFT_GRAPH_CLIENT_SECRET: 'super-secret-value',
-  MICROSOFT_GRAPH_TENANT_ID: validTenantId
+  MICROSOFT_GRAPH_TENANT_ID: validTenantId,
 };
 
 describe('loadEnv', () => {
@@ -76,7 +76,7 @@ describe('loadEnv', () => {
     const env: NodeJS.ProcessEnv = {
       MICROSOFT_GRAPH_CLIENT_ID: 'bad',
       MICROSOFT_GRAPH_CLIENT_SECRET: 'ok',
-      MICROSOFT_GRAPH_TENANT_ID: 'bad'
+      MICROSOFT_GRAPH_TENANT_ID: 'bad',
     };
     try {
       loadEnv(env);

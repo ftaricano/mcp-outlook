@@ -86,9 +86,9 @@ export class FileManager {
         const nameWithoutExt = path.basename(filename, ext);
         const newFilename = `${nameWithoutExt}_${timestamp}${ext}`;
         return this.saveAttachmentToDisk(attachment, {
-          ...options, 
+          ...options,
           filename: newFilename,
-          targetDirectory: targetDir 
+          targetDirectory: targetDir,
         });
       }
 
@@ -99,8 +99,8 @@ export class FileManager {
 
       // Processar Base64 em chunks para evitar problemas de memória
       const result = await this.saveBase64ToFileOptimized(
-        attachment.contentBytes, 
-        filePath, 
+        attachment.contentBytes,
+        filePath,
         attachment.size
       );
 
@@ -117,9 +117,8 @@ export class FileManager {
         originalSize: attachment.size,
         savedSize: result.fileSize,
         integrity,
-        error: result.error
+        error: result.error,
       };
-
     } catch (error) {
       console.error('❌ Erro no FileManager:', error);
       return {
@@ -128,7 +127,7 @@ export class FileManager {
         originalSize: attachment.size,
         savedSize: 0,
         integrity: false,
-        error: error instanceof Error ? error.message : 'Erro desconhecido'
+        error: error instanceof Error ? error.message : 'Erro desconhecido',
       };
     }
   }
@@ -217,17 +216,19 @@ export class FileManager {
     try {
       const stats = fs.statSync(filePath);
       const actualSize = stats.size;
-      
+
       // Tolerância de 5% para diferenças de encoding
       const tolerance = Math.max(1000, expectedSize * 0.05);
       const sizeDifference = Math.abs(actualSize - expectedSize);
-      
+
       const isValid = sizeDifference <= tolerance;
-      
+
       if (!isValid) {
-        console.warn(`⚠️  Diferença de tamanho: esperado ${expectedSize}, atual ${actualSize} (diferença: ${sizeDifference})`);
+        console.warn(
+          `⚠️  Diferença de tamanho: esperado ${expectedSize}, atual ${actualSize} (diferença: ${sizeDifference})`
+        );
       }
-      
+
       return isValid;
     } catch (error) {
       console.error('❌ Erro na validação:', error);
@@ -240,11 +241,11 @@ export class FileManager {
    */
   private sanitizeFilename(filename: string): string {
     return filename
-      .replace(/[<>:"/\\|?*]/g, '_')  // Caracteres inválidos
-      .replace(/\s+/g, '_')           // Espaços múltiplos
-      .replace(/_{2,}/g, '_')         // Underscores múltiplos
-      .replace(/^_+|_+$/g, '')        // Underscores no início/fim
-      .slice(0, 255);                 // Limitar tamanho
+      .replace(/[<>:"/\\|?*]/g, '_') // Caracteres inválidos
+      .replace(/\s+/g, '_') // Espaços múltiplos
+      .replace(/_{2,}/g, '_') // Underscores múltiplos
+      .replace(/^_+|_+$/g, '') // Underscores no início/fim
+      .slice(0, 255); // Limitar tamanho
   }
 
   /**
@@ -270,19 +271,20 @@ export class FileManager {
         return [];
       }
 
-      const files = fs.readdirSync(this.downloadDir)
-        .map(filename => {
+      const files = fs
+        .readdirSync(this.downloadDir)
+        .map((filename) => {
           const filePath = path.join(this.downloadDir, filename);
           const stats = fs.statSync(filePath);
-          
+
           return {
             name: filename,
             path: filePath,
             size: stats.size,
-            modified: stats.mtime
+            modified: stats.mtime,
           };
         })
-        .filter(file => fs.statSync(file.path).isFile())
+        .filter((file) => fs.statSync(file.path).isFile())
         .sort((a, b) => b.modified.getTime() - a.modified.getTime());
 
       return files;
@@ -298,7 +300,7 @@ export class FileManager {
   cleanupOldFiles(maxAgeHours: number = 24): number {
     try {
       const files = this.listDownloadedFiles();
-      const cutoffTime = Date.now() - (maxAgeHours * 60 * 60 * 1000);
+      const cutoffTime = Date.now() - maxAgeHours * 60 * 60 * 1000;
       let cleanedCount = 0;
 
       for (const file of files) {
@@ -332,7 +334,7 @@ export class FileManager {
       path: this.downloadDir,
       exists: fs.existsSync(this.downloadDir),
       fileCount: files.length,
-      totalSize
+      totalSize,
     };
   }
 
@@ -367,7 +369,9 @@ export class FileManager {
       // 3. Verificar tamanho (limite de 15MB para Microsoft Graph)
       const maxSize = 15 * 1024 * 1024; // 15MB
       if (fileSize > maxSize) {
-        throw new Error(`Arquivo muito grande: ${(fileSize / (1024 * 1024)).toFixed(2)}MB. Limite: 15MB`);
+        throw new Error(
+          `Arquivo muito grande: ${(fileSize / (1024 * 1024)).toFixed(2)}MB. Limite: 15MB`
+        );
       }
 
       // 4. Detectar MIME type baseado na extensão
@@ -382,7 +386,9 @@ export class FileManager {
       // 6. Validar codificação
       const decodedSize = Buffer.from(base64Content, 'base64').length;
       if (decodedSize !== fileSize) {
-        console.warn(`⚠️  Diferença de tamanho após codificação: original=${fileSize}, decodificado=${decodedSize}`);
+        console.warn(
+          `⚠️  Diferença de tamanho após codificação: original=${fileSize}, decodificado=${decodedSize}`
+        );
       }
 
       console.error(`✅ Arquivo codificado com sucesso`);
@@ -394,20 +400,19 @@ export class FileManager {
         name: fileName,
         contentType,
         content: base64Content,
-        size: fileSize
+        size: fileSize,
       };
-
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
       console.error(`❌ Erro ao codificar arquivo: ${errorMessage}`);
-      
+
       return {
         success: false,
         name: '',
         contentType: '',
         content: '',
         size: 0,
-        error: errorMessage
+        error: errorMessage,
       };
     }
   }
@@ -417,7 +422,7 @@ export class FileManager {
    */
   private detectContentType(filePath: string): string {
     const ext = path.extname(filePath).toLowerCase();
-    
+
     const mimeTypes: { [key: string]: string } = {
       // Documentos
       '.pdf': 'application/pdf',
@@ -429,7 +434,7 @@ export class FileManager {
       '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
       '.txt': 'text/plain',
       '.rtf': 'application/rtf',
-      
+
       // Imagens
       '.jpg': 'image/jpeg',
       '.jpeg': 'image/jpeg',
@@ -438,25 +443,25 @@ export class FileManager {
       '.bmp': 'image/bmp',
       '.svg': 'image/svg+xml',
       '.webp': 'image/webp',
-      
+
       // Arquivos comprimidos
       '.zip': 'application/zip',
       '.rar': 'application/x-rar-compressed',
       '.7z': 'application/x-7z-compressed',
       '.tar': 'application/x-tar',
       '.gz': 'application/gzip',
-      
+
       // Áudio e vídeo
       '.mp3': 'audio/mpeg',
       '.wav': 'audio/wav',
       '.mp4': 'video/mp4',
       '.avi': 'video/x-msvideo',
       '.mov': 'video/quicktime',
-      
+
       // Email
       '.eml': 'message/rfc822',
       '.msg': 'application/vnd.ms-outlook',
-      
+
       // Desenvolvimento
       '.json': 'application/json',
       '.xml': 'application/xml',
@@ -464,7 +469,7 @@ export class FileManager {
       '.html': 'text/html',
       '.css': 'text/css',
       '.js': 'application/javascript',
-      '.ts': 'application/typescript'
+      '.ts': 'application/typescript',
     };
 
     return mimeTypes[ext] || 'application/octet-stream';
@@ -519,12 +524,11 @@ export class FileManager {
       }
 
       return { valid: true, warnings };
-
     } catch (error) {
-      return { 
-        valid: false, 
-        error: error instanceof Error ? error.message : 'Erro ao validar arquivo', 
-        warnings 
+      return {
+        valid: false,
+        error: error instanceof Error ? error.message : 'Erro ao validar arquivo',
+        warnings,
       };
     }
   }

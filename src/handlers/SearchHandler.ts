@@ -16,11 +16,19 @@ export class SearchHandler extends BaseHandler {
       folder = 'inbox',
       maxResults = 20,
       sortBy = 'receivedDateTime',
-      sortOrder = 'desc'
+      sortOrder = 'desc',
     } = args;
 
     // At least one search criterion must be provided
-    if (!query && !sender && !subject && !dateFrom && !dateTo && hasAttachments === undefined && isRead === undefined) {
+    if (
+      !query &&
+      !sender &&
+      !subject &&
+      !dateFrom &&
+      !dateTo &&
+      hasAttachments === undefined &&
+      isRead === undefined
+    ) {
       return this.formatError('Pelo menos um critério de busca deve ser especificado');
     }
 
@@ -36,7 +44,7 @@ export class SearchHandler extends BaseHandler {
         folder,
         maxResults,
         sortBy,
-        sortOrder
+        sortOrder,
       });
 
       if (!results || results.length === 0) {
@@ -52,19 +60,20 @@ export class SearchHandler extends BaseHandler {
       if (subject) result += `• Assunto contém: ${subject}\n`;
       if (dateFrom) result += `• Data de: ${dateFrom}\n`;
       if (dateTo) result += `• Data até: ${dateTo}\n`;
-      if (hasAttachments !== undefined) result += `• Com anexos: ${hasAttachments ? 'Sim' : 'Não'}\n`;
+      if (hasAttachments !== undefined)
+        result += `• Com anexos: ${hasAttachments ? 'Sim' : 'Não'}\n`;
       if (isRead !== undefined) result += `• Status: ${isRead ? 'Lido' : 'Não lido'}\n`;
       result += `• Pasta: ${folder}\n`;
       result += `• Ordenação: ${sortBy} (${sortOrder})\n\n`;
 
       // Display results
       result += `📧 **Resultados:**\n\n`;
-      
+
       results.forEach((email, index) => {
         const read = email.isRead ? '✓' : '○';
         const hasAttachment = email.hasAttachments ? '📎' : '';
         const preview = email.bodyPreview ? email.bodyPreview.substring(0, 80) + '...' : '';
-        
+
         result += `${index + 1}. [${read}] ${hasAttachment} **${email.subject || '(Sem assunto)'}**\n`;
         result += `   De: ${email.from?.emailAddress?.address || 'Desconhecido'}\n`;
         result += `   Data: ${email.receivedDateTime ? new Date(email.receivedDateTime).toLocaleString('pt-BR') : 'Data desconhecida'}\n`;
@@ -89,19 +98,15 @@ export class SearchHandler extends BaseHandler {
       return this.formatError(validationError);
     }
 
-    const { 
-      domain, 
-      maxResults = 20, 
-      includeSubdomains = true,
-      folder = 'inbox',
-      dateRange 
-    } = args;
+    const { domain, maxResults = 20, includeSubdomains = true, folder = 'inbox', dateRange } = args;
 
     try {
-      const results = await this.emailService.searchEmailsBySenderDomain(
-        domain, 
-        { maxResults, includeSubdomains, folder, dateRange }
-      );
+      const results = await this.emailService.searchEmailsBySenderDomain(domain, {
+        maxResults,
+        includeSubdomains,
+        folder,
+        dateRange,
+      });
 
       if (!results || results.length === 0) {
         return this.formatSuccess(`🔍 Nenhum email encontrado do domínio: ${domain}`);
@@ -109,7 +114,7 @@ export class SearchHandler extends BaseHandler {
 
       // Group by sender
       const senderGroups = new Map();
-      results.forEach(email => {
+      results.forEach((email) => {
         const senderEmail = email.from?.emailAddress?.address || 'Desconhecido';
         if (!senderGroups.has(senderEmail)) {
           senderGroups.set(senderEmail, []);
@@ -124,22 +129,25 @@ export class SearchHandler extends BaseHandler {
       result += `• Pasta: ${folder}\n\n`;
 
       result += `👥 **Por Remetente:**\n\n`;
-      
+
       // Sort by email count
-      const sortedSenders = Array.from(senderGroups.entries())
-        .sort((a, b) => b[1].length - a[1].length);
+      const sortedSenders = Array.from(senderGroups.entries()).sort(
+        (a, b) => b[1].length - a[1].length
+      );
 
       sortedSenders.forEach(([sender, emails], index) => {
         result += `${index + 1}. **${sender}** (${emails.length} email${emails.length > 1 ? 's' : ''})\n`;
-        
+
         // Show last 3 emails from this sender
         const recentEmails = emails.slice(0, 3);
         recentEmails.forEach((email: any) => {
           const read = email.isRead ? '✓' : '○';
-          const date = email.receivedDateTime ? new Date(email.receivedDateTime).toLocaleDateString('pt-BR') : 'N/A';
+          const date = email.receivedDateTime
+            ? new Date(email.receivedDateTime).toLocaleDateString('pt-BR')
+            : 'N/A';
           result += `   [${read}] ${email.subject || '(Sem assunto)'} - ${date}\n`;
         });
-        
+
         if (emails.length > 3) {
           result += `   ... e mais ${emails.length - 3} email(s)\n`;
         }
@@ -161,24 +169,22 @@ export class SearchHandler extends BaseHandler {
       return this.formatError(validationError);
     }
 
-    const { 
-      fileTypes, 
-      maxResults = 20,
-      folder = 'inbox',
-      sizeLimit,
-      dateRange 
-    } = args;
+    const { fileTypes, maxResults = 20, folder = 'inbox', sizeLimit, dateRange } = args;
 
     const typesArray = Array.isArray(fileTypes) ? fileTypes : [fileTypes];
 
     try {
-      const results = await this.emailService.searchEmailsByAttachmentType(
-        typesArray, 
-        { maxResults, folder, sizeLimit, dateRange }
-      );
+      const results = await this.emailService.searchEmailsByAttachmentType(typesArray, {
+        maxResults,
+        folder,
+        sizeLimit,
+        dateRange,
+      });
 
       if (!results || results.length === 0) {
-        return this.formatSuccess(`📎 Nenhum email encontrado com anexos do tipo: ${typesArray.join(', ')}`);
+        return this.formatSuccess(
+          `📎 Nenhum email encontrado com anexos do tipo: ${typesArray.join(', ')}`
+        );
       }
 
       // Analyze attachment types
@@ -188,8 +194,8 @@ export class SearchHandler extends BaseHandler {
       for (const email of results) {
         const attachments = await this.emailService.listAttachments(email.id!);
         totalAttachments += attachments.length;
-        
-        attachments.forEach(att => {
+
+        attachments.forEach((att) => {
           const type = att.contentType || 'unknown';
           attachmentStats.set(type, (attachmentStats.get(type) || 0) + 1);
         });
@@ -206,35 +212,36 @@ export class SearchHandler extends BaseHandler {
       result += '\n';
 
       result += `📈 **Tipos de anexo encontrados:**\n`;
-      const sortedTypes = Array.from(attachmentStats.entries())
-        .sort((a, b) => b[1] - a[1]);
-      
+      const sortedTypes = Array.from(attachmentStats.entries()).sort((a, b) => b[1] - a[1]);
+
       sortedTypes.forEach(([type, count]) => {
         result += `• ${type}: ${count} anexo(s)\n`;
       });
       result += '\n';
 
       result += `📧 **Emails encontrados:**\n\n`;
-      
+
       for (let i = 0; i < Math.min(results.length, 10); i++) {
         const email = results[i];
         const read = email.isRead ? '✓' : '○';
-        const date = email.receivedDateTime ? new Date(email.receivedDateTime).toLocaleDateString('pt-BR') : 'N/A';
-        
+        const date = email.receivedDateTime
+          ? new Date(email.receivedDateTime).toLocaleDateString('pt-BR')
+          : 'N/A';
+
         result += `${i + 1}. [${read}] **${email.subject || '(Sem assunto)'}**\n`;
         result += `   De: ${email.from?.emailAddress?.address || 'Desconhecido'}\n`;
         result += `   Data: ${date}\n`;
-        
+
         // Show attachment details
         const attachments = await this.emailService.listAttachments(email.id!);
-        const relevantAttachments = attachments.filter(att => 
-          typesArray.some(type => att.contentType?.includes(type))
+        const relevantAttachments = attachments.filter((att) =>
+          typesArray.some((type) => att.contentType?.includes(type))
         );
-        
+
         if (relevantAttachments.length > 0) {
-          result += `   📎 Anexos relevantes: ${relevantAttachments.map(att => att.name).join(', ')}\n`;
+          result += `   📎 Anexos relevantes: ${relevantAttachments.map((att) => att.name).join(', ')}\n`;
         }
-        
+
         result += `   ID: ${email.id}\n\n`;
       }
 
@@ -257,7 +264,7 @@ export class SearchHandler extends BaseHandler {
       folder = 'inbox',
       maxResults = 50,
       includeRead = true,
-      dateRange
+      dateRange,
     } = args;
 
     try {
@@ -266,7 +273,7 @@ export class SearchHandler extends BaseHandler {
         folder,
         maxResults,
         includeRead,
-        dateRange
+        dateRange,
       });
 
       if (!duplicates || duplicates.length === 0) {
@@ -280,19 +287,21 @@ export class SearchHandler extends BaseHandler {
       let totalDuplicateEmails = 0;
       duplicates.forEach((group, index) => {
         totalDuplicateEmails += group.emails.length;
-        
+
         result += `${index + 1}. **Grupo:** ${group.key}\n`;
         result += `   📧 ${group.emails.length} emails duplicados\n`;
-        
+
         // Show details of each duplicate
         group.emails.forEach((email: any, emailIndex: number) => {
           const read = email.isRead ? '✓' : '○';
-          const date = email.receivedDateTime ? new Date(email.receivedDateTime).toLocaleDateString('pt-BR') : 'N/A';
-          
+          const date = email.receivedDateTime
+            ? new Date(email.receivedDateTime).toLocaleDateString('pt-BR')
+            : 'N/A';
+
           result += `   ${emailIndex + 1}. [${read}] De: ${email.from?.emailAddress?.address || 'Desconhecido'} - ${date}\n`;
           result += `      ID: ${email.id}\n`;
         });
-        
+
         result += '\n';
       });
 
@@ -316,7 +325,7 @@ export class SearchHandler extends BaseHandler {
       maxSizeMB,
       folder = 'inbox',
       maxResults = 20,
-      includeAttachments = true
+      includeAttachments = true,
     } = args;
 
     if (!minSizeMB && !maxSizeMB) {
@@ -329,12 +338,14 @@ export class SearchHandler extends BaseHandler {
         maxSizeMB,
         folder,
         maxResults,
-        includeAttachments
+        includeAttachments,
       });
 
       if (!results || results.length === 0) {
         const sizeRange = `${minSizeMB || 0}MB - ${maxSizeMB || '∞'}MB`;
-        return this.formatSuccess(`📏 Nenhum email encontrado no intervalo de tamanho: ${sizeRange}`);
+        return this.formatSuccess(
+          `📏 Nenhum email encontrado no intervalo de tamanho: ${sizeRange}`
+        );
       }
 
       // Calculate total size (Microsoft Graph doesn't expose size directly, estimate based on content)
@@ -349,7 +360,7 @@ export class SearchHandler extends BaseHandler {
       result += `• Tamanho total: ${totalSizeMB.toFixed(2)}MB\n\n`;
 
       result += `📧 **Emails encontrados:**\n\n`;
-      
+
       // Sort by received date (most recent first) since size is not available
       results.sort((a, b) => {
         const dateA = new Date(a.receivedDateTime || 0);
@@ -361,8 +372,10 @@ export class SearchHandler extends BaseHandler {
         const read = email.isRead ? '✓' : '○';
         const hasAttachment = email.hasAttachments ? '📎' : '';
         const estimatedSizeMB = hasAttachment ? '0.2-1.0' : '0.01-0.05'; // Estimate based on attachments
-        const date = email.receivedDateTime ? new Date(email.receivedDateTime).toLocaleDateString('pt-BR') : 'N/A';
-        
+        const date = email.receivedDateTime
+          ? new Date(email.receivedDateTime).toLocaleDateString('pt-BR')
+          : 'N/A';
+
         result += `${index + 1}. [${read}] ${hasAttachment} **${email.subject || '(Sem assunto)'}**\n`;
         result += `   De: ${email.from?.emailAddress?.address || 'Desconhecido'}\n`;
         result += `   Data: ${date}\n`;
@@ -388,13 +401,15 @@ export class SearchHandler extends BaseHandler {
           if (!name || !searchCriteria) {
             return this.formatError('Nome e critérios de busca são obrigatórios para salvar');
           }
-          
+
           await this.emailService.saveSearchCriteria(name, searchCriteria);
-          return this.formatSuccess(`💾 Busca salva: "${name}"\n\nCritérios salvos:\n${JSON.stringify(searchCriteria, null, 2)}`);
+          return this.formatSuccess(
+            `💾 Busca salva: "${name}"\n\nCritérios salvos:\n${JSON.stringify(searchCriteria, null, 2)}`
+          );
 
         case 'list':
           const savedSearches = await this.emailService.listSavedSearches();
-          
+
           if (savedSearches.length === 0) {
             return this.formatSuccess('📂 Nenhuma busca salva encontrada');
           }
@@ -414,14 +429,14 @@ export class SearchHandler extends BaseHandler {
           }
 
           const searchResult = await this.emailService.executeSavedSearch(name);
-          
+
           if (!searchResult) {
             return this.formatError(`Busca salva "${name}" não encontrada`);
           }
 
           let execResult = `🔍 **Executando busca salva: "${name}"**\n\n`;
           execResult += `📧 ${searchResult.emails.length} email(s) encontrado(s)\n\n`;
-          
+
           searchResult.emails.slice(0, 10).forEach((email, index) => {
             const read = email.isRead ? '✓' : '○';
             execResult += `${index + 1}. [${read}] ${email.subject || '(Sem assunto)'}\n`;

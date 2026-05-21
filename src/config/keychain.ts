@@ -1,19 +1,32 @@
 import { execFileSync } from 'node:child_process';
 
-const MAPPINGS: ReadonlyArray<readonly [string, readonly string[]]> = [
-  ['MICROSOFT_GRAPH_CLIENT_ID', ['cpz::MICROSOFT_GRAPH_CLIENT_ID', 'cpz::SP_CLIENT_ID']],
-  ['MICROSOFT_GRAPH_CLIENT_SECRET', ['cpz::MICROSOFT_GRAPH_CLIENT_SECRET', 'cpz::SP_CLIENT_SECRET']],
-  ['MICROSOFT_GRAPH_TENANT_ID', ['cpz::MICROSOFT_GRAPH_TENANT_ID', 'cpz::SP_TENANT_ID']],
-  ['TARGET_USER_EMAIL', ['cpz::TARGET_USER_EMAIL']],
+const DEFAULT_PREFIX = 'mcp-outlook';
+
+const ENV_VARS = [
+  'MICROSOFT_GRAPH_CLIENT_ID',
+  'MICROSOFT_GRAPH_CLIENT_SECRET',
+  'MICROSOFT_GRAPH_TENANT_ID',
+  'TARGET_USER_EMAIL',
 ] as const;
+
+function fallbackServicesFor(envVar: (typeof ENV_VARS)[number]): string[] {
+  return (process.env[`OUTLOOK_KEYCHAIN_${envVar}_SERVICES`] ?? '')
+    .split(',')
+    .map((service) => service.trim())
+    .filter(Boolean);
+}
+
+function serviceNamesFor(envVar: (typeof ENV_VARS)[number]): string[] {
+  const prefix = process.env.OUTLOOK_KEYCHAIN_PREFIX?.trim() || DEFAULT_PREFIX;
+  return [`${prefix}::${envVar}`, ...fallbackServicesFor(envVar)];
+}
 
 function lookupKeychain(service: string): string | null {
   try {
-    const out = execFileSync(
-      'security',
-      ['find-generic-password', '-s', service, '-w'],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
-    );
+    const out = execFileSync('security', ['find-generic-password', '-s', service, '-w'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
     const v = out.trim();
     return v.length > 0 ? v : null;
   } catch {
@@ -28,9 +41,9 @@ function lookupKeychain(service: string): string | null {
  */
 export function bootstrapKeychain(): void {
   if (process.platform !== 'darwin') return;
-  for (const [envVar, services] of MAPPINGS) {
+  for (const envVar of ENV_VARS) {
     if (process.env[envVar]) continue;
-    for (const svc of services) {
+    for (const svc of serviceNamesFor(envVar)) {
       const v = lookupKeychain(svc);
       if (v) {
         process.env[envVar] = v;

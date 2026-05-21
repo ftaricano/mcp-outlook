@@ -12,7 +12,7 @@ Works with any MCP-compatible client (Claude Desktop, Cursor, custom agents, etc
 | Metric | Value |
 |---|---|
 | Tools | 40 |
-| Tests | 178 passing |
+| Tests | 183 passing |
 | Node | ≥ 20 |
 | MCP SDK | ^1.29.0 |
 | License | MIT |
@@ -46,22 +46,23 @@ Four required values feed both the server and the CLI:
 | `MICROSOFT_GRAPH_TENANT_ID` | yes | Azure AD tenant UUID |
 | `TARGET_USER_EMAIL` | yes* | Mailbox to operate on. Strongly recommended — omitting it causes runtime errors from Graph rather than a clean startup failure. |
 | `LOG_LEVEL` | no | `error` / `warn` / `info` (default) / `debug` |
-| `DOWNLOAD_DIR` | no | Absolute write root. All attachment downloads land here; everything else is rejected. Default: `<cwd>/downloads`. |
+| `OUTLOOK_KEYCHAIN_PREFIX` | no | macOS Keychain service prefix. Default: `mcp-outlook`. |
+| `DOWNLOAD_DIR` | no | Absolute write root. All attachment downloads land here; everything else is rejected. Default: `~/Downloads/mcp-outlook-attachments`. |
 | `MCP_EMAIL_UPLOAD_DIRS` | no | Colon-separated read allowlist for `send_email_with_file` / `encode_file_for_attachment`. Anything outside — including symlinks pointing out and files in `~/.ssh`, `~/.aws`, `*.env`, `*.pem`, etc. — is rejected. Defaults to `DOWNLOAD_DIR`. |
 | `MAX_ATTACHMENT_MB` | no | Attachment size cap (default: 25) |
 
-Resolution order (first hit wins): `process.env` → `<repo>/.env` (if present) → **macOS Keychain** (`security find-generic-password -s "<KEY>" -a "$USER"`). On macOS, the server reads from the Keychain automatically — no `.env` needed for the default account. Tries `cpz::MICROSOFT_GRAPH_*` first, falls back to `cpz::SP_*` (since the SharePoint Graph app is the same Azure AD registration).
+Resolution order (first hit wins): `process.env` → `<repo>/.env` (if present) → **macOS Keychain** (`security find-generic-password -s "<prefix>::<VARIABLE>" -a "$USER"`). On macOS, the default prefix is `mcp-outlook`; set `OUTLOOK_KEYCHAIN_PREFIX` if you want a different namespace.
 
 To populate the Keychain:
 
 ```bash
-security add-generic-password -U -s "cpz::MICROSOFT_GRAPH_CLIENT_ID"     -a "$USER" -w '<uuid>'
-security add-generic-password -U -s "cpz::MICROSOFT_GRAPH_CLIENT_SECRET" -a "$USER" -w '<secret>'
-security add-generic-password -U -s "cpz::MICROSOFT_GRAPH_TENANT_ID"     -a "$USER" -w '<uuid>'
-security add-generic-password -U -s "cpz::TARGET_USER_EMAIL"             -a "$USER" -w 'user@example.com'
+security add-generic-password -U -s "mcp-outlook::MICROSOFT_GRAPH_CLIENT_ID"     -a "$USER" -w '<uuid>'
+security add-generic-password -U -s "mcp-outlook::MICROSOFT_GRAPH_CLIENT_SECRET" -a "$USER" -w '<secret>'
+security add-generic-password -U -s "mcp-outlook::MICROSOFT_GRAPH_TENANT_ID"     -a "$USER" -w '<uuid>'
+security add-generic-password -U -s "mcp-outlook::TARGET_USER_EMAIL"             -a "$USER" -w 'user@example.com'
 ```
 
-For multi-account setups, pass an alternative `.env` via `--env-file` or `$OUTLOOK_ENV_FILE` — process env beats Keychain.
+For multi-account CLI setups, pass an alternative `.env` via `--env-file` or `$OUTLOOK_ENV_FILE`. Those explicit files override existing credential variables for the one-shot CLI process; the default `<repo>/.env` is only a missing-value fallback.
 
 After setting permissions in Azure AD, click **Grant admin consent** — without this step every call returns 403.
 
@@ -113,7 +114,7 @@ outlook batch_mark_as_read --json '{"emailIds":["id1","id2"]}'
 # Flags: --env-file <path>, --timeout <ms>, --compact, --help
 ```
 
-Credentials resolve in this order: `--env-file <path>` → `$OUTLOOK_ENV_FILE` → `<repo>/.env` → existing env vars → macOS Keychain (same fallback chain as the server).
+CLI credentials resolve in this order: `--env-file <path>` → `$OUTLOOK_ENV_FILE` → existing env vars → `<repo>/.env` for missing values → macOS Keychain. Explicit env files override existing credential variables for this one-shot process; the default repo `.env` does not.
 
 ### Docker
 
@@ -219,14 +220,14 @@ Keep these practices:
 - Rotate the client secret in Azure AD immediately if it is ever exposed
 - Set `MCP_EMAIL_UPLOAD_DIRS` to the *minimum* set of directories the server actually needs to read. Do not set it to `$HOME` or `/`.
 - Scope `Mail.Send` only if you need outbound email — `Mail.ReadWrite` alone is sufficient for drafts, search, and folder management
-- **Template injection risk:** see [Known limitations](#known-limitations) — HTML templates do not escape user-supplied fields.
+- User-supplied HTML template fields are escaped before rendering. If you intentionally need trusted HTML, add an explicit sanitizer/allowlist instead of bypassing the template engine.
 
-Report vulnerabilities privately: [Security advisories](https://github.com/ftaricano/mcp-outlook/security/advisories/new)
+Report vulnerabilities privately through [GitHub Security Advisories](https://github.com/ftaricano/mcp-outlook/security/advisories/new). See [SECURITY.md](SECURITY.md).
 
 ## Known limitations
 
-- HTML email templates (`src/templates/`) do not escape user-supplied content (body, `companyName`, `logoUrl`, etc.). Never render untrusted input directly into a template — an attacker who controls an email body could inject arbitrary HTML/JavaScript into outbound messages.
-- `TARGET_USER_EMAIL` is not validated at startup — omitting it produces a runtime Graph error rather than a clear startup failure.
+- `TARGET_USER_EMAIL` is optional in the schema for delegated `/me` experiments, but client-credentials deployments should set it. Microsoft Graph application permissions do not infer a mailbox.
+- The `outlook` CLI has a few tracked edge cases around numeric search flags, sender filtering, and download target paths. See [issue #30](https://github.com/ftaricano/mcp-outlook/issues/30); use `--json` for numeric search terms until that issue is closed.
 
 ## Contributing
 
@@ -240,13 +241,9 @@ Open an [issue](https://github.com/ftaricano/mcp-outlook/issues) before submitti
 
 ### Development workflow
 
-Non-trivial changes follow a three-phase discipline borrowed from the [superpowers](https://github.com/obra/superpowers) skill set:
+For small fixes, keep the PR focused and include the command output from the pre-PR checklist. For larger changes, open an issue first and describe the affected tool contracts, Graph permissions, security impact, and manual smoke coverage.
 
-1. **Plan first** (`writing-plans`) — for any change touching more than one file or subsystem, write the plan to `docs/superpowers/plans/YYYY-MM-DD-<feature>.md` before editing code. Plans are bite-sized (2–5 min steps), TDD-first, and list exact file paths.
-2. **Execute task-by-task** (`executing-plans`) — work through the plan one task at a time, checking boxes as you go. No batching, no skipping ahead. Commit at the end of each task.
-3. **Verify before declaring done** (`verification-before-completion`) — before marking any material change complete, re-run the pre-PR checklist above and read the actual diff. An agent's summary describes intent, not outcome — trust the diff, not the narrative.
-
-Skip the ceremony for one-line fixes or typo-class changes; apply it the moment a change spans multiple files, introduces new contracts, or touches security-sensitive paths (`src/security/`, credential handling, Graph permission scopes).
+Security-sensitive paths deserve extra review: `src/security/`, credential loading, Graph permission scopes, attachment handling, template rendering, and anything that reads from or writes to the local filesystem.
 
 ## License
 

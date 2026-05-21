@@ -1,8 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  EmailTemplateEngine,
-  emailTemplateEngine
-} from '../../src/templates/emailTemplates.js';
+import { EmailTemplateEngine, emailTemplateEngine } from '../../src/templates/emailTemplates.js';
 
 describe('EmailTemplateEngine.formatNewEmail', () => {
   const engine = new EmailTemplateEngine();
@@ -42,7 +39,7 @@ describe('EmailTemplateEngine.formatNewEmail', () => {
   it('renders attachment list when provided', () => {
     const html = engine.formatNewEmail({
       body: 'b',
-      attachmentList: ['invoice.pdf', 'photo.jpg']
+      attachmentList: ['invoice.pdf', 'photo.jpg'],
     });
     expect(html).toContain('invoice.pdf');
     expect(html).toContain('photo.jpg');
@@ -74,6 +71,30 @@ describe('EmailTemplateEngine.formatNewEmail', () => {
     expect(html).toContain('Regards, John');
   });
 
+  it('escapes user-supplied title, signature, company name, logo alt, and attachment names', () => {
+    const html = engine.formatNewEmail(
+      {
+        title: '<img src=x onerror=alert(1)>',
+        body: 'safe',
+        signature: '<script>alert(2)</script>',
+        attachmentList: ['report<img>.pdf'],
+      },
+      {
+        companyName: 'ACME <Corp>',
+        logoUrl: 'https://example.com/logo.png',
+      }
+    );
+
+    expect(html).not.toContain('<img src=x onerror=alert(1)>');
+    expect(html).not.toContain('<script>alert(2)</script>');
+    expect(html).not.toContain('report<img>.pdf');
+    expect(html).not.toContain('ACME <Corp>');
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+    expect(html).toContain('&lt;script&gt;alert(2)&lt;/script&gt;');
+    expect(html).toContain('report&lt;img&gt;.pdf');
+    expect(html).toContain('ACME &lt;Corp&gt;');
+  });
+
   it('converts \\n\\n into paragraphs', () => {
     const html = engine.formatNewEmail({ body: 'First paragraph\n\nSecond paragraph' });
     expect(html).toContain('First paragraph');
@@ -95,8 +116,8 @@ describe('EmailTemplateEngine.formatReplyEmail', () => {
         metadata: {
           sender: 'alice@example.com',
           date: '2024-01-01',
-          originalSubject: 'Hello'
-        }
+          originalSubject: 'Hello',
+        },
       }
     );
     expect(html).toContain('My reply');
@@ -104,6 +125,32 @@ describe('EmailTemplateEngine.formatReplyEmail', () => {
     expect(html).toContain('alice@example.com');
     expect(html).toContain('2024-01-01');
     expect(html).toContain('Hello');
+  });
+
+  it('escapes original email metadata, body, and attachment names', () => {
+    const html = engine.formatReplyEmail(
+      { body: 'Reply' },
+      {
+        body: '<script>alert(1)</script>',
+        attachmentList: ['invoice<script>.pdf'],
+        metadata: {
+          sender: '<b>alice@example.com</b>',
+          date: '<time>2024-01-01</time>',
+          originalSubject: '<img src=x>',
+        },
+      }
+    );
+
+    expect(html).not.toContain('<script>alert(1)</script>');
+    expect(html).not.toContain('invoice<script>.pdf');
+    expect(html).not.toContain('<b>alice@example.com</b>');
+    expect(html).not.toContain('<time>2024-01-01</time>');
+    expect(html).not.toContain('<img src=x>');
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(html).toContain('invoice&lt;script&gt;.pdf');
+    expect(html).toContain('&lt;b&gt;alice@example.com&lt;/b&gt;');
+    expect(html).toContain('&lt;time&gt;2024-01-01&lt;/time&gt;');
+    expect(html).toContain('&lt;img src=x&gt;');
   });
 });
 
@@ -158,23 +205,20 @@ describe('exported singleton', () => {
   });
 });
 
-/**
- * SECURITY / TODO:
- * The current EmailTemplateEngine does NOT escape user-supplied body content.
- * A `<script>` tag in `body` will be rendered verbatim in the HTML output,
- * which means sending an email composed from untrusted input can inject
- * arbitrary HTML/JS into the rendered message.
- *
- * This is tracked as an XFAIL so the test surfaces the contract gap without
- * blocking CI. When escaping is added, flip `.skip` to `.` and the assertions
- * should pass.
- */
-describe.skip('TODO: body content is NOT currently escaped', () => {
+describe('EmailTemplateEngine HTML escaping', () => {
   it('escapes <script> tags in body', () => {
     const engine = new EmailTemplateEngine();
     const html = engine.formatNewEmail({ body: '<script>alert(1)</script>' });
-    // Expected behaviour once escaping lands:
     expect(html).not.toContain('<script>alert(1)</script>');
     expect(html).toContain('&lt;script&gt;');
+  });
+
+  it('escapes body content while preserving paragraph and line breaks', () => {
+    const engine = new EmailTemplateEngine();
+    const html = engine.formatNewEmail({ body: '<b>One</b>\nTwo\n\nThree & four' });
+
+    expect(html).not.toContain('<b>One</b>');
+    expect(html).toContain('&lt;b&gt;One&lt;/b&gt;<br>Two');
+    expect(html).toContain('Three &amp; four');
   });
 });

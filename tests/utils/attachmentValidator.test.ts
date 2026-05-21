@@ -7,17 +7,19 @@ import { AttachmentValidator } from '../../src/utils/attachmentValidator.js';
  */
 const helloBase64 = Buffer.from('hello world').toString('base64');
 
-function buildAttachment(overrides: Partial<{
-  name: string;
-  contentType: string;
-  content: string;
-  size?: number;
-}> = {}) {
+function buildAttachment(
+  overrides: Partial<{
+    name: string;
+    contentType: string;
+    content: string;
+    size?: number;
+  }> = {}
+) {
   return {
     name: 'note.txt',
     contentType: 'text/plain',
     content: helloBase64,
-    ...overrides
+    ...overrides,
   };
 }
 
@@ -31,9 +33,7 @@ describe('AttachmentValidator.validateSingleAttachment', () => {
   });
 
   it('rejects empty file name', () => {
-    const result = AttachmentValidator.validateSingleAttachment(
-      buildAttachment({ name: '' })
-    );
+    const result = AttachmentValidator.validateSingleAttachment(buildAttachment({ name: '' }));
     expect(result.isValid).toBe(false);
     expect(result.errors.some((e) => /name/i.test(e))).toBe(true);
   });
@@ -47,9 +47,7 @@ describe('AttachmentValidator.validateSingleAttachment', () => {
   });
 
   it('rejects empty content', () => {
-    const result = AttachmentValidator.validateSingleAttachment(
-      buildAttachment({ content: '' })
-    );
+    const result = AttachmentValidator.validateSingleAttachment(buildAttachment({ content: '' }));
     expect(result.isValid).toBe(false);
   });
 
@@ -93,9 +91,7 @@ describe('AttachmentValidator.validateSingleAttachment', () => {
   });
 
   it('warns when reported size differs from calculated size', () => {
-    const result = AttachmentValidator.validateSingleAttachment(
-      buildAttachment({ size: 999_999 })
-    );
+    const result = AttachmentValidator.validateSingleAttachment(buildAttachment({ size: 999_999 }));
     expect(result.isValid).toBe(true);
     expect(result.warnings.some((w) => /differs/i.test(w))).toBe(true);
   });
@@ -128,9 +124,7 @@ describe('AttachmentValidator.validateAttachments', () => {
 
 describe('AttachmentValidator.cleanBase64Content', () => {
   it('strips a data URI prefix', () => {
-    const cleaned = AttachmentValidator.cleanBase64Content(
-      `data:image/png;base64,${helloBase64}`
-    );
+    const cleaned = AttachmentValidator.cleanBase64Content(`data:image/png;base64,${helloBase64}`);
     expect(cleaned).toBe(helloBase64);
   });
 

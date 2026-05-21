@@ -24,8 +24,20 @@ export interface EmailContent {
   };
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function escapeAttribute(value: string): string {
+  return escapeHtml(value).replace(/`/g, '&#96;');
+}
+
 export class EmailTemplateEngine {
-  
   /**
    * Template principal responsivo compatível com todos os clientes
    */
@@ -109,34 +121,50 @@ export class EmailTemplateEngine {
   public formatNewEmail(content: EmailContent, options: EmailTemplateOptions = {}): string {
     const theme = this.getTheme(options.theme || 'professional');
     let template = this.getBaseTemplate();
-    
+
     // Substituir componentes
-    template = template.replace('{{HEADER}}', options.showHeader !== false ? this.getHeader(theme, options) : '');
+    template = template.replace(
+      '{{HEADER}}',
+      options.showHeader !== false ? this.getHeader(theme, options) : ''
+    );
     template = template.replace('{{CONTENT}}', this.getMainContent(content, theme));
-    template = template.replace('{{FOOTER}}', options.showFooter !== false ? this.getFooter(theme, options) : '');
-    
+    template = template.replace(
+      '{{FOOTER}}',
+      options.showFooter !== false ? this.getFooter(theme, options) : ''
+    );
+
     return template;
   }
 
   /**
    * Template para emails de resposta/encaminhamento
    */
-  public formatReplyEmail(content: EmailContent, originalContent: EmailContent, options: EmailTemplateOptions = {}): string {
+  public formatReplyEmail(
+    content: EmailContent,
+    originalContent: EmailContent,
+    options: EmailTemplateOptions = {}
+  ): string {
     const theme = this.getTheme(options.theme || 'professional');
     let template = this.getBaseTemplate();
-    
+
     // Conteúdo da resposta
     const replyContent = this.getMainContent(content, theme);
-    
+
     // Conteúdo original com separador
     const originalSection = this.getOriginalEmailSection(originalContent, theme);
-    
+
     const combinedContent = `${replyContent}${originalSection}`;
-    
-    template = template.replace('{{HEADER}}', options.showHeader !== false ? this.getHeader(theme, options) : '');
+
+    template = template.replace(
+      '{{HEADER}}',
+      options.showHeader !== false ? this.getHeader(theme, options) : ''
+    );
     template = template.replace('{{CONTENT}}', combinedContent);
-    template = template.replace('{{FOOTER}}', options.showFooter !== false ? this.getFooter(theme, options) : '');
-    
+    template = template.replace(
+      '{{FOOTER}}',
+      options.showFooter !== false ? this.getFooter(theme, options) : ''
+    );
+
     return template;
   }
 
@@ -151,7 +179,7 @@ export class EmailTemplateEngine {
         accent: '#28a745',
         text: '#333333',
         textLight: '#666666',
-        border: '#e9ecef'
+        border: '#e9ecef',
       },
       modern: {
         primary: '#6366f1',
@@ -159,7 +187,7 @@ export class EmailTemplateEngine {
         accent: '#10b981',
         text: '#1e293b',
         textLight: '#64748b',
-        border: '#e2e8f0'
+        border: '#e2e8f0',
       },
       minimal: {
         primary: '#000000',
@@ -167,7 +195,7 @@ export class EmailTemplateEngine {
         accent: '#0070f3',
         text: '#000000',
         textLight: '#666666',
-        border: '#eaeaea'
+        border: '#eaeaea',
       },
       corporate: {
         primary: '#1a365d',
@@ -175,10 +203,10 @@ export class EmailTemplateEngine {
         accent: '#3182ce',
         text: '#2d3748',
         textLight: '#718096',
-        border: '#e2e8f0'
-      }
+        border: '#e2e8f0',
+      },
     };
-    
+
     return themes[themeName as keyof typeof themes] || themes.professional;
   }
 
@@ -186,16 +214,23 @@ export class EmailTemplateEngine {
    * Header do email
    */
   private getHeader(theme: any, options: EmailTemplateOptions): string {
-    const logoSection = options.logoUrl ? `
-      <img src="${options.logoUrl}" alt="${options.companyName || 'Logo'}" style="height: 40px; display: block;">
-    ` : '';
-    
-    const companySection = options.companyName && !options.logoUrl ? `
+    const companyName = options.companyName ? escapeHtml(options.companyName) : undefined;
+    const logoUrl = options.logoUrl ? escapeAttribute(options.logoUrl) : undefined;
+    const logoSection = options.logoUrl
+      ? `
+      <img src="${logoUrl}" alt="${companyName || 'Logo'}" style="height: 40px; display: block;">
+    `
+      : '';
+
+    const companySection =
+      options.companyName && !options.logoUrl
+        ? `
       <h2 style="margin: 0; color: ${theme.primary}; font-size: 24px; font-weight: 600;">
-        ${options.companyName}
+        ${companyName}
       </h2>
-    ` : '';
-    
+    `
+        : '';
+
     return `
     <tr>
       <td style="padding: 30px 40px 20px 40px; border-bottom: 1px solid ${theme.border};" class="content-padding">
@@ -211,30 +246,38 @@ export class EmailTemplateEngine {
    * Conteúdo principal
    */
   private getMainContent(content: EmailContent, theme: any): string {
-    const titleSection = content.title ? `
+    const title = content.title ? escapeHtml(content.title) : undefined;
+    const titleSection = content.title
+      ? `
       <h1 style="margin: 0 0 20px 0; color: ${theme.text}; font-size: 28px; font-weight: 600; line-height: 1.3;">
-        ${content.title}
+        ${title}
       </h1>
-    ` : '';
+    `
+      : '';
 
-    const attachmentSection = content.attachmentList && content.attachmentList.length > 0 ? `
+    const attachmentSection =
+      content.attachmentList && content.attachmentList.length > 0
+        ? `
       <div style="margin: 20px 0; padding: 15px; background-color: ${theme.secondary}; border-left: 3px solid ${theme.accent}; border-radius: 4px;">
         <h3 style="margin: 0 0 10px 0; color: ${theme.text}; font-size: 16px; font-weight: 600;">
           📎 Anexos (${content.attachmentList.length})
         </h3>
         <ul style="margin: 0; padding-left: 20px; color: ${theme.textLight};">
-          ${content.attachmentList.map(attachment => `<li style="margin: 5px 0;">${attachment}</li>`).join('')}
+          ${content.attachmentList.map((attachment) => `<li style="margin: 5px 0;">${escapeHtml(attachment)}</li>`).join('')}
         </ul>
       </div>
-    ` : '';
+    `
+        : '';
 
-    const signatureSection = content.signature ? `
+    const signatureSection = content.signature
+      ? `
       <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid ${theme.border};">
         <div style="color: ${theme.textLight}; font-size: 14px; line-height: 1.5;">
-          ${content.signature}
+          ${this.formatBodyContent(content.signature)}
         </div>
       </div>
-    ` : '';
+    `
+      : '';
 
     return `
     <tr>
@@ -254,23 +297,28 @@ export class EmailTemplateEngine {
    */
   private getOriginalEmailSection(originalContent: EmailContent, theme: any): string {
     const metadata = originalContent.metadata;
-    const metadataSection = metadata ? `
+    const metadataSection = metadata
+      ? `
       <div style="margin-bottom: 15px; padding: 10px; background-color: ${theme.secondary}; border-radius: 4px;">
         <div style="font-size: 13px; color: ${theme.textLight};">
-          ${metadata.sender ? `<strong>De:</strong> ${metadata.sender}<br>` : ''}
-          ${metadata.date ? `<strong>Data:</strong> ${metadata.date}<br>` : ''}
-          ${metadata.originalSubject ? `<strong>Assunto:</strong> ${metadata.originalSubject}` : ''}
+          ${metadata.sender ? `<strong>De:</strong> ${escapeHtml(metadata.sender)}<br>` : ''}
+          ${metadata.date ? `<strong>Data:</strong> ${escapeHtml(metadata.date)}<br>` : ''}
+          ${metadata.originalSubject ? `<strong>Assunto:</strong> ${escapeHtml(metadata.originalSubject)}` : ''}
         </div>
       </div>
-    ` : '';
+    `
+      : '';
 
-    const attachmentSection = originalContent.attachmentList && originalContent.attachmentList.length > 0 ? `
+    const attachmentSection =
+      originalContent.attachmentList && originalContent.attachmentList.length > 0
+        ? `
       <div style="margin: 15px 0; padding: 10px; background-color: ${theme.secondary}; border-radius: 4px;">
         <div style="font-size: 13px; color: ${theme.textLight};">
-          <strong>📎 Anexos originais:</strong> ${originalContent.attachmentList.join(', ')}
+          <strong>📎 Anexos originais:</strong> ${originalContent.attachmentList.map(escapeHtml).join(', ')}
         </div>
       </div>
-    ` : '';
+    `
+        : '';
 
     return `
     <tr>
@@ -294,8 +342,8 @@ export class EmailTemplateEngine {
    */
   private getFooter(theme: any, options: EmailTemplateOptions): string {
     const currentYear = new Date().getFullYear();
-    const companyName = options.companyName || 'Sua Empresa';
-    
+    const companyName = escapeHtml(options.companyName || 'Sua Empresa');
+
     return `
     <tr>
       <td style="padding: 20px 40px; background-color: ${theme.secondary}; border-top: 1px solid ${theme.border}; text-align: center;" class="content-padding">
@@ -316,13 +364,15 @@ export class EmailTemplateEngine {
    */
   private formatBodyContent(body: string): string {
     // Converter quebras de linha em parágrafos HTML
-    const paragraphs = body.split('\n\n').filter(p => p.trim());
-    
-    return paragraphs.map(paragraph => {
-      // Converter quebras simples em <br>
-      const formatted = paragraph.replace(/\n/g, '<br>');
-      return `<p style="margin: 0 0 15px 0;">${formatted}</p>`;
-    }).join('');
+    const paragraphs = body.split('\n\n').filter((p) => p.trim());
+
+    return paragraphs
+      .map((paragraph) => {
+        // Converter quebras simples em <br>
+        const formatted = escapeHtml(paragraph).replace(/\n/g, '<br>');
+        return `<p style="margin: 0 0 15px 0;">${formatted}</p>`;
+      })
+      .join('');
   }
 
   /**
@@ -340,29 +390,31 @@ export class EmailTemplateEngine {
    */
   public validateTemplate(html: string): { valid: boolean; warnings: string[] } {
     const warnings: string[] = [];
-    
+
     // Verificações básicas
     if (!html.includes('<!DOCTYPE html>')) {
       warnings.push('DOCTYPE não encontrado - pode haver problemas de renderização');
     }
-    
+
     if (!html.includes('charset=')) {
-      warnings.push('Charset não especificado - caracteres especiais podem não aparecer corretamente');
+      warnings.push(
+        'Charset não especificado - caracteres especiais podem não aparecer corretamente'
+      );
     }
-    
+
     if (!html.includes('viewport')) {
       warnings.push('Meta viewport ausente - pode não ser responsivo em dispositivos móveis');
     }
-    
+
     // Verificar se tem muito CSS inline (limite para alguns clientes)
     const cssMatches = html.match(/style="/g);
     if (cssMatches && cssMatches.length > 50) {
       warnings.push('Muito CSS inline - considere simplificar para melhor compatibilidade');
     }
-    
+
     return {
       valid: warnings.length === 0,
-      warnings
+      warnings,
     };
   }
 }

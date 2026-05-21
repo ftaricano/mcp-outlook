@@ -14,7 +14,7 @@ These are enforced by CI or by design. Don't regress them.
 2. **Every tool has a zod schema.** `src/schemas/toolSchemas.ts` is the gate — `HandlerRegistry.handleTool` runs `validateToolInput` before dispatching. No handler method runs on unvalidated args.
 3. **Filesystem access goes through `pathGuard`.** Handlers never call `fs.readFile` / `fs.writeFile` on caller-supplied paths directly; `src/services/fileManager.ts` and `src/services/emailService.ts` already route through `pathGuard.resolveSafe()`. Any new file-touching code must go through the same door.
 4. **Graph calls go through `EmailService`.** No direct `Client.api()` in handlers — that bypasses rate limiting, response caching, and retry.
-5. **HTML templates do not escape content.** `src/templates/` renders raw input. Never feed untrusted strings into a template field.
+5. **HTML template inputs are escaped by default.** `src/templates/` must keep escaping user-controlled fields before rendering. Do not add a trusted-HTML bypass without an explicit sanitizer and tests.
 
 ## Architecture at a glance
 
@@ -61,5 +61,5 @@ README's [Development workflow](README.md#development-workflow) section is the c
 - `fetch()` directly to `graph.microsoft.com` — route through `EmailService`.
 - `path.resolve()` as a "safety" step — it doesn't follow symlinks or enforce the allowlist. Use `pathGuard.resolveSafe(path, 'read' | 'write')`.
 - Base64 payloads >500 KB through `send_email` — use the hybrid tools (`send_email_from_attachment`, `send_email_with_file`).
-- `Co-Authored-By: Claude` / "Generated with Claude Code" in commits or PR bodies — see the user's global `~/.claude/CLAUDE.md`.
+- AI-generated attribution lines such as `Co-Authored-By: Claude` or `Generated with Claude Code` in commits or PR bodies.
 - Comments that narrate what the code does. Comment only when the _why_ is non-obvious.

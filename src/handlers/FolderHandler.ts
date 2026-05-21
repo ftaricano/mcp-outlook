@@ -10,30 +10,30 @@ export class FolderHandler extends BaseHandler {
 
     try {
       const folders = await this.emailService.listFolders(includeSubfolders, maxDepth);
-      
+
       if (!folders || folders.length === 0) {
         return this.formatSuccess('📁 Nenhuma pasta encontrada');
       }
-      
+
       let result = `📁 Pastas de email (${folders.length}):\n\n`;
-      
+
       folders.forEach((folder, index) => {
         const unreadCount = folder.unreadItemCount || 0;
         const totalCount = folder.totalItemCount || 0;
         const unreadBadge = unreadCount > 0 ? ` (${unreadCount} não lidas)` : '';
-        
+
         result += `${index + 1}. **${folder.displayName}**${unreadBadge}\n`;
         result += `   Total: ${totalCount} emails\n`;
         result += `   Tipo: Email\n`;
         result += `   ID: ${folder.id}\n`;
-        
+
         if (folder.parentFolderId) {
           result += `   Pasta pai: ${folder.parentFolderId}\n`;
         }
-        
+
         result += '\n';
       });
-      
+
       return this.formatSuccess(result);
     } catch (error) {
       return this.formatError('Erro ao listar pastas', error);
@@ -53,16 +53,16 @@ export class FolderHandler extends BaseHandler {
 
     try {
       const folder = await this.emailService.createFolder(folderName, parentFolderId);
-      
+
       let result = `✅ Pasta criada com sucesso!\n\n`;
       result += `📁 **${folder.displayName}**\n`;
       result += `   ID: ${folder.id}\n`;
       result += `   Localização: ${parentFolderId ? 'Subpasta' : 'Pasta raiz'}\n`;
-      
+
       if (parentFolderId) {
         result += `   Pasta pai: ${parentFolderId}\n`;
       }
-      
+
       return this.formatSuccess(result);
     } catch (error) {
       return this.formatError('Erro ao criar pasta', error);
@@ -83,17 +83,17 @@ export class FolderHandler extends BaseHandler {
 
     try {
       const results = await this.emailService.moveEmailsToFolder(emailArray, targetFolderId);
-      
-      const successCount = results.filter(r => r.success).length;
+
+      const successCount = results.filter((r) => r.success).length;
       const failureCount = results.length - successCount;
-      
+
       let result = `📦 Movimentação de emails concluída!\n\n`;
       result += `📊 **Estatísticas:**\n`;
       result += `   • Total processados: ${results.length}\n`;
       result += `   • Sucessos: ${successCount}\n`;
       result += `   • Falhas: ${failureCount}\n`;
       result += `   • Taxa de sucesso: ${((successCount / results.length) * 100).toFixed(1)}%\n\n`;
-      
+
       if (results.length <= 10) {
         result += `📋 **Detalhes:**\n`;
         results.forEach((moveResult, index) => {
@@ -110,19 +110,19 @@ export class FolderHandler extends BaseHandler {
           }
         });
       }
-      
+
       if (failureCount > 0) {
         result += `\n⚠️ Alguns emails falharam na movimentação. Verifique os logs para detalhes.`;
       }
-      
+
       return {
         content: [
           {
             type: 'text',
-            text: result
-          }
+            text: result,
+          },
         ],
-        isError: failureCount > 0
+        isError: failureCount > 0,
       };
     } catch (error) {
       return this.formatError('Erro ao mover emails', error);
@@ -143,17 +143,17 @@ export class FolderHandler extends BaseHandler {
 
     try {
       const results = await this.emailService.copyEmailsToFolder(emailArray, targetFolderId);
-      
-      const successCount = results.filter(r => r.success).length;
+
+      const successCount = results.filter((r) => r.success).length;
       const failureCount = results.length - successCount;
-      
+
       let result = `📋 Cópia de emails concluída!\n\n`;
       result += `📊 **Estatísticas:**\n`;
       result += `   • Total processados: ${results.length}\n`;
       result += `   • Sucessos: ${successCount}\n`;
       result += `   • Falhas: ${failureCount}\n`;
       result += `   • Taxa de sucesso: ${((successCount / results.length) * 100).toFixed(1)}%\n\n`;
-      
+
       if (results.length <= 10) {
         result += `📋 **Detalhes:**\n`;
         results.forEach((copyResult, index) => {
@@ -168,15 +168,15 @@ export class FolderHandler extends BaseHandler {
           }
         });
       }
-      
+
       return {
         content: [
           {
             type: 'text',
-            text: result
-          }
+            text: result,
+          },
         ],
-        isError: failureCount > 0
+        isError: failureCount > 0,
       };
     } catch (error) {
       return this.formatError('Erro ao copiar emails', error);
@@ -196,27 +196,27 @@ export class FolderHandler extends BaseHandler {
 
     try {
       const result = await this.emailService.deleteFolder(folderId, permanent);
-      
+
       if (!result.success) {
         return this.formatError(`Falha ao deletar pasta: ${result.error}`);
       }
-      
+
       let resultText = `✅ Pasta deletada com sucesso!\n\n`;
       resultText += `📁 **${result.folderName}**\n`;
       resultText += `   Tipo de exclusão: ${permanent ? 'Permanente' : 'Movida para lixeira'}\n`;
-      
+
       if (result.emailsAffected) {
         resultText += `   Emails afetados: ${result.emailsAffected}\n`;
       }
-      
+
       if (result.subfoldersAffected) {
         resultText += `   Subpastas afetadas: ${result.subfoldersAffected}\n`;
       }
-      
+
       if (!permanent) {
         resultText += `\n💡 Para exclusão permanente, use o parâmetro 'permanent: true'`;
       }
-      
+
       return this.formatSuccess(resultText);
     } catch (error) {
       return this.formatError('Erro ao deletar pasta', error);
@@ -236,32 +236,32 @@ export class FolderHandler extends BaseHandler {
 
     try {
       const stats = await this.emailService.getFolderStatistics(folderId, includeSubfolders);
-      
+
       let result = `📊 **Estatísticas da Pasta**\n\n`;
       result += `📁 **${stats.folderName}**\n`;
       result += `   📧 Total de emails: ${stats.totalEmails}\n`;
       result += `   ○ Não lidos: ${stats.unreadEmails}\n`;
       result += `   ✓ Lidos: ${stats.readEmails}\n`;
       result += `   📎 Com anexos: ${stats.emailsWithAttachments}\n\n`;
-      
+
       if (stats.sizeInBytes) {
         const sizeInMB = (stats.sizeInBytes / (1024 * 1024)).toFixed(2);
         result += `💾 **Tamanho:** ${sizeInMB}MB\n\n`;
       }
-      
+
       if (stats.dateRange) {
         result += `📅 **Período:**\n`;
         result += `   Mais antigo: ${stats.dateRange.oldest}\n`;
         result += `   Mais recente: ${stats.dateRange.newest}\n\n`;
       }
-      
+
       if (includeSubfolders && stats.subfolders) {
         result += `📁 **Subpastas incluídas:** ${stats.subfolders.length}\n`;
         stats.subfolders.forEach((subfolder: any) => {
           result += `   • ${subfolder.name} (${subfolder.emailCount} emails)\n`;
         });
       }
-      
+
       return this.formatSuccess(result);
     } catch (error) {
       return this.formatError('Erro ao obter estatísticas da pasta', error);
@@ -277,29 +277,23 @@ export class FolderHandler extends BaseHandler {
       return this.formatError(validationError);
     }
 
-    const { 
-      sourceFolderId,
-      rules = [],
-      dryRun = true,
-      maxEmails = 100 
-    } = args;
+    const { sourceFolderId, rules = [], dryRun = true, maxEmails = 100 } = args;
 
     try {
-      const result = await this.emailService.organizeEmailsByRules(
-        sourceFolderId,
-        rules,
-        { dryRun, maxEmails }
-      );
-      
+      const result = await this.emailService.organizeEmailsByRules(sourceFolderId, rules, {
+        dryRun,
+        maxEmails,
+      });
+
       const mode = dryRun ? 'Simulação' : 'Execução';
       let resultText = `🗂️ **${mode} de Organização Concluída**\n\n`;
-      
+
       resultText += `📊 **Estatísticas:**\n`;
       resultText += `   • Emails processados: ${result.emailsProcessed}\n`;
       resultText += `   • Emails organizados: ${result.emailsOrganized}\n`;
       resultText += `   • Regras aplicadas: ${result.rulesApplied}\n`;
       resultText += `   • Taxa de organização: ${((result.emailsOrganized / result.emailsProcessed) * 100).toFixed(1)}%\n\n`;
-      
+
       if (result.ruleResults.length > 0) {
         resultText += `📋 **Resultados por Regra:**\n`;
         result.ruleResults.forEach((ruleResult: any, index: number) => {
@@ -308,11 +302,11 @@ export class FolderHandler extends BaseHandler {
           resultText += `      ${dryRun ? 'Seriam movidos' : 'Movidos'} para: ${ruleResult.targetFolder}\n\n`;
         });
       }
-      
+
       if (dryRun && result.emailsOrganized > 0) {
         resultText += `💡 Execute novamente com 'dryRun: false' para aplicar as mudanças.`;
       }
-      
+
       return this.formatSuccess(resultText);
     } catch (error) {
       return this.formatError('Erro ao organizar emails', error);
