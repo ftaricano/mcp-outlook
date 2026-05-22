@@ -83,7 +83,12 @@ type ToolSchemaEntry = {
  * hand-written schemas.
  */
 function toMcpInputSchema(schema: ZodType): Record<string, any> {
-  const json = toJSONSchema(schema) as Record<string, any>;
+  // `unrepresentable: 'any'` keeps `toJSONSchema` from throwing on `.transform()`
+  // pipelines (e.g. the `string | number → string` coercion used by free-text
+  // search fields). Those fields land as `{}` in the JSON Schema, which is the
+  // protocol-accurate way to say "any value" — the runtime validation is still
+  // enforced server-side by the zod schema.
+  const json = toJSONSchema(schema, { unrepresentable: 'any' }) as Record<string, any>;
   const { $schema: _schema, additionalProperties: _additionalProperties, ...rest } = json;
 
   if (rest.type !== 'object') {

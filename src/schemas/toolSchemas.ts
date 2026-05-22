@@ -36,6 +36,12 @@ const templateCustomizationShape = {
 
 const stringOrStringArray = z.union([nonEmptyString, z.array(nonEmptyString).min(1)]);
 
+// Accept either string or number for free-text search fields. The outlook CLI
+// (scripts/outlook.js) coerces digit-only flag values to JS numbers, so an
+// invoice ID like 100151515 reaches the schema as a number and crashes
+// plain z.string() with "expected string, received number" (JAR-257 bug #2).
+const searchString = z.union([z.string(), z.number()]).transform((v) => String(v));
+
 const folderName = z.string().min(1);
 
 const attachmentInput = z.object({
@@ -62,9 +68,9 @@ const organizeRule = z.object({
 
 const searchCriteria = z
   .object({
-    query: z.string().optional(),
+    query: searchString.optional(),
     sender: z.string().optional(),
-    subject: z.string().optional(),
+    subject: searchString.optional(),
     dateFrom: z.string().optional(),
     dateTo: z.string().optional(),
     hasAttachments: z.boolean().optional(),
@@ -81,7 +87,7 @@ const listEmailsSchema = z.object({
   limit: nonNegativeInt.max(50).optional(),
   skip: nonNegativeInt.optional(),
   folder: z.string().optional(),
-  search: z.string().optional(),
+  search: searchString.optional(),
 });
 
 const sendEmailSchema = z.object({
@@ -128,7 +134,7 @@ const summarizeEmailsBatchSchema = z.object({
 
 const listUsersSchema = z.object({
   limit: nonNegativeInt.optional(),
-  search: z.string().optional(),
+  search: searchString.optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -260,9 +266,9 @@ const organizeEmailsByRulesSchema = z.object({
 // ---------------------------------------------------------------------------
 
 const advancedSearchSchema = z.object({
-  query: z.string().optional(),
+  query: searchString.optional(),
   sender: z.string().optional(),
-  subject: z.string().optional(),
+  subject: searchString.optional(),
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),
   hasAttachments: z.boolean().optional(),
