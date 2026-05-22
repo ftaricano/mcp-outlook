@@ -1,17 +1,26 @@
 /**
  * Helpers for constructing Microsoft Graph OData $filter fragments.
  *
- * The Graph API treats `field eq 'literal'` as case-sensitive on string
- * properties, so a sender lookup against `from/emailAddress/address` only
- * matches when the caller's casing exactly equals what the mailbox stored —
- * which the caller has no reliable way to know. `contains()` is documented
- * as case-insensitive on Graph and gives the equality-with-case-flex
- * behaviour callers expect (JAR-257 bug #1).
+ * Two sender-filter shapes exist on purpose:
  *
- * Single quotes in user-supplied input must be doubled per the OData ABNF;
- * otherwise an address like `o'brien@x.com` produces a malformed filter
- * and (worse) opens a filter-injection avenue if the input is attacker-
- * controlled (e.g. coming through an MCP client).
+ * 1. `buildSenderContainsFilter(sender)` — `contains(...)`, case-insensitive,
+ *    substring match. Used by `advanced_search` where the caller asked for a
+ *    flexible search and a partial sender (e.g. just a username) is a valid
+ *    UX. Previously `eq` made `--sender=bruno@x.com` silently return zero on
+ *    mailboxes that stored the address with different casing (JAR-257 #1).
+ *
+ * 2. `buildSenderExactFilter(sender)` — `tolower(...) eq tolower(...)`,
+ *    case-insensitive but exact equality. Used by `getEmailsFromSender()`
+ *    where the caller's contract is "messages from this exact address".
+ *    `contains()` here would silently broaden the result set (`bruno`
+ *    matching `brunon@x.com`).
+ *
+ * Both shapes double single quotes in user-supplied input per the OData
+ * ABNF; otherwise an address like `o'brien@x.com` produces a malformed
+ * filter and (worse) opens a filter-injection avenue when the input flows
+ * from an untrusted source (e.g. through an MCP client). Backslash,
+ * parentheses, and other characters are not string-literal escape
+ * characters in OData and do not need escaping inside `'…'`.
  */
 
 export function escapeODataString(value: string): string {
@@ -19,9 +28,18 @@ export function escapeODataString(value: string): string {
 }
 
 /**
- * Build a Graph $filter fragment that matches when `from/emailAddress/address`
- * contains the given sender substring. Case-insensitive on Graph.
+ * Substring match on the sender address, case-insensitive on Graph.
+ * Prefer this for caller-facing search where partial matches are useful.
  */
 export function buildSenderContainsFilter(sender: string): string {
   return `contains(from/emailAddress/address,'${escapeODataString(sender)}')`;
+}
+
+/**
+ * Case-insensitive equality on the sender address. Use when the caller
+ * contract is "exactly this address" — `getEmailsFromSender()` etc.
+ */
+export function buildSenderExactFilter(sender: string): string {
+  const escaped = escapeODataString(sender).toLowerCase();
+  return `tolower(from/emailAddress/address) eq '${escaped}'`;
 }

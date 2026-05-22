@@ -11,7 +11,7 @@ import { CacheManager } from './cacheManager.js';
 import { GraphOptimizer } from './graphOptimizer.js';
 import { ParallelProcessor } from './parallelProcessor.js';
 import { PathGuard } from '../security/pathGuard.js';
-import { buildSenderContainsFilter } from './odataFilters.js';
+import { buildSenderContainsFilter, buildSenderExactFilter } from './odataFilters.js';
 
 export interface EmailListOptions {
   maxResults?: number;
@@ -245,7 +245,7 @@ export class EmailService {
 
   async getEmailsFromSender(senderEmail: string, maxResults: number = 10): Promise<Message[]> {
     return this.listEmails({
-      filter: buildSenderContainsFilter(senderEmail),
+      filter: buildSenderExactFilter(senderEmail),
       maxResults,
     });
   }
@@ -1941,7 +1941,7 @@ export class EmailService {
       // Generate cache key for this search
       const cacheKey = this.cacheManager.generateEmailKey('advanced_search', {
         ...options,
-        optimizedFilter,
+        combinedFilter,
       });
 
       // Try cache first
@@ -1951,12 +1951,19 @@ export class EmailService {
         return cached;
       }
 
-      // Build search request for GraphOptimizer
+      // Build search request for GraphOptimizer.
+      //
+      // We deliberately do NOT pass `search: query` here. `optimizedFilter`
+      // already encodes the text search as `contains()` over subject/from/body,
+      // and `getOptimizedEmails` calls `.filter(...)` a second time when
+      // `search` is set — and the Graph SDK's GraphRequest keeps only the
+      // last `$filter`, which means the sender predicate we just merged in
+      // would be silently dropped. Surface the text search through
+      // `combinedFilter` only.
       const searchOptions = {
         folder,
         maxResults,
         filter: combinedFilter,
-        search: query,
         enableCache: false, // We handle caching here
         select: this.graphOptimizer.getOptimalFields('search'),
         orderBy: query ? undefined : `${sortBy} ${sortOrder}`,
