@@ -141,6 +141,30 @@ describe('validateToolInput - realistic second inputs', () => {
     }
   });
 
+  it('list_emails accepts a numeric search and coerces to string', () => {
+    // The outlook CLI parses digit-only flag values as Number(); without
+    // coercion in the schema, search=100151515 (an invoice ID) fails
+    // validation with "expected string, received number". JAR-257 bug #2.
+    const r = validateToolInput('list_emails', { search: 100151515 });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.search).toBe('100151515');
+  });
+
+  it('list_users accepts a numeric search and coerces to string', () => {
+    const r = validateToolInput('list_users', { limit: 10, search: 42 });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.search).toBe('42');
+  });
+
+  it('advanced_search accepts numeric query and subject and coerces to string', () => {
+    const r = validateToolInput('advanced_search', { query: 100151515, subject: 999 });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.query).toBe('100151515');
+      expect(r.data.subject).toBe('999');
+    }
+  });
+
   it('advanced_search accepts all filters', () => {
     const r = validateToolInput('advanced_search', {
       query: 'x',

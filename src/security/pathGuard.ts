@@ -234,8 +234,13 @@ export class PathGuard {
     // the candidate's real path against them.
     const insideAllowed = allowedRoots.some((root) => real === root || isInside(real, root));
     if (!insideAllowed) {
+      const envHint =
+        intent === 'write'
+          ? ' Set DOWNLOAD_DIR to extend the write root.'
+          : ' Set MCP_EMAIL_UPLOAD_DIRS (colon-separated) to extend the read allowlist.';
       throw new PathSecurityError(
-        `path ${resolved} is outside the allowlist for ${intent}. Allowed roots: ${allowedRoots.join(', ')}`,
+        `path ${resolved} is outside the allowlist for ${intent}. Allowed roots: ${allowedRoots.join(', ')}.` +
+          envHint,
         'OUTSIDE_ALLOWLIST'
       );
     }
@@ -261,7 +266,8 @@ export class PathGuard {
     }
     if (resolved !== this.config.downloadRoot && !isInside(resolved, this.config.downloadRoot)) {
       throw new PathSecurityError(
-        `targetDirectory ${resolved} is outside downloadRoot ${this.config.downloadRoot}`,
+        `targetDirectory ${resolved} is outside downloadRoot ${this.config.downloadRoot}. ` +
+          `Set the DOWNLOAD_DIR env var to use a different write root, or pass a path inside the current downloadRoot.`,
         'OUTSIDE_ALLOWLIST'
       );
     }
