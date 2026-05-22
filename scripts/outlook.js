@@ -196,6 +196,20 @@ Credentials (env vars or .env file):
   MICROSOFT_GRAPH_TENANT_ID
   TARGET_USER_EMAIL
 
+  Resolution order: --env-file > $OUTLOOK_ENV_FILE > existing env vars >
+  <repo>/.env (missing only) > macOS Keychain (missing only).
+
+  Keychain lookup uses service \`mcp-outlook::<VAR>\` by default. Point at
+  existing Keychain entries with OUTLOOK_KEYCHAIN_<VAR>_SERVICES, e.g.:
+    export OUTLOOK_KEYCHAIN_MICROSOFT_GRAPH_CLIENT_ID_SERVICES=my-app::CLIENT_ID
+
+Filesystem allowlist (download_attachment_to_file, download_all_attachments,
+send_email_with_file, encode_file_for_attachment):
+  Writes are confined to DOWNLOAD_DIR (default: ~/Downloads/mcp-outlook-attachments).
+  Reads default to DOWNLOAD_DIR; extend with MCP_EMAIL_UPLOAD_DIRS (colon-separated).
+  Pass any targetDirectory outside DOWNLOAD_DIR and the call fails — set
+  DOWNLOAD_DIR to a parent that includes the paths you actually want to use.
+
 Repo: ${REPO_ROOT}
 `.trimStart()
   );
