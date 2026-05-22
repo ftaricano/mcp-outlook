@@ -11,6 +11,7 @@ import { CacheManager } from './cacheManager.js';
 import { GraphOptimizer } from './graphOptimizer.js';
 import { ParallelProcessor } from './parallelProcessor.js';
 import { PathGuard } from '../security/pathGuard.js';
+import { buildSenderContainsFilter } from './odataFilters.js';
 
 export interface EmailListOptions {
   maxResults?: number;
@@ -244,7 +245,7 @@ export class EmailService {
 
   async getEmailsFromSender(senderEmail: string, maxResults: number = 10): Promise<Message[]> {
     return this.listEmails({
-      filter: `from/emailAddress/address eq '${senderEmail}'`,
+      filter: buildSenderContainsFilter(senderEmail),
       maxResults,
     });
   }
@@ -1930,6 +1931,13 @@ export class EmailService {
         isRead,
       });
 
+      // Push `sender` into the Graph filter — without this, large inboxes
+      // return the first N messages by date and then the client-side filter
+      // below has nothing to match (JAR-257 bug #1).
+      const combinedFilter = sender
+        ? [optimizedFilter, buildSenderContainsFilter(sender)].filter(Boolean).join(' and ')
+        : optimizedFilter;
+
       // Generate cache key for this search
       const cacheKey = this.cacheManager.generateEmailKey('advanced_search', {
         ...options,
@@ -1947,7 +1955,7 @@ export class EmailService {
       const searchOptions = {
         folder,
         maxResults,
-        filter: optimizedFilter,
+        filter: combinedFilter,
         search: query,
         enableCache: false, // We handle caching here
         select: this.graphOptimizer.getOptimalFields('search'),
@@ -1960,8 +1968,9 @@ export class EmailService {
       let filteredEmails = emails;
 
       if (sender) {
+        const senderLower = sender.toLowerCase();
         filteredEmails = filteredEmails.filter((email) =>
-          email.from?.emailAddress?.address?.includes(sender)
+          email.from?.emailAddress?.address?.toLowerCase().includes(senderLower)
         );
       }
 
@@ -2014,7 +2023,7 @@ export class EmailService {
         const filterConditions: string[] = [];
 
         if (sender) {
-          filterConditions.push(`from/emailAddress/address eq '${sender}'`);
+          filterConditions.push(buildSenderContainsFilter(sender));
         }
 
         if (subject) {
