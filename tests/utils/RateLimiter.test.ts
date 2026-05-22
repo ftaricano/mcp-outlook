@@ -83,10 +83,7 @@ describe('RateLimiter.executeWithRetry', () => {
     const limiter = new RateLimiter();
     const err: any = new Error('rate limited');
     err.response = { status: 429 };
-    const op = vi
-      .fn()
-      .mockRejectedValueOnce(err)
-      .mockResolvedValue('ok');
+    const op = vi.fn().mockRejectedValueOnce(err).mockResolvedValue('ok');
 
     const promise = limiter.executeWithRetry(op, 'test');
     await vi.runAllTimersAsync();
@@ -99,10 +96,7 @@ describe('RateLimiter.executeWithRetry', () => {
     const limiter = new RateLimiter();
     const err: any = new Error('server error');
     err.response = { status: 500 };
-    const op = vi
-      .fn()
-      .mockRejectedValueOnce(err)
-      .mockResolvedValue('ok');
+    const op = vi.fn().mockRejectedValueOnce(err).mockResolvedValue('ok');
 
     const promise = limiter.executeWithRetry(op, 'test');
     await vi.runAllTimersAsync();

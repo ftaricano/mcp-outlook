@@ -64,7 +64,7 @@ const SECRET_FILENAME_PATTERNS: RegExp[] = [
   /\.pfx$/i,
 ];
 
-const DEFAULT_DOWNLOAD_DIR = path.join(os.homedir(), 'Downloads', 'mcp-email-attachments');
+const DEFAULT_DOWNLOAD_DIR = path.join(os.homedir(), 'Downloads', 'mcp-outlook-attachments');
 
 function canonical(p: string): string {
   return path.resolve(p);
@@ -143,7 +143,7 @@ export function loadPathGuardConfig(env: NodeJS.ProcessEnv = process.env): PathG
 
   // Default: reading from the download root is always allowed (attachments
   // flow: download → encode → send). Operators who want to attach files from
-  // a dedicated Documents/mcp-email-uploads folder opt in explicitly.
+  // a dedicated Documents/mcp-outlook-uploads folder opt in explicitly.
   const uploadRoots = uploadList.length > 0 ? uploadList : [downloadRoot];
 
   return { downloadRoot, uploadRoots };
@@ -212,10 +212,7 @@ export class PathGuard {
       if (fs.existsSync(parent)) {
         const parentStat = fs.lstatSync(parent);
         if (parentStat.isSymbolicLink()) {
-          throw new PathSecurityError(
-            `write parent ${parent} is a symlink`,
-            'SYMLINK_DENIED'
-          );
+          throw new PathSecurityError(`write parent ${parent} is a symlink`, 'SYMLINK_DENIED');
         }
       }
     }
@@ -231,18 +228,19 @@ export class PathGuard {
       );
     }
 
-    const allowedRoots = intent === 'write'
-      ? [this.config.downloadRoot]
-      : this.config.uploadRoots;
+    const allowedRoots = intent === 'write' ? [this.config.downloadRoot] : this.config.uploadRoots;
 
     // Roots are already canonicalised (constructor realpaths them). Compare
     // the candidate's real path against them.
-    const insideAllowed = allowedRoots.some(
-      (root) => real === root || isInside(real, root)
-    );
+    const insideAllowed = allowedRoots.some((root) => real === root || isInside(real, root));
     if (!insideAllowed) {
+      const envHint =
+        intent === 'write'
+          ? ' Set DOWNLOAD_DIR to extend the write root.'
+          : ' Set MCP_EMAIL_UPLOAD_DIRS (colon-separated) to extend the read allowlist.';
       throw new PathSecurityError(
-        `path ${resolved} is outside the allowlist for ${intent}. Allowed roots: ${allowedRoots.join(', ')}`,
+        `path ${resolved} is outside the allowlist for ${intent}. Allowed roots: ${allowedRoots.join(', ')}.` +
+          envHint,
         'OUTSIDE_ALLOWLIST'
       );
     }
@@ -266,12 +264,10 @@ export class PathGuard {
         'SECRET_FILENAME'
       );
     }
-    if (
-      resolved !== this.config.downloadRoot &&
-      !isInside(resolved, this.config.downloadRoot)
-    ) {
+    if (resolved !== this.config.downloadRoot && !isInside(resolved, this.config.downloadRoot)) {
       throw new PathSecurityError(
-        `targetDirectory ${resolved} is outside downloadRoot ${this.config.downloadRoot}`,
+        `targetDirectory ${resolved} is outside downloadRoot ${this.config.downloadRoot}. ` +
+          `Set the DOWNLOAD_DIR env var to use a different write root, or pass a path inside the current downloadRoot.`,
         'OUTSIDE_ALLOWLIST'
       );
     }

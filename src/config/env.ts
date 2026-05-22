@@ -9,9 +9,7 @@ const EnvSchema = z.object({
     .string()
     .min(1, 'MICROSOFT_GRAPH_CLIENT_ID is required')
     .uuid('MICROSOFT_GRAPH_CLIENT_ID must be a valid Azure AD application (client) UUID'),
-  MICROSOFT_GRAPH_CLIENT_SECRET: z
-    .string()
-    .min(1, 'MICROSOFT_GRAPH_CLIENT_SECRET is required'),
+  MICROSOFT_GRAPH_CLIENT_SECRET: z.string().min(1, 'MICROSOFT_GRAPH_CLIENT_SECRET is required'),
   MICROSOFT_GRAPH_TENANT_ID: z
     .string()
     .min(1, 'MICROSOFT_GRAPH_TENANT_ID is required')
@@ -28,7 +26,7 @@ const EnvSchema = z.object({
     .transform((v) => v === 'true'),
   LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).optional().default('info'),
   NODE_ENV: z.enum(['production', 'development', 'test']).optional().default('production'),
-  MCP_SERVER_NAME: z.string().optional().default('mcp-email-server'),
+  MCP_SERVER_NAME: z.string().optional().default('mcp-outlook'),
   MCP_SERVER_VERSION: z.string().optional().default('2.1.0'),
   DOWNLOAD_DIR: z.string().optional(),
   MAX_ATTACHMENT_MB: z.coerce.number().int().positive().max(150).optional().default(25),

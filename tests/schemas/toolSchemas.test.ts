@@ -30,13 +30,13 @@ const happyInputs: Record<string, unknown> = {
     attachmentId: 'att1',
     to: ['a@b.com'],
     subject: 'Fwd',
-    body: 'See attached'
+    body: 'See attached',
   },
   send_email_with_file: {
     filePath: '/tmp/foo.pdf',
     to: ['a@b.com'],
     subject: 'File',
-    body: 'See attached'
+    body: 'See attached',
   },
   list_folders: { includeSubfolders: true, maxDepth: 3 },
   create_folder: { folderName: 'MyFolder' },
@@ -56,7 +56,7 @@ const happyInputs: Record<string, unknown> = {
   batch_delete_emails: { emailIds: ['id1'], permanent: false },
   batch_move_emails: { emailIds: ['id1'], targetFolderId: 'f1' },
   batch_download_attachments: { emailIds: ['id1'] },
-  email_cleanup_wizard: { dryRun: true, olderThanDays: 30 }
+  email_cleanup_wizard: { dryRun: true, olderThanDays: 30 },
 };
 
 describe('validateToolInput - happy path', () => {
@@ -91,9 +91,7 @@ describe('validateToolInput - realistic second inputs', () => {
       bcc: ['bcc@y.com'],
       useTemplate: true,
       templateTheme: 'corporate',
-      attachments: [
-        { name: 'f.pdf', contentType: 'application/pdf', content: 'AAAA' }
-      ]
+      attachments: [{ name: 'f.pdf', contentType: 'application/pdf', content: 'AAAA' }],
     });
     expect(r.ok).toBe(true);
   });
@@ -111,7 +109,7 @@ describe('validateToolInput - realistic second inputs', () => {
       companyName: 'ACME',
       logoUrl: 'https://example.com/logo.png',
       emailTitle: 'Quarterly update',
-      signature: '— Team ACME'
+      signature: '— Team ACME',
     });
     expect(r.ok).toBe(true);
     if (r.ok) {
@@ -132,7 +130,7 @@ describe('validateToolInput - realistic second inputs', () => {
       companyName: 'ACME',
       logoUrl: 'https://example.com/logo.png',
       emailTitle: 'Draft title',
-      signature: '— Team'
+      signature: '— Team',
     });
     expect(r.ok).toBe(true);
     if (r.ok) {
@@ -140,6 +138,30 @@ describe('validateToolInput - realistic second inputs', () => {
       expect(r.data.logoUrl).toBe('https://example.com/logo.png');
       expect(r.data.emailTitle).toBe('Draft title');
       expect(r.data.signature).toBe('— Team');
+    }
+  });
+
+  it('list_emails accepts a numeric search and coerces to string', () => {
+    // The outlook CLI parses digit-only flag values as Number(); without
+    // coercion in the schema, search=100151515 (an invoice ID) fails
+    // validation with "expected string, received number". JAR-257 bug #2.
+    const r = validateToolInput('list_emails', { search: 100151515 });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.search).toBe('100151515');
+  });
+
+  it('list_users accepts a numeric search and coerces to string', () => {
+    const r = validateToolInput('list_users', { limit: 10, search: 42 });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.search).toBe('42');
+  });
+
+  it('advanced_search accepts numeric query and subject and coerces to string', () => {
+    const r = validateToolInput('advanced_search', { query: 100151515, subject: 999 });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.query).toBe('100151515');
+      expect(r.data.subject).toBe('999');
     }
   });
 
@@ -155,7 +177,7 @@ describe('validateToolInput - realistic second inputs', () => {
       folder: 'inbox',
       maxResults: 50,
       sortBy: 'receivedDateTime',
-      sortOrder: 'desc'
+      sortOrder: 'desc',
     });
     expect(r.ok).toBe(true);
   });
@@ -167,14 +189,14 @@ describe('validateToolInput - negative cases', () => {
       validateToolInput('send_email', {
         to: ['not-an-email'],
         subject: 'x',
-        body: 'y'
+        body: 'y',
       })
     ).not.toThrow();
 
     const r = validateToolInput('send_email', {
       to: ['not-an-email'],
       subject: 'x',
-      body: 'y'
+      body: 'y',
     });
 
     expect(r.ok).toBe(false);
@@ -190,7 +212,7 @@ describe('validateToolInput - negative cases', () => {
     const r = validateToolInput('send_email', {
       to: ['not-an-email'],
       subject: 'x',
-      body: 'y'
+      body: 'y',
     });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error.toLowerCase()).toMatch(/email/);
@@ -222,7 +244,7 @@ describe('validateToolInput - negative cases', () => {
       subject: 'x',
       body: 'y',
       useTemplate: true,
-      templateTheme: 'neon'
+      templateTheme: 'neon',
     });
     expect(r.ok).toBe(false);
   });

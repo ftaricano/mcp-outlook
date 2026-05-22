@@ -1,12 +1,17 @@
 import { Client } from '@microsoft/microsoft-graph-client';
 import { GraphAuthProvider } from '../auth/graphAuth.js';
 import { Message } from '@microsoft/microsoft-graph-types';
-import { emailTemplateEngine, EmailTemplateOptions, EmailContent } from '../templates/emailTemplates.js';
+import {
+  emailTemplateEngine,
+  EmailTemplateOptions,
+  EmailContent,
+} from '../templates/emailTemplates.js';
 import { FileManager } from './fileManager.js';
 import { CacheManager } from './cacheManager.js';
 import { GraphOptimizer } from './graphOptimizer.js';
 import { ParallelProcessor } from './parallelProcessor.js';
 import { PathGuard } from '../security/pathGuard.js';
+import { buildSenderContainsFilter, buildSenderExactFilter } from './odataFilters.js';
 
 export interface EmailListOptions {
   maxResults?: number;
@@ -47,22 +52,25 @@ export class EmailService {
   private graphOptimizer: GraphOptimizer;
   private parallelProcessor: ParallelProcessor<any, any>;
 
-  constructor(private authProvider: GraphAuthProvider, pathGuard: PathGuard) {
+  constructor(
+    private authProvider: GraphAuthProvider,
+    pathGuard: PathGuard
+  ) {
     this.client = authProvider.getGraphClient();
     this.fileManager = new FileManager(pathGuard);
-    
+
     // Initialize performance optimization systems
     this.cacheManager = new CacheManager({
       defaultTtl: 5 * 60 * 1000, // 5 minutes
       maxSize: 1000,
-      enableStats: true
+      enableStats: true,
     });
-    
+
     this.graphOptimizer = new GraphOptimizer(this.client, this.cacheManager, {
       enableBatching: true,
       batchSize: 20,
       enableSelectiveFields: true,
-      enableCompression: true
+      enableCompression: true,
     });
 
     this.parallelProcessor = new ParallelProcessor(
@@ -70,7 +78,7 @@ export class EmailService {
       {
         maxConcurrency: 5,
         adaptiveConcurrency: true,
-        priorityQueuing: true
+        priorityQueuing: true,
       }
     );
 
@@ -87,7 +95,7 @@ export class EmailService {
       setTimeout(async () => {
         await this.cacheManager.preloadCommonPatterns(this);
       }, 2000);
-      
+
       console.error('⚡ EmailService optimizations initialized');
     } catch (error) {
       console.warn('⚠️ Failed to initialize optimizations:', error);
@@ -95,12 +103,7 @@ export class EmailService {
   }
 
   async listEmails(options: EmailListOptions = {}): Promise<Message[]> {
-    const {
-      maxResults = 10,
-      filter,
-      search,
-      folder = 'inbox'
-    } = options;
+    const { maxResults = 10, filter, search, folder = 'inbox' } = options;
 
     try {
       // Use GraphOptimizer for optimized email fetching with caching
@@ -111,34 +114,35 @@ export class EmailService {
         filter,
         enableCache: true,
         select: this.graphOptimizer.getOptimalFields('list'),
-        orderBy: search ? undefined : 'receivedDateTime desc' // OData compatibility
+        orderBy: search ? undefined : 'receivedDateTime desc', // OData compatibility
       };
 
       console.error(`📧 Listando emails otimizado: ${maxResults} resultados, pasta: ${folder}`);
-      
+
       if (search || filter) {
         console.error(`🔍 Query: search="${search || 'none'}", filter="${filter || 'none'}"`);
       }
 
       const emails = await this.graphOptimizer.getOptimizedEmails(optimizedOptions);
-      
+
       console.error(`✅ Encontrados ${emails.length} emails (com cache/otimização)`);
       return emails;
     } catch (error) {
       console.error('❌ Erro ao listar emails otimizado:', error);
-      
+
       // Fallback to original implementation if optimization fails
       console.error('🔄 Fallback para implementação original...');
-      
+
       try {
         const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-        const apiEndpoint = userEmail === 'me' 
-          ? `/me/mailFolders/${folder}/messages`
-          : `/users/${userEmail}/mailFolders/${folder}/messages`;
+        const apiEndpoint =
+          userEmail === 'me'
+            ? `/me/mailFolders/${folder}/messages`
+            : `/users/${userEmail}/mailFolders/${folder}/messages`;
 
         const queryParams: string[] = [
           `$top=${Math.min(maxResults, 100)}`,
-          `$select=id,subject,from,receivedDateTime,isRead,hasAttachments,bodyPreview,body`
+          `$select=id,subject,from,receivedDateTime,isRead,hasAttachments,bodyPreview,body`,
         ];
 
         if (!search) {
@@ -158,36 +162,48 @@ export class EmailService {
         const fullEndpoint = `${apiEndpoint}?${queryString}`;
 
         const response = await this.client.api(fullEndpoint).get();
-        
+
         console.error(`✅ Fallback concluído: ${response.value?.length || 0} emails`);
         return response.value || [];
       } catch (fallbackError) {
-        const errorMessage = fallbackError instanceof Error ? fallbackError.message : 'Erro desconhecido';
-        
+        const errorMessage =
+          fallbackError instanceof Error ? fallbackError.message : 'Erro desconhecido';
+
         if (errorMessage.includes('$orderBy') && errorMessage.includes('$search')) {
-          throw new Error(`Erro de compatibilidade OData corrigido. Tente novamente - o $orderBy foi removido ao usar $search.`);
+          throw new Error(
+            `Erro de compatibilidade OData corrigido. Tente novamente - o $orderBy foi removido ao usar $search.`
+          );
         }
-        
+
         if (errorMessage.includes('$search')) {
-          throw new Error(`Erro de busca: ${errorMessage}. Verifique o termo de busca e tente novamente.`);
+          throw new Error(
+            `Erro de busca: ${errorMessage}. Verifique o termo de busca e tente novamente.`
+          );
         }
-        
+
         if (errorMessage.includes('$filter')) {
           throw new Error(`Erro de filtro: ${errorMessage}. Verifique a sintaxe do filtro OData.`);
         }
-        
+
         throw new Error(`Falha ao listar emails: ${errorMessage}`);
       }
     }
   }
 
-  async listOrgUsers(options: { limit?: number; search?: string } = {}): Promise<Array<{ id: string; displayName?: string; userPrincipalName?: string; mail?: string }>> {
+  async listOrgUsers(
+    options: { limit?: number; search?: string } = {}
+  ): Promise<
+    Array<{ id: string; displayName?: string; userPrincipalName?: string; mail?: string }>
+  > {
     const { limit = 10, search } = options;
-    let req = this.client.api('/users')
+    let req = this.client
+      .api('/users')
       .top(Math.min(limit, 100))
       .select('id,displayName,userPrincipalName,mail');
     if (search) {
-      req = req.filter(`startswith(displayName,'${search.replace(/'/g, "''")}') or startswith(userPrincipalName,'${search.replace(/'/g, "''")}')`);
+      req = req.filter(
+        `startswith(displayName,'${search.replace(/'/g, "''")}') or startswith(userPrincipalName,'${search.replace(/'/g, "''")}')`
+      );
     }
     const response = await req.get();
     return response.value ?? [];
@@ -196,10 +212,9 @@ export class EmailService {
   async getEmailById(emailId: string): Promise<Message> {
     try {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-      const apiPath = userEmail === 'me' 
-        ? `/me/messages/${emailId}`
-        : `/users/${userEmail}/messages/${emailId}`;
-        
+      const apiPath =
+        userEmail === 'me' ? `/me/messages/${emailId}` : `/users/${userEmail}/messages/${emailId}`;
+
       const email = await this.client
         .api(apiPath)
         .select('id,subject,from,receivedDateTime,isRead,hasAttachments,body,attachments')
@@ -208,28 +223,30 @@ export class EmailService {
       return email;
     } catch (error) {
       console.error(`Erro ao obter email ${emailId}:`, error);
-      throw new Error(`Falha ao obter email: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
+      throw new Error(
+        `Falha ao obter email: ${error instanceof Error ? error.message : 'Erro desconhecido'}`
+      );
     }
   }
 
   async searchEmails(query: string, maxResults: number = 10): Promise<Message[]> {
     return this.listEmails({
       search: query,
-      maxResults
+      maxResults,
     });
   }
 
   async getUnreadEmails(maxResults: number = 10): Promise<Message[]> {
     return this.listEmails({
       filter: 'isRead eq false',
-      maxResults
+      maxResults,
     });
   }
 
   async getEmailsFromSender(senderEmail: string, maxResults: number = 10): Promise<Message[]> {
     return this.listEmails({
-      filter: `from/emailAddress/address eq '${senderEmail}'`,
-      maxResults
+      filter: buildSenderExactFilter(senderEmail),
+      maxResults,
     });
   }
 
@@ -237,23 +254,30 @@ export class EmailService {
     const today = new Date().toISOString().split('T')[0];
     return this.listEmails({
       filter: `receivedDateTime ge ${today}T00:00:00Z`,
-      maxResults: 50
+      maxResults: 50,
     });
   }
 
-  async getEmailsByDateRange(startDate: string, endDate: string, maxResults: number = 50): Promise<Message[]> {
+  async getEmailsByDateRange(
+    startDate: string,
+    endDate: string,
+    maxResults: number = 50
+  ): Promise<Message[]> {
     return this.listEmails({
       filter: `receivedDateTime ge ${startDate}T00:00:00Z and receivedDateTime le ${endDate}T23:59:59Z`,
-      maxResults
+      maxResults,
     });
   }
 
   extractEmailContent(email: Message): EmailSummaryData {
     const bodyContent = email.body?.content || '';
-    
+
     // Remove HTML tags para obter texto puro
-    const plainTextBody = bodyContent.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
-    
+    const plainTextBody = bodyContent
+      .replace(/<[^>]*>/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
     // Extrair informações de anexos se existirem
     const attachments = email.attachments?.map((att: any) => att.name).filter(Boolean) || [];
 
@@ -263,19 +287,19 @@ export class EmailService {
       from: email.from?.emailAddress?.address || 'Remetente desconhecido',
       date: email.receivedDateTime || '',
       body: plainTextBody,
-      attachments: attachments.length > 0 ? attachments : undefined
+      attachments: attachments.length > 0 ? attachments : undefined,
     };
   }
 
   async validateConnection(): Promise<boolean> {
     try {
       const userEmail = process.env.TARGET_USER_EMAIL;
-      
+
       if (!userEmail) {
         console.error('TARGET_USER_EMAIL não configurado no .env');
         return false;
       }
-      
+
       // Usar endpoint específico do usuário ao invés de /me
       // /me só funciona com delegated authentication
       await this.client.api(`/users/${userEmail}`).select('id,mail').get();
@@ -287,29 +311,37 @@ export class EmailService {
   }
 
   // Funcionalidades de Envio de Email
-  async sendEmail(to: string[], subject: string, body: string, cc?: string[], bcc?: string[], attachments?: EmailAttachment[], enhancedOptions?: EnhancedEmailOptions): Promise<any> {
+  async sendEmail(
+    to: string[],
+    subject: string,
+    body: string,
+    cc?: string[],
+    bcc?: string[],
+    attachments?: EmailAttachment[],
+    enhancedOptions?: EnhancedEmailOptions
+  ): Promise<any> {
     try {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
       const apiPath = userEmail === 'me' ? '/me/sendMail' : `/users/${userEmail}/sendMail`;
 
       // Preparar conteúdo do email com template se solicitado
       let emailBody = body;
-      
+
       if (enhancedOptions?.useTemplate) {
         console.error('🎨 Aplicando template HTML elegante...');
-        
+
         const emailContent: EmailContent = {
           title: enhancedOptions.emailContent?.title,
           body: body,
           signature: enhancedOptions.emailContent?.signature,
-          attachmentList: attachments?.map(att => att.name)
+          attachmentList: attachments?.map((att) => att.name),
         };
-        
+
         emailBody = emailTemplateEngine.formatNewEmail(
-          emailContent, 
+          emailContent,
           enhancedOptions.templateOptions || {}
         );
-        
+
         // Validar template
         const validation = emailTemplateEngine.validateTemplate(emailBody);
         if (!validation.valid) {
@@ -324,57 +356,66 @@ export class EmailService {
           subject: subject,
           body: {
             contentType: 'HTML',
-            content: emailBody
+            content: emailBody,
           },
-          toRecipients: to.map(email => ({ emailAddress: { address: email } })),
-          ccRecipients: cc ? cc.map(email => ({ emailAddress: { address: email } })) : [],
-          bccRecipients: bcc ? bcc.map(email => ({ emailAddress: { address: email } })) : []
-        }
+          toRecipients: to.map((email) => ({ emailAddress: { address: email } })),
+          ccRecipients: cc ? cc.map((email) => ({ emailAddress: { address: email } })) : [],
+          bccRecipients: bcc ? bcc.map((email) => ({ emailAddress: { address: email } })) : [],
+        },
       };
 
       // Adicionar anexos se fornecidos
       if (attachments && attachments.length > 0) {
         console.error(`📎 Processando ${attachments.length} anexo(s) para Microsoft Graph...`);
-        
+
         const processedAttachments = [];
-        
+
         for (let i = 0; i < attachments.length; i++) {
           const attachment = attachments[i];
           console.error(`   ${i + 1}. Processando "${attachment.name}"`);
-          
+
           // Validar e preparar Base64 para Microsoft Graph API (preservando integridade)
           const cleanBase64 = this.cleanBase64ForMSGraph(attachment.content);
-          
+
           // Verificar se o arquivo foi modificado
           if (cleanBase64.length !== attachment.content.length) {
-            console.error(`   ⚠️  Arquivo foi modificado: ${attachment.content.length} → ${cleanBase64.length} chars`);
+            console.error(
+              `   ⚠️  Arquivo foi modificado: ${attachment.content.length} → ${cleanBase64.length} chars`
+            );
           } else {
             console.error(`   ✅ Arquivo preservado intacto: ${cleanBase64.length} chars`);
           }
-          
+
           // Validar tamanho real do arquivo decodificado
           let decodedSize: number;
           try {
             const buffer = Buffer.from(cleanBase64, 'base64');
             decodedSize = buffer.length;
           } catch (error) {
-            throw new Error(`Anexo "${attachment.name}" tem Base64 inválido: ${error instanceof Error ? error.message : 'formato incorreto'}`);
+            throw new Error(
+              `Anexo "${attachment.name}" tem Base64 inválido: ${error instanceof Error ? error.message : 'formato incorreto'}`
+            );
           }
-          
-          if (decodedSize > 15 * 1024 * 1024) { // 15MB limit
-            throw new Error(`Anexo "${attachment.name}" muito grande: ${(decodedSize / (1024 * 1024)).toFixed(2)}MB. Limite: 15MB`);
+
+          if (decodedSize > 15 * 1024 * 1024) {
+            // 15MB limit
+            throw new Error(
+              `Anexo "${attachment.name}" muito grande: ${(decodedSize / (1024 * 1024)).toFixed(2)}MB. Limite: 15MB`
+            );
           }
-          
-          console.error(`   ✅ "${attachment.name}" - ${(decodedSize / 1024).toFixed(1)}KB - ${attachment.contentType}`);
-          
+
+          console.error(
+            `   ✅ "${attachment.name}" - ${(decodedSize / 1024).toFixed(1)}KB - ${attachment.contentType}`
+          );
+
           processedAttachments.push({
             '@odata.type': '#microsoft.graph.fileAttachment',
             name: attachment.name,
             contentType: attachment.contentType,
-            contentBytes: cleanBase64
+            contentBytes: cleanBase64,
           });
         }
-        
+
         message.message.attachments = processedAttachments;
         console.error('✅ Todos os anexos processados e prontos para Microsoft Graph');
       }
@@ -382,32 +423,38 @@ export class EmailService {
       console.error('📧 Enviando email...');
       const response = await this.client.api(apiPath).post(message);
       console.error('✅ Email enviado com sucesso');
-      
-      return { 
-        success: true, 
-        messageId: response?.id, 
-        attachmentsCount: attachments?.length || 0 
+
+      return {
+        success: true,
+        messageId: response?.id,
+        attachmentsCount: attachments?.length || 0,
       };
     } catch (error) {
       console.error('❌ Erro ao enviar email:', error);
-      
+
       const errorMsg = error instanceof Error ? error.message : 'Erro desconhecido';
-      
+
       // Detectar erros específicos de anexo
       const lowerErrorMsg = errorMsg.toLowerCase();
-      
+
       if (lowerErrorMsg.includes('edm.binary') || lowerErrorMsg.includes('cannot convert')) {
-        throw new Error(`❌ Erro de formato Base64: ${errorMsg}\n\n🔧 Este erro foi corrigido! Tente novamente:\n- O Base64 agora é limpo automaticamente\n- Caracteres inválidos são removidos\n- Padding é corrigido automaticamente\n- Teste com: node attachment-debug-test.js <arquivo>`);
+        throw new Error(
+          `❌ Erro de formato Base64: ${errorMsg}\n\n🔧 Este erro foi corrigido! Tente novamente:\n- O Base64 agora é limpo automaticamente\n- Caracteres inválidos são removidos\n- Padding é corrigido automaticamente\n- Teste com: node attachment-debug-test.js <arquivo>`
+        );
       }
-      
-      if (lowerErrorMsg.includes('attachment') || 
-          lowerErrorMsg.includes('content') || 
-          lowerErrorMsg.includes('base64') ||
-          lowerErrorMsg.includes('size') ||
-          lowerErrorMsg.includes('malformed')) {
-        throw new Error(`Erro de anexo: ${errorMsg}\n\n🔧 Dicas:\n- Verifique se o arquivo não está corrompido\n- Use tamanho menor que 15MB\n- Para boletos PDF use contentType 'application/pdf'\n- Teste com: node attachment-debug-test.js <arquivo>`);
+
+      if (
+        lowerErrorMsg.includes('attachment') ||
+        lowerErrorMsg.includes('content') ||
+        lowerErrorMsg.includes('base64') ||
+        lowerErrorMsg.includes('size') ||
+        lowerErrorMsg.includes('malformed')
+      ) {
+        throw new Error(
+          `Erro de anexo: ${errorMsg}\n\n🔧 Dicas:\n- Verifique se o arquivo não está corrompido\n- Use tamanho menor que 15MB\n- Para boletos PDF use contentType 'application/pdf'\n- Teste com: node attachment-debug-test.js <arquivo>`
+        );
       }
-      
+
       throw new Error(`Falha ao enviar email: ${errorMsg}`);
     }
   }
@@ -440,8 +487,7 @@ export class EmailService {
   }> {
     try {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-      const apiPath =
-        userEmail === 'me' ? '/me/messages' : `/users/${userEmail}/messages`;
+      const apiPath = userEmail === 'me' ? '/me/messages' : `/users/${userEmail}/messages`;
 
       let emailBody = body;
       if (enhancedOptions?.useTemplate) {
@@ -462,18 +508,12 @@ export class EmailService {
         subject,
         body: { contentType: 'HTML', content: emailBody },
         toRecipients: to.map((email) => ({ emailAddress: { address: email } })),
-        ccRecipients: cc
-          ? cc.map((email) => ({ emailAddress: { address: email } }))
-          : [],
-        bccRecipients: bcc
-          ? bcc.map((email) => ({ emailAddress: { address: email } }))
-          : [],
+        ccRecipients: cc ? cc.map((email) => ({ emailAddress: { address: email } })) : [],
+        bccRecipients: bcc ? bcc.map((email) => ({ emailAddress: { address: email } })) : [],
       };
 
       if (attachments && attachments.length > 0) {
-        console.error(
-          `📎 Anexando ${attachments.length} arquivo(s) ao rascunho...`
-        );
+        console.error(`📎 Anexando ${attachments.length} arquivo(s) ao rascunho...`);
         draft.attachments = attachments.map((att) => {
           const clean = this.cleanBase64ForMSGraph(att.content);
           let size: number;
@@ -509,55 +549,59 @@ export class EmailService {
         attachmentsCount: attachments?.length ?? 0,
       };
     } catch (error) {
-      const errorMsg =
-        error instanceof Error ? error.message : 'Erro desconhecido';
+      const errorMsg = error instanceof Error ? error.message : 'Erro desconhecido';
       console.error('❌ Erro ao criar rascunho:', errorMsg);
       throw new Error(`Falha ao criar rascunho: ${errorMsg}`);
     }
   }
 
-  async replyToEmail(emailId: string, body: string, replyAll: boolean = false, enhancedOptions?: EnhancedEmailOptions): Promise<any> {
+  async replyToEmail(
+    emailId: string,
+    body: string,
+    replyAll: boolean = false,
+    enhancedOptions?: EnhancedEmailOptions
+  ): Promise<any> {
     try {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
       const action = replyAll ? 'replyAll' : 'reply';
-      const apiPath = userEmail === 'me' 
-        ? `/me/messages/${emailId}/${action}`
-        : `/users/${userEmail}/messages/${emailId}/${action}`;
+      const apiPath =
+        userEmail === 'me'
+          ? `/me/messages/${emailId}/${action}`
+          : `/users/${userEmail}/messages/${emailId}/${action}`;
 
       // Preparar conteúdo da resposta com template se solicitado
       let replyBody = body;
-      
+
       if (enhancedOptions?.useTemplate) {
         console.error('🎨 Aplicando template HTML para resposta...');
-        
+
         try {
           // Buscar email original para incluir no template
           const originalEmail = await this.getEmailById(emailId);
-          
+
           const replyContent: EmailContent = {
             title: enhancedOptions.emailContent?.title,
             body: body,
-            signature: enhancedOptions.emailContent?.signature
+            signature: enhancedOptions.emailContent?.signature,
           };
-          
+
           const originalContent: EmailContent = {
             body: originalEmail.body?.content || '',
             metadata: {
               sender: originalEmail.from?.emailAddress?.address || undefined,
               date: originalEmail.receivedDateTime || undefined,
-              originalSubject: originalEmail.subject || undefined
+              originalSubject: originalEmail.subject || undefined,
             },
-            attachmentList: originalEmail.attachments?.map((att: any) => att.name).filter(Boolean)
+            attachmentList: originalEmail.attachments?.map((att: any) => att.name).filter(Boolean),
           };
-          
+
           replyBody = emailTemplateEngine.formatReplyEmail(
             replyContent,
-            originalContent, 
+            originalContent,
             enhancedOptions.templateOptions || {}
           );
-          
+
           console.error('✅ Template de resposta aplicado com sucesso');
-          
         } catch (templateError) {
           console.warn('⚠️  Erro ao aplicar template, usando formato simples:', templateError);
           replyBody = emailTemplateEngine.formatSimpleEmail(body);
@@ -568,16 +612,18 @@ export class EmailService {
         message: {
           body: {
             contentType: 'HTML',
-            content: replyBody
-          }
-        }
+            content: replyBody,
+          },
+        },
       };
 
       const response = await this.client.api(apiPath).post(replyMessage);
       return { success: true, messageId: response?.id };
     } catch (error) {
       console.error('Erro ao responder email:', error);
-      throw new Error(`Falha ao responder email: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
+      throw new Error(
+        `Falha ao responder email: ${error instanceof Error ? error.message : 'Erro desconhecido'}`
+      );
     }
   }
 
@@ -585,45 +631,48 @@ export class EmailService {
   async markAsRead(emailId: string): Promise<boolean> {
     try {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-      const apiPath = userEmail === 'me' 
-        ? `/me/messages/${emailId}`
-        : `/users/${userEmail}/messages/${emailId}`;
+      const apiPath =
+        userEmail === 'me' ? `/me/messages/${emailId}` : `/users/${userEmail}/messages/${emailId}`;
 
       await this.client.api(apiPath).patch({ isRead: true });
       return true;
     } catch (error) {
       console.error('Erro ao marcar como lido:', error);
-      throw new Error(`Falha ao marcar como lido: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
+      throw new Error(
+        `Falha ao marcar como lido: ${error instanceof Error ? error.message : 'Erro desconhecido'}`
+      );
     }
   }
 
   async markAsUnread(emailId: string): Promise<boolean> {
     try {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-      const apiPath = userEmail === 'me' 
-        ? `/me/messages/${emailId}`
-        : `/users/${userEmail}/messages/${emailId}`;
+      const apiPath =
+        userEmail === 'me' ? `/me/messages/${emailId}` : `/users/${userEmail}/messages/${emailId}`;
 
       await this.client.api(apiPath).patch({ isRead: false });
       return true;
     } catch (error) {
       console.error('Erro ao marcar como não lido:', error);
-      throw new Error(`Falha ao marcar como não lido: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
+      throw new Error(
+        `Falha ao marcar como não lido: ${error instanceof Error ? error.message : 'Erro desconhecido'}`
+      );
     }
   }
 
   async deleteEmail(emailId: string): Promise<boolean> {
     try {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-      const apiPath = userEmail === 'me' 
-        ? `/me/messages/${emailId}`
-        : `/users/${userEmail}/messages/${emailId}`;
+      const apiPath =
+        userEmail === 'me' ? `/me/messages/${emailId}` : `/users/${userEmail}/messages/${emailId}`;
 
       await this.client.api(apiPath).delete();
       return true;
     } catch (error) {
       console.error('Erro ao deletar email:', error);
-      throw new Error(`Falha ao deletar email: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
+      throw new Error(
+        `Falha ao deletar email: ${error instanceof Error ? error.message : 'Erro desconhecido'}`
+      );
     }
   }
 
@@ -631,58 +680,71 @@ export class EmailService {
   async listAttachments(emailId: string): Promise<any[]> {
     try {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-      const apiPath = userEmail === 'me' 
-        ? `/me/messages/${emailId}/attachments`
-        : `/users/${userEmail}/messages/${emailId}/attachments`;
+      const apiPath =
+        userEmail === 'me'
+          ? `/me/messages/${emailId}/attachments`
+          : `/users/${userEmail}/messages/${emailId}/attachments`;
 
       const response = await this.client.api(apiPath).get();
-      
+
       return response.value.map((attachment: any) => ({
         id: attachment.id,
         name: attachment.name,
         contentType: attachment.contentType,
         size: attachment.size,
         isInline: attachment.isInline,
-        attachmentType: attachment['@odata.type'] // Adiciona o tipo do anexo
+        attachmentType: attachment['@odata.type'], // Adiciona o tipo do anexo
       }));
     } catch (error) {
       console.error('Erro ao listar anexos:', error);
-      throw new Error(`Falha ao listar anexos: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
+      throw new Error(
+        `Falha ao listar anexos: ${error instanceof Error ? error.message : 'Erro desconhecido'}`
+      );
     }
   }
 
-  async downloadAttachment(emailId: string, attachmentId: string): Promise<{ name: string, contentType: string, content: string, attachmentType?: string, size?: number }> {
+  async downloadAttachment(
+    emailId: string,
+    attachmentId: string
+  ): Promise<{
+    name: string;
+    contentType: string;
+    content: string;
+    attachmentType?: string;
+    size?: number;
+  }> {
     try {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-      const apiPath = userEmail === 'me' 
-        ? `/me/messages/${emailId}/attachments/${attachmentId}`
-        : `/users/${userEmail}/messages/${emailId}/attachments/${attachmentId}`;
+      const apiPath =
+        userEmail === 'me'
+          ? `/me/messages/${emailId}/attachments/${attachmentId}`
+          : `/users/${userEmail}/messages/${emailId}/attachments/${attachmentId}`;
 
       console.error(`📥 Baixando anexo...`);
-      
+
       // Obter informações completas do anexo incluindo conteúdo
       const attachment = await this.client.api(apiPath).get();
       const attachmentType = attachment['@odata.type'];
-      
+
       console.error(`   Nome: ${attachment.name}`);
       console.error(`   Tipo: ${attachment.contentType}`);
       console.error(`   Tamanho reportado: ${attachment.size} bytes`);
-      
+
       let content = '';
       let actualSize = 0;
-      
+
       // Tratar diferentes tipos de anexo
       if (attachmentType === '#microsoft.graph.fileAttachment') {
         // FileAttachment - conteúdo em contentBytes (já em Base64)
         content = attachment.contentBytes || '';
-        
+
         if (!content) {
           console.warn('⚠️  contentBytes vazio, tentando método alternativo...');
-          
+
           // Tentar buscar com $value (retorna o conteúdo bruto)
           try {
             const rawContent = await this.client.api(`${apiPath}/$value`).get();
-            
+
             // O $value retorna o conteúdo binário, precisamos converter para Base64
             if (rawContent instanceof ArrayBuffer) {
               const uint8Array = new Uint8Array(rawContent);
@@ -703,17 +765,17 @@ export class EmailService {
             throw valueError;
           }
         }
-        
+
         // Validar e limpar o Base64
         if (content) {
           // Remover espaços, quebras de linha e caracteres invisíveis
           const originalLength = content.length;
           content = content.replace(/[\s\r\n\t]+/g, '');
-          
+
           if (originalLength !== content.length) {
             console.error(`   🧹 Limpeza: removidos ${originalLength - content.length} caracteres`);
           }
-          
+
           // Corrigir padding se necessário
           const remainder = content.length % 4;
           if (remainder !== 0) {
@@ -721,20 +783,24 @@ export class EmailService {
             content += '='.repeat(paddingNeeded);
             console.error(`   🔧 Padding corrigido: adicionados ${paddingNeeded} caracteres`);
           }
-          
+
           // Verificar se é Base64 válido e obter tamanho real
           try {
             const testBuffer = Buffer.from(content, 'base64');
             actualSize = testBuffer.length;
             console.error(`   ✅ Base64 válido: ${(actualSize / 1024).toFixed(2)}KB decodificado`);
-            
+
             // Verificar discrepância com tamanho reportado
             if (attachment.size && Math.abs(actualSize - attachment.size) > 1000) {
-              console.warn(`   ⚠️  Discrepância de tamanho: reportado ${attachment.size} bytes, real ${actualSize} bytes`);
-              
+              console.warn(
+                `   ⚠️  Discrepância de tamanho: reportado ${attachment.size} bytes, real ${actualSize} bytes`
+              );
+
               // Se o arquivo está significativamente menor, pode estar truncado
               if (actualSize < attachment.size * 0.9) {
-                console.warn(`   ⚠️  Possível truncamento: apenas ${((actualSize / attachment.size) * 100).toFixed(1)}% do arquivo`);
+                console.warn(
+                  `   ⚠️  Possível truncamento: apenas ${((actualSize / attachment.size) * 100).toFixed(1)}% do arquivo`
+                );
               }
             }
           } catch (b64Error) {
@@ -743,20 +809,24 @@ export class EmailService {
             throw new Error(`Conteúdo do anexo não é Base64 válido: ${errorMessage}`);
           }
         }
-        
       } else if (attachmentType === '#microsoft.graph.itemAttachment') {
         // ItemAttachment - email anexado
         console.error('   📧 ItemAttachment detectado (email anexado)');
-        content = attachment.item ? Buffer.from(JSON.stringify(attachment.item)).toString('base64') : '';
+        content = attachment.item
+          ? Buffer.from(JSON.stringify(attachment.item)).toString('base64')
+          : '';
         if (content) {
           actualSize = Buffer.from(content, 'base64').length;
         }
-        
       } else if (attachmentType === '#microsoft.graph.referenceAttachment') {
         // ReferenceAttachment - link para arquivo na nuvem
-        console.warn('   ⚠️  ReferenceAttachment (link para nuvem) - não pode ser baixado diretamente');
-        throw new Error('Anexos de referência (links para arquivos na nuvem) não podem ser baixados diretamente. Use o link: ' + (attachment.sourceUrl || 'não disponível'));
-        
+        console.warn(
+          '   ⚠️  ReferenceAttachment (link para nuvem) - não pode ser baixado diretamente'
+        );
+        throw new Error(
+          'Anexos de referência (links para arquivos na nuvem) não podem ser baixados diretamente. Use o link: ' +
+            (attachment.sourceUrl || 'não disponível')
+        );
       } else {
         // Tipo desconhecido - tentar contentBytes como fallback
         console.warn(`   ⚠️  Tipo desconhecido: ${attachmentType}, tentando contentBytes...`);
@@ -765,23 +835,25 @@ export class EmailService {
           actualSize = Buffer.from(content, 'base64').length;
         }
       }
-      
+
       if (!content) {
         throw new Error('Conteúdo do anexo não encontrado ou está vazio');
       }
-      
+
       console.error(`   📦 Download concluído: ${content.length} caracteres Base64`);
-      
+
       return {
         name: attachment.name || 'anexo_sem_nome',
         contentType: attachment.contentType || 'application/octet-stream',
         content: content,
         attachmentType: attachmentType,
-        size: actualSize
+        size: actualSize,
       };
     } catch (error) {
       console.error('❌ Erro ao baixar anexo:', error);
-      throw new Error(`Falha ao baixar anexo: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
+      throw new Error(
+        `Falha ao baixar anexo: ${error instanceof Error ? error.message : 'Erro desconhecido'}`
+      );
     }
   }
 
@@ -792,7 +864,7 @@ export class EmailService {
   private cleanBase64ForMSGraph(base64Content: string): string {
     const originalSize = base64Content.length;
     console.error(`   📏 Base64 original: ${originalSize} caracteres`);
-    
+
     // 1. Remover prefixo data: URI se presente
     let cleanContent = base64Content;
     const dataUriMatch = base64Content.match(/^data:[^;]+;base64,(.*)$/);
@@ -800,16 +872,16 @@ export class EmailService {
       cleanContent = dataUriMatch[1];
       console.error(`   🔧 Removido prefixo data: URI - agora: ${cleanContent.length} caracteres`);
     }
-    
+
     // 2. Remover espaços em branco, quebras de linha e caracteres invisíveis
     cleanContent = cleanContent.replace(/[\s\r\n\t]+/g, '');
-    
+
     // 3. Remover caracteres não-Base64 que possam ter sido introduzidos
     cleanContent = cleanContent.replace(/[^A-Za-z0-9+/=]/g, '');
-    
+
     const afterCleanSize = cleanContent.length;
     console.error(`   🧹 Após limpeza: ${afterCleanSize} caracteres`);
-    
+
     // 4. Corrigir padding se necessário
     const remainder = cleanContent.length % 4;
     if (remainder !== 0) {
@@ -817,17 +889,18 @@ export class EmailService {
       cleanContent += '='.repeat(paddingNeeded);
       console.error(`   🔧 Adicionado ${paddingNeeded} caractere(s) de padding`);
     }
-    
+
     // 5. Validar que o Base64 é válido
     try {
       const testBuffer = Buffer.from(cleanContent, 'base64');
       const decodedSize = testBuffer.length;
       console.error(`   ✅ Base64 válido - arquivo de ${(decodedSize / 1024).toFixed(1)}KB`);
-      
+
       return cleanContent;
-      
     } catch (error) {
-      throw new Error(`Base64 inválido mesmo após correções: ${error instanceof Error ? error.message : 'formato incorreto'}`);
+      throw new Error(
+        `Base64 inválido mesmo após correções: ${error instanceof Error ? error.message : 'formato incorreto'}`
+      );
     }
   }
 
@@ -836,7 +909,7 @@ export class EmailService {
    * Evita limitações de token do MCP retornando apenas metadados
    */
   async downloadAttachmentToFile(
-    emailId: string, 
+    emailId: string,
     attachmentId: string,
     options: {
       targetDirectory?: string;
@@ -856,7 +929,7 @@ export class EmailService {
     error?: string;
   }> {
     const startTime = Date.now();
-    
+
     try {
       console.error('🚀 Iniciando download otimizado...');
       console.error(`   Email ID: ${emailId.substring(0, 30)}...`);
@@ -864,7 +937,7 @@ export class EmailService {
 
       // 1. Baixar anexo usando método existente
       const attachment = await this.downloadAttachment(emailId, attachmentId);
-      
+
       console.error('📦 Anexo obtido via Graph API');
       console.error(`   Nome: ${attachment.name}`);
       console.error(`   Tipo: ${attachment.contentType}`);
@@ -876,14 +949,11 @@ export class EmailService {
         contentType: attachment.contentType,
         contentBytes: attachment.content, // Base64
         size: attachment.size || 0,
-        id: attachmentId
+        id: attachmentId,
       };
 
       // 3. Salvar usando FileManager otimizado
-      const saveResult = await this.fileManager.saveAttachmentToDisk(
-        attachmentData, 
-        options
-      );
+      const saveResult = await this.fileManager.saveAttachmentToDisk(attachmentData, options);
 
       const downloadTime = Date.now() - startTime;
 
@@ -901,15 +971,14 @@ export class EmailService {
         contentType: attachment.contentType,
         integrity: saveResult.integrity,
         downloadTime,
-        error: saveResult.error
+        error: saveResult.error,
       };
-
     } catch (error) {
       const downloadTime = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
-      
+
       console.error(`❌ Falha no download após ${downloadTime}ms:`, errorMessage);
-      
+
       return {
         success: false,
         filename: '',
@@ -919,7 +988,7 @@ export class EmailService {
         contentType: '',
         integrity: false,
         downloadTime,
-        error: errorMessage
+        error: errorMessage,
       };
     }
   }
@@ -981,13 +1050,13 @@ export class EmailService {
   }> {
     const startTime = Date.now();
     const maxConcurrent = options.maxConcurrent || 3;
-    
+
     try {
       console.error('📦 Iniciando download em lote...');
-      
+
       // 1. Listar todos os anexos do email
       const attachments = await this.listAttachments(emailId);
-      
+
       if (attachments.length === 0) {
         console.error('📭 Nenhum anexo encontrado no email');
         return {
@@ -996,7 +1065,7 @@ export class EmailService {
           successfulDownloads: 0,
           failedDownloads: 0,
           downloadTime: Date.now() - startTime,
-          results: []
+          results: [],
         };
       }
 
@@ -1010,31 +1079,27 @@ export class EmailService {
       // Processar em lotes para evitar sobrecarga
       for (let i = 0; i < attachments.length; i += maxConcurrent) {
         const batch = attachments.slice(i, i + maxConcurrent);
-        
+
         const batchPromises = batch.map(async (attachment) => {
           try {
-            const result = await this.downloadAttachmentToFile(
-              emailId, 
-              attachment.id, 
-              {
-                ...options,
-                filename: attachment.name
-              }
-            );
+            const result = await this.downloadAttachmentToFile(emailId, attachment.id, {
+              ...options,
+              filename: attachment.name,
+            });
 
             if (result.success) {
               successfulDownloads++;
               return {
                 filename: attachment.name,
                 success: true,
-                filePath: result.filePath
+                filePath: result.filePath,
               };
             } else {
               failedDownloads++;
               return {
                 filename: attachment.name,
                 success: false,
-                error: result.error
+                error: result.error,
               };
             }
           } catch (error) {
@@ -1042,7 +1107,7 @@ export class EmailService {
             return {
               filename: attachment.name,
               success: false,
-              error: error instanceof Error ? error.message : 'Erro desconhecido'
+              error: error instanceof Error ? error.message : 'Erro desconhecido',
             };
           }
         });
@@ -1050,11 +1115,13 @@ export class EmailService {
         const batchResults = await Promise.all(batchPromises);
         results.push(...batchResults);
 
-        console.error(`📊 Lote ${i / maxConcurrent + 1} processado: ${batchResults.length} arquivos`);
+        console.error(
+          `📊 Lote ${i / maxConcurrent + 1} processado: ${batchResults.length} arquivos`
+        );
       }
 
       const downloadTime = Date.now() - startTime;
-      
+
       console.error(`✅ Download em lote concluído em ${downloadTime}ms`);
       console.error(`   Total: ${attachments.length} arquivos`);
       console.error(`   Sucessos: ${successfulDownloads}`);
@@ -1066,20 +1133,19 @@ export class EmailService {
         successfulDownloads,
         failedDownloads,
         downloadTime,
-        results
+        results,
       };
-
     } catch (error) {
       const downloadTime = Date.now() - startTime;
       console.error('❌ Erro no download em lote:', error);
-      
+
       return {
         success: false,
         totalFiles: 0,
         successfulDownloads: 0,
         failedDownloads: 0,
         downloadTime,
-        results: []
+        results: [],
       };
     }
   }
@@ -1093,7 +1159,7 @@ export class EmailService {
 
       // 1. Buscar dados básicos do email
       const userEmail = process.env.TARGET_USER_EMAIL;
-      const baseUrl = userEmail 
+      const baseUrl = userEmail
         ? `/users/${userEmail}/messages/${emailId}`
         : `/me/messages/${emailId}`;
 
@@ -1112,12 +1178,10 @@ export class EmailService {
       const subject = emailData.subject || 'Email sem assunto';
       const receivedDate = new Date(emailData.receivedDateTime);
       const dateStr = receivedDate.toISOString().split('T')[0]; // YYYY-MM-DD
-      
+
       // Limpar caracteres especiais do nome do arquivo
-      const cleanSubject = subject
-        .replace(/[<>:"/\\|?*]/g, '_')
-        .substring(0, 50);
-      
+      const cleanSubject = subject.replace(/[<>:"/\\|?*]/g, '_').substring(0, 50);
+
       const fileName = `${dateStr}_${cleanSubject}.eml`;
 
       // 4. Converter conteúdo MIME para Base64
@@ -1132,12 +1196,13 @@ export class EmailService {
         name: fileName,
         contentType: 'message/rfc822', // MIME type padrão para emails
         content: base64Content,
-        size: Buffer.from(base64Content, 'base64').length // tamanho real do arquivo
+        size: Buffer.from(base64Content, 'base64').length, // tamanho real do arquivo
       };
-
     } catch (error) {
       console.error('❌ Erro ao exportar email como anexo:', error);
-      throw new Error(`Falha ao exportar email: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
+      throw new Error(
+        `Falha ao exportar email: ${error instanceof Error ? error.message : 'Erro desconhecido'}`
+      );
     }
   }
 
@@ -1188,7 +1253,7 @@ export class EmailService {
     error?: string;
   }> {
     const startTime = Date.now();
-    
+
     try {
       console.error('🚀 Iniciando envio híbrido de email com anexo...');
       console.error(`   Email origem: ${sourceEmailId.substring(0, 30)}...`);
@@ -1197,15 +1262,11 @@ export class EmailService {
 
       // 1. Baixar anexo para disco
       console.error('📥 Fase 1: Baixando anexo...');
-      const downloadResult = await this.downloadAttachmentToFile(
-        sourceEmailId,
-        attachmentId,
-        {
-          filename: options.customFilename,
-          overwrite: true,
-          validateIntegrity: true
-        }
-      );
+      const downloadResult = await this.downloadAttachmentToFile(sourceEmailId, attachmentId, {
+        filename: options.customFilename,
+        overwrite: true,
+        validateIntegrity: true,
+      });
 
       if (!downloadResult.success) {
         throw new Error(`Falha no download: ${downloadResult.error}`);
@@ -1234,7 +1295,7 @@ export class EmailService {
         name: encodingResult.name,
         contentType: encodingResult.contentType,
         content: encodingResult.content,
-        size: encodingResult.size
+        size: encodingResult.size,
       };
 
       // 4. Enviar email
@@ -1278,17 +1339,16 @@ export class EmailService {
           name: downloadResult.filename,
           size: downloadResult.savedSize,
           contentType: downloadResult.contentType,
-          filePath: downloadResult.filePath
+          filePath: downloadResult.filePath,
         },
-        totalTime
+        totalTime,
       };
-
     } catch (error) {
       const totalTime = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
-      
+
       console.error(`❌ Falha no envio híbrido após ${totalTime}ms:`, errorMessage);
-      
+
       return {
         success: false,
         downloadResult: null,
@@ -1297,10 +1357,10 @@ export class EmailService {
           name: '',
           size: 0,
           contentType: '',
-          filePath: ''
+          filePath: '',
         },
         totalTime,
-        error: errorMessage
+        error: errorMessage,
       };
     }
   }
@@ -1346,7 +1406,7 @@ export class EmailService {
         name: options.customFilename || encodingResult.name,
         contentType: encodingResult.contentType,
         content: encodingResult.content,
-        size: encodingResult.size
+        size: encodingResult.size,
       };
 
       // 3. Enviar email
@@ -1368,23 +1428,22 @@ export class EmailService {
         attachmentInfo: {
           name: attachmentForEmail.name,
           size: attachmentForEmail.size || 0,
-          contentType: attachmentForEmail.contentType
-        }
+          contentType: attachmentForEmail.contentType,
+        },
       };
-
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
       console.error('❌ Erro no envio com arquivo do disco:', errorMessage);
-      
+
       return {
         success: false,
         sendResult: null,
         attachmentInfo: {
           name: '',
           size: 0,
-          contentType: ''
+          contentType: '',
         },
-        error: errorMessage
+        error: errorMessage,
       };
     }
   }
@@ -1398,29 +1457,30 @@ export class EmailService {
    */
   async listFolders(includeSubfolders: boolean = true, maxDepth: number = 3): Promise<any[]> {
     try {
-      console.error(`📁 Listando pastas otimizado${includeSubfolders ? ' (incluindo subpastas)' : ''}`);
+      console.error(
+        `📁 Listando pastas otimizado${includeSubfolders ? ' (incluindo subpastas)' : ''}`
+      );
 
       // Use GraphOptimizer for optimized folder fetching with caching
       const folders = await this.graphOptimizer.getOptimizedFolders({
         includeSubfolders,
         maxDepth,
         enableCache: true,
-        select: ['id', 'displayName', 'totalItemCount', 'unreadItemCount', 'parentFolderId']
+        select: ['id', 'displayName', 'totalItemCount', 'unreadItemCount', 'parentFolderId'],
       });
 
       console.error(`✅ Encontradas ${folders.length} pastas (com cache/otimização)`);
       return folders;
     } catch (error) {
       console.error('❌ Erro ao listar pastas otimizado:', error);
-      
+
       // Fallback to original implementation
       console.error('🔄 Fallback para implementação original de pastas...');
-      
+
       try {
         const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-        const apiEndpoint = userEmail === 'me' 
-          ? '/me/mailFolders'
-          : `/users/${userEmail}/mailFolders`;
+        const apiEndpoint =
+          userEmail === 'me' ? '/me/mailFolders' : `/users/${userEmail}/mailFolders`;
 
         const response = await this.client
           .api(apiEndpoint)
@@ -1454,9 +1514,10 @@ export class EmailService {
 
     try {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-      const apiEndpoint = userEmail === 'me' 
-        ? `/me/mailFolders/${parentFolderId}/childFolders`
-        : `/users/${userEmail}/mailFolders/${parentFolderId}/childFolders`;
+      const apiEndpoint =
+        userEmail === 'me'
+          ? `/me/mailFolders/${parentFolderId}/childFolders`
+          : `/users/${userEmail}/mailFolders/${parentFolderId}/childFolders`;
 
       const response = await this.client
         .api(apiEndpoint)
@@ -1485,21 +1546,21 @@ export class EmailService {
   async createFolder(folderName: string, parentFolderId?: string): Promise<any> {
     try {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-      const apiEndpoint = parentFolderId 
-        ? (userEmail === 'me' 
+      const apiEndpoint = parentFolderId
+        ? userEmail === 'me'
           ? `/me/mailFolders/${parentFolderId}/childFolders`
-          : `/users/${userEmail}/mailFolders/${parentFolderId}/childFolders`)
-        : (userEmail === 'me' 
+          : `/users/${userEmail}/mailFolders/${parentFolderId}/childFolders`
+        : userEmail === 'me'
           ? '/me/mailFolders'
-          : `/users/${userEmail}/mailFolders`);
+          : `/users/${userEmail}/mailFolders`;
 
-      console.error(`📁 Criando pasta: ${folderName}${parentFolderId ? ` (pai: ${parentFolderId})` : ''}`);
+      console.error(
+        `📁 Criando pasta: ${folderName}${parentFolderId ? ` (pai: ${parentFolderId})` : ''}`
+      );
 
-      const folder = await this.client
-        .api(apiEndpoint)
-        .post({
-          displayName: folderName
-        });
+      const folder = await this.client.api(apiEndpoint).post({
+        displayName: folderName,
+      });
 
       console.error(`✅ Pasta criada: ${folder.displayName} (ID: ${folder.id})`);
       return folder;
@@ -1518,23 +1579,24 @@ export class EmailService {
     for (const emailId of emailIds) {
       try {
         const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-        const apiEndpoint = userEmail === 'me' 
-          ? `/me/messages/${emailId}/move`
-          : `/users/${userEmail}/messages/${emailId}/move`;
+        const apiEndpoint =
+          userEmail === 'me'
+            ? `/me/messages/${emailId}/move`
+            : `/users/${userEmail}/messages/${emailId}/move`;
 
-        console.error(`📦 Movendo email ${emailId.substring(0, 8)}... para pasta ${targetFolderId}`);
+        console.error(
+          `📦 Movendo email ${emailId.substring(0, 8)}... para pasta ${targetFolderId}`
+        );
 
-        const result = await this.client
-          .api(apiEndpoint)
-          .post({
-            destinationId: targetFolderId
-          });
+        const result = await this.client.api(apiEndpoint).post({
+          destinationId: targetFolderId,
+        });
 
         results.push({
           emailId,
           success: true,
           newId: result.id,
-          newLocation: result.parentFolderId
+          newLocation: result.parentFolderId,
         });
 
         console.error(`✅ Email movido com sucesso (novo id len=${result?.id?.length ?? 0})`);
@@ -1543,7 +1605,7 @@ export class EmailService {
         results.push({
           emailId,
           success: false,
-          error: error instanceof Error ? error.message : 'Erro desconhecido'
+          error: error instanceof Error ? error.message : 'Erro desconhecido',
         });
       }
     }
@@ -1560,22 +1622,23 @@ export class EmailService {
     for (const emailId of emailIds) {
       try {
         const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-        const apiEndpoint = userEmail === 'me' 
-          ? `/me/messages/${emailId}/copy`
-          : `/users/${userEmail}/messages/${emailId}/copy`;
+        const apiEndpoint =
+          userEmail === 'me'
+            ? `/me/messages/${emailId}/copy`
+            : `/users/${userEmail}/messages/${emailId}/copy`;
 
-        console.error(`📋 Copiando email ${emailId.substring(0, 8)}... para pasta ${targetFolderId}`);
+        console.error(
+          `📋 Copiando email ${emailId.substring(0, 8)}... para pasta ${targetFolderId}`
+        );
 
-        const result = await this.client
-          .api(apiEndpoint)
-          .post({
-            destinationId: targetFolderId
-          });
+        const result = await this.client.api(apiEndpoint).post({
+          destinationId: targetFolderId,
+        });
 
         results.push({
           emailId,
           success: true,
-          copiedId: result.id
+          copiedId: result.id,
         });
 
         console.error(`✅ Email copiado com sucesso`);
@@ -1584,7 +1647,7 @@ export class EmailService {
         results.push({
           emailId,
           success: false,
-          error: error instanceof Error ? error.message : 'Erro desconhecido'
+          error: error instanceof Error ? error.message : 'Erro desconhecido',
         });
       }
     }
@@ -1598,15 +1661,18 @@ export class EmailService {
   async deleteFolder(folderId: string, permanent: boolean = false): Promise<any> {
     try {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-      
+
       // First get folder info
-      const folderEndpoint = userEmail === 'me' 
-        ? `/me/mailFolders/${folderId}`
-        : `/users/${userEmail}/mailFolders/${folderId}`;
+      const folderEndpoint =
+        userEmail === 'me'
+          ? `/me/mailFolders/${folderId}`
+          : `/users/${userEmail}/mailFolders/${folderId}`;
 
       const folder = await this.client.api(folderEndpoint).get();
 
-      console.error(`🗑️ Deletando pasta: ${folder.displayName} (${permanent ? 'permanente' : 'para lixeira'})`);
+      console.error(
+        `🗑️ Deletando pasta: ${folder.displayName} (${permanent ? 'permanente' : 'para lixeira'})`
+      );
 
       // Delete the folder
       await this.client.api(folderEndpoint).delete();
@@ -1617,13 +1683,13 @@ export class EmailService {
         success: true,
         folderName: folder.displayName,
         emailsAffected: folder.totalItemCount,
-        subfoldersAffected: folder.childFolderCount || 0
+        subfoldersAffected: folder.childFolderCount || 0,
       };
     } catch (error) {
       console.error('❌ Erro ao deletar pasta:', error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Erro desconhecido'
+        error: error instanceof Error ? error.message : 'Erro desconhecido',
       };
     }
   }
@@ -1634,18 +1700,22 @@ export class EmailService {
   async getFolderStatistics(folderId: string, includeSubfolders: boolean = false): Promise<any> {
     try {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-      const folderEndpoint = userEmail === 'me' 
-        ? `/me/mailFolders/${folderId}`
-        : `/users/${userEmail}/mailFolders/${folderId}`;
+      const folderEndpoint =
+        userEmail === 'me'
+          ? `/me/mailFolders/${folderId}`
+          : `/users/${userEmail}/mailFolders/${folderId}`;
 
-      console.error(`📊 Obtendo estatísticas da pasta ${folderId}${includeSubfolders ? ' (incluindo subpastas)' : ''}`);
+      console.error(
+        `📊 Obtendo estatísticas da pasta ${folderId}${includeSubfolders ? ' (incluindo subpastas)' : ''}`
+      );
 
       const folder = await this.client.api(folderEndpoint).get();
 
       // Get emails for date range analysis
-      const messagesEndpoint = userEmail === 'me' 
-        ? `/me/mailFolders/${folderId}/messages`
-        : `/users/${userEmail}/mailFolders/${folderId}/messages`;
+      const messagesEndpoint =
+        userEmail === 'me'
+          ? `/me/mailFolders/${folderId}/messages`
+          : `/users/${userEmail}/mailFolders/${folderId}/messages`;
 
       const messages = await this.client
         .api(messagesEndpoint)
@@ -1654,7 +1724,7 @@ export class EmailService {
         .get();
 
       const emails = messages.value || [];
-      
+
       // Calculate statistics
       const unreadEmails = folder.unreadItemCount || 0;
       const totalEmails = folder.totalItemCount || 0;
@@ -1667,10 +1737,10 @@ export class EmailService {
         const dates = emails
           .map((e: any) => new Date(e.receivedDateTime))
           .sort((a: Date, b: Date) => a.getTime() - b.getTime());
-        
+
         dateRange = {
           oldest: dates[0].toLocaleString('pt-BR'),
-          newest: dates[dates.length - 1].toLocaleString('pt-BR')
+          newest: dates[dates.length - 1].toLocaleString('pt-BR'),
         };
       }
 
@@ -1680,7 +1750,7 @@ export class EmailService {
         unreadEmails,
         readEmails,
         emailsWithAttachments,
-        dateRange
+        dateRange,
       };
 
       // Include subfolders if requested
@@ -1688,7 +1758,7 @@ export class EmailService {
         const subfolders = await this.getSubfolders(folderId, 1);
         stats.subfolders = subfolders.map((sf: any) => ({
           name: sf.displayName,
-          emailCount: sf.totalItemCount || 0
+          emailCount: sf.totalItemCount || 0,
         }));
       }
 
@@ -1704,8 +1774,8 @@ export class EmailService {
    * Organize emails by predefined rules
    */
   async organizeEmailsByRules(
-    sourceFolderId: string, 
-    rules: any[], 
+    sourceFolderId: string,
+    rules: any[],
     options: { dryRun?: boolean; maxEmails?: number } = {}
   ): Promise<any> {
     const { dryRun = true, maxEmails = 100 } = options;
@@ -1714,9 +1784,10 @@ export class EmailService {
       console.error(`🗂️ Organizando emails por regras (${dryRun ? 'simulação' : 'execução'})`);
 
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-      const messagesEndpoint = userEmail === 'me' 
-        ? `/me/mailFolders/${sourceFolderId}/messages`
-        : `/users/${userEmail}/mailFolders/${sourceFolderId}/messages`;
+      const messagesEndpoint =
+        userEmail === 'me'
+          ? `/me/mailFolders/${sourceFolderId}/messages`
+          : `/users/${userEmail}/mailFolders/${sourceFolderId}/messages`;
 
       // Get emails to organize
       const response = await this.client
@@ -1732,17 +1803,17 @@ export class EmailService {
       // Apply each rule
       for (const rule of rules) {
         const matchingEmails = this.findEmailsMatchingRule(emails, rule);
-        
+
         if (matchingEmails.length > 0) {
           ruleResults.push({
             ruleName: rule.name,
             emailsMatched: matchingEmails.length,
-            targetFolder: rule.targetFolderId
+            targetFolder: rule.targetFolderId,
           });
 
           if (!dryRun) {
             // Actually move the emails
-            const emailIds = matchingEmails.map(e => e.id);
+            const emailIds = matchingEmails.map((e) => e.id);
             await this.moveEmailsToFolder(emailIds, rule.targetFolderId);
           }
 
@@ -1750,13 +1821,15 @@ export class EmailService {
         }
       }
 
-      console.error(`✅ Organização concluída: ${emailsOrganized}/${emails.length} emails processados`);
+      console.error(
+        `✅ Organização concluída: ${emailsOrganized}/${emails.length} emails processados`
+      );
 
       return {
         emailsProcessed: emails.length,
         emailsOrganized,
         rulesApplied: ruleResults.length,
-        ruleResults
+        ruleResults,
       };
     } catch (error) {
       console.error('❌ Erro ao organizar emails:', error);
@@ -1768,11 +1841,11 @@ export class EmailService {
    * Find emails matching a specific rule
    */
   private findEmailsMatchingRule(emails: any[], rule: any): any[] {
-    return emails.filter(email => {
+    return emails.filter((email) => {
       // Subject-based rules
       if (rule.subjectContains) {
         const subject = email.subject?.toLowerCase() || '';
-        return rule.subjectContains.some((keyword: string) => 
+        return rule.subjectContains.some((keyword: string) =>
           subject.includes(keyword.toLowerCase())
         );
       }
@@ -1780,9 +1853,7 @@ export class EmailService {
       // Sender-based rules
       if (rule.fromContains) {
         const from = email.from?.emailAddress?.address?.toLowerCase() || '';
-        return rule.fromContains.some((domain: string) => 
-          from.includes(domain.toLowerCase())
-        );
+        return rule.fromContains.some((domain: string) => from.includes(domain.toLowerCase()));
       }
 
       // Date-based rules
@@ -1823,9 +1894,12 @@ export class EmailService {
       // when the caller provided any non-date predicate but no date range,
       // so the query hits a fast path.
       const needsDateNarrow =
-        !options.dateFrom && !options.dateTo &&
-        (options.hasAttachments !== undefined || options.isRead !== undefined ||
-         options.sender || options.subject);
+        !options.dateFrom &&
+        !options.dateTo &&
+        (options.hasAttachments !== undefined ||
+          options.isRead !== undefined ||
+          options.sender ||
+          options.subject);
       if (needsDateNarrow) {
         options = {
           ...options,
@@ -1844,7 +1918,7 @@ export class EmailService {
         folder = 'inbox',
         maxResults = 20,
         sortBy = 'receivedDateTime',
-        sortOrder = 'desc'
+        sortOrder = 'desc',
       } = options;
 
       console.error(`🔍 Executando busca avançada otimizada na pasta ${folder}`);
@@ -1852,15 +1926,22 @@ export class EmailService {
       // Use GraphOptimizer for intelligent search query optimization
       const optimizedFilter = this.graphOptimizer.optimizeSearchQuery(query || '', {
         searchIn: query ? ['subject', 'from', 'body'] : undefined,
-        dateRange: (dateFrom && dateTo) ? { start: dateFrom, end: dateTo } : undefined,
+        dateRange: dateFrom && dateTo ? { start: dateFrom, end: dateTo } : undefined,
         hasAttachments,
-        isRead
+        isRead,
       });
+
+      // Push `sender` into the Graph filter — without this, large inboxes
+      // return the first N messages by date and then the client-side filter
+      // below has nothing to match (JAR-257 bug #1).
+      const combinedFilter = sender
+        ? [optimizedFilter, buildSenderContainsFilter(sender)].filter(Boolean).join(' and ')
+        : optimizedFilter;
 
       // Generate cache key for this search
       const cacheKey = this.cacheManager.generateEmailKey('advanced_search', {
         ...options,
-        optimizedFilter
+        combinedFilter,
       });
 
       // Try cache first
@@ -1870,15 +1951,22 @@ export class EmailService {
         return cached;
       }
 
-      // Build search request for GraphOptimizer
+      // Build search request for GraphOptimizer.
+      //
+      // We deliberately do NOT pass `search: query` here. `optimizedFilter`
+      // already encodes the text search as `contains()` over subject/from/body,
+      // and `getOptimizedEmails` calls `.filter(...)` a second time when
+      // `search` is set — and the Graph SDK's GraphRequest keeps only the
+      // last `$filter`, which means the sender predicate we just merged in
+      // would be silently dropped. Surface the text search through
+      // `combinedFilter` only.
       const searchOptions = {
         folder,
         maxResults,
-        filter: optimizedFilter,
-        search: query,
+        filter: combinedFilter,
         enableCache: false, // We handle caching here
         select: this.graphOptimizer.getOptimalFields('search'),
-        orderBy: query ? undefined : `${sortBy} ${sortOrder}`
+        orderBy: query ? undefined : `${sortBy} ${sortOrder}`,
       };
 
       const emails = await this.graphOptimizer.getOptimizedEmails(searchOptions);
@@ -1887,13 +1975,14 @@ export class EmailService {
       let filteredEmails = emails;
 
       if (sender) {
-        filteredEmails = filteredEmails.filter(email => 
-          email.from?.emailAddress?.address?.includes(sender)
+        const senderLower = sender.toLowerCase();
+        filteredEmails = filteredEmails.filter((email) =>
+          email.from?.emailAddress?.address?.toLowerCase().includes(senderLower)
         );
       }
 
       if (subject) {
-        filteredEmails = filteredEmails.filter(email => 
+        filteredEmails = filteredEmails.filter((email) =>
           email.subject?.toLowerCase().includes(subject.toLowerCase())
         );
       }
@@ -1902,14 +1991,16 @@ export class EmailService {
       const complexity = this.calculateSearchComplexity(options);
       this.cacheManager.cacheSearchResults(cacheKey, filteredEmails, complexity);
 
-      console.error(`✅ Busca avançada otimizada concluída: ${filteredEmails.length} emails encontrados`);
+      console.error(
+        `✅ Busca avançada otimizada concluída: ${filteredEmails.length} emails encontrados`
+      );
       return filteredEmails;
     } catch (error) {
       console.error('❌ Erro na busca avançada otimizada:', error);
-      
+
       // Fallback to original implementation
       console.error('🔄 Fallback para busca avançada original...');
-      
+
       try {
         const {
           query,
@@ -1922,23 +2013,24 @@ export class EmailService {
           folder = 'inbox',
           maxResults = 20,
           sortBy = 'receivedDateTime',
-          sortOrder = 'desc'
+          sortOrder = 'desc',
         } = options;
 
         const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-        const apiEndpoint = userEmail === 'me' 
-          ? `/me/mailFolders/${folder}/messages`
-          : `/users/${userEmail}/mailFolders/${folder}/messages`;
+        const apiEndpoint =
+          userEmail === 'me'
+            ? `/me/mailFolders/${folder}/messages`
+            : `/users/${userEmail}/mailFolders/${folder}/messages`;
 
         const queryParams: string[] = [
           `$top=${Math.min(maxResults, 100)}`,
-          `$select=id,subject,from,receivedDateTime,isRead,hasAttachments,bodyPreview,body`
+          `$select=id,subject,from,receivedDateTime,isRead,hasAttachments,bodyPreview,body`,
         ];
 
         const filterConditions: string[] = [];
 
         if (sender) {
-          filterConditions.push(`from/emailAddress/address eq '${sender}'`);
+          filterConditions.push(buildSenderContainsFilter(sender));
         }
 
         if (subject) {
@@ -1976,8 +2068,10 @@ export class EmailService {
         const fullEndpoint = `${apiEndpoint}?${queryString}`;
 
         const response = await this.client.api(fullEndpoint).get();
-        
-        console.error(`✅ Fallback de busca concluído: ${response.value?.length || 0} emails encontrados`);
+
+        console.error(
+          `✅ Fallback de busca concluído: ${response.value?.length || 0} emails encontrados`
+        );
         return response.value || [];
       } catch (fallbackError) {
         console.error('❌ Erro no fallback da busca avançada:', fallbackError);
@@ -1991,7 +2085,7 @@ export class EmailService {
    */
   private calculateSearchComplexity(options: any): 'simple' | 'moderate' | 'complex' {
     let complexity = 0;
-    
+
     if (options.query) complexity += 2;
     if (options.sender) complexity += 1;
     if (options.subject) complexity += 1;
@@ -2009,7 +2103,7 @@ export class EmailService {
    * Search emails by sender domain
    */
   async searchEmailsBySenderDomain(
-    domain: string, 
+    domain: string,
     options: {
       maxResults?: number;
       includeSubdomains?: boolean;
@@ -2027,9 +2121,10 @@ export class EmailService {
       };
 
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-      const apiEndpoint = userEmail === 'me'
-        ? `/me/mailFolders/${folder}/messages`
-        : `/users/${userEmail}/mailFolders/${folder}/messages`;
+      const apiEndpoint =
+        userEmail === 'me'
+          ? `/me/mailFolders/${folder}/messages`
+          : `/users/${userEmail}/mailFolders/${folder}/messages`;
 
       console.error(`🏢 Buscando emails do domínio: ${domain}`);
 
@@ -2083,7 +2178,7 @@ export class EmailService {
    * Search emails by attachment type
    */
   async searchEmailsByAttachmentType(
-    fileTypes: string[], 
+    fileTypes: string[],
     options: {
       maxResults?: number;
       folder?: string;
@@ -2116,11 +2211,12 @@ export class EmailService {
 
         try {
           const attachments = await this.listAttachments(email.id!);
-          
-          const hasMatchingType = attachments.some(att => 
-            fileTypes.some(type => 
-              att.contentType?.toLowerCase().includes(type.toLowerCase()) ||
-              att.name?.toLowerCase().endsWith(`.${type.toLowerCase()}`)
+
+          const hasMatchingType = attachments.some((att) =>
+            fileTypes.some(
+              (type) =>
+                att.contentType?.toLowerCase().includes(type.toLowerCase()) ||
+                att.name?.toLowerCase().endsWith(`.${type.toLowerCase()}`)
             )
           );
 
@@ -2148,7 +2244,9 @@ export class EmailService {
         }
       }
 
-      console.error(`✅ Encontrados ${matchingEmails.length} emails com anexos dos tipos especificados`);
+      console.error(
+        `✅ Encontrados ${matchingEmails.length} emails com anexos dos tipos especificados`
+      );
       return matchingEmails;
     } catch (error) {
       console.error('❌ Erro na busca por tipo de anexo:', error);
@@ -2167,20 +2265,26 @@ export class EmailService {
     dateRange?: { from: string; to: string };
   }): Promise<any[]> {
     try {
-      const { criteria, folder = 'inbox', maxResults = 50, includeRead = true, dateRange } = options;
+      const {
+        criteria,
+        folder = 'inbox',
+        maxResults = 50,
+        includeRead = true,
+        dateRange,
+      } = options;
 
       console.error(`🔄 Procurando emails duplicados por: ${criteria}`);
 
       // Get emails for analysis
       const emails = await this.listEmails({
         maxResults: maxResults * 2,
-        folder
+        folder,
       });
 
       // Group emails by criteria
       const groups = new Map<string, Message[]>();
 
-      emails.forEach(email => {
+      emails.forEach((email) => {
         if (!includeRead && email.isRead) return;
 
         if (dateRange && email.receivedDateTime) {
@@ -2218,9 +2322,11 @@ export class EmailService {
         .filter(([_, emails]) => emails.length > 1)
         .map(([key, emails]) => ({
           key: key.length > 100 ? key.substring(0, 100) + '...' : key,
-          emails: emails.sort((a, b) => 
-            new Date(b.receivedDateTime || 0).getTime() - new Date(a.receivedDateTime || 0).getTime()
-          )
+          emails: emails.sort(
+            (a, b) =>
+              new Date(b.receivedDateTime || 0).getTime() -
+              new Date(a.receivedDateTime || 0).getTime()
+          ),
         }))
         .sort((a, b) => b.emails.length - a.emails.length);
 
@@ -2243,7 +2349,13 @@ export class EmailService {
     includeAttachments?: boolean;
   }): Promise<Message[]> {
     try {
-      const { minSizeMB, maxSizeMB, folder = 'inbox', maxResults = 20, includeAttachments = true } = options;
+      const {
+        minSizeMB,
+        maxSizeMB,
+        folder = 'inbox',
+        maxResults = 20,
+        includeAttachments = true,
+      } = options;
 
       console.error(`📏 Buscando emails por tamanho: ${minSizeMB || 0}MB - ${maxSizeMB || '∞'}MB`);
 
@@ -2251,7 +2363,7 @@ export class EmailService {
       // We need to get emails and filter them locally
       const emails = await this.listEmails({
         maxResults: maxResults * 3, // Get more to filter by size
-        folder
+        folder,
       });
 
       const filteredEmails: Message[] = [];
@@ -2274,7 +2386,10 @@ export class EmailService {
             const attachmentSize = attachments.reduce((sum, att) => sum + (att.size || 0), 0);
             emailSize += attachmentSize;
           } catch (attachmentError) {
-            console.warn(`⚠️ Erro ao obter tamanho dos anexos do email ${email.id}:`, attachmentError);
+            console.warn(
+              `⚠️ Erro ao obter tamanho dos anexos do email ${email.id}:`,
+              attachmentError
+            );
           }
         }
 
@@ -2289,7 +2404,9 @@ export class EmailService {
         filteredEmails.push(email);
       }
 
-      console.error(`✅ Encontrados ${filteredEmails.length} emails no intervalo de tamanho especificado`);
+      console.error(
+        `✅ Encontrados ${filteredEmails.length} emails no intervalo de tamanho especificado`
+      );
       return filteredEmails;
     } catch (error) {
       console.error('❌ Erro na busca por tamanho:', error);
@@ -2311,7 +2428,7 @@ export class EmailService {
       this.savedSearches.set(name, {
         name,
         criteria,
-        created: new Date().toISOString()
+        created: new Date().toISOString(),
       });
 
       console.error(`💾 Busca salva: ${name}`);
@@ -2353,10 +2470,10 @@ export class EmailService {
       const emails = await this.advancedSearchEmails(savedSearch.criteria);
 
       console.error(`🔍 Executada busca salva "${name}": ${emails.length} emails encontrados`);
-      
+
       return {
         emails,
-        criteria: savedSearch.criteria
+        criteria: savedSearch.criteria,
       };
     } catch (error) {
       console.error(`❌ Erro ao executar busca salva "${name}":`, error);
@@ -2389,7 +2506,10 @@ export class EmailService {
   /**
    * Batch mark emails as read
    */
-  async batchMarkAsRead(emailIds: string[], options: { maxConcurrent?: number } = {}): Promise<Array<{ success: boolean; error?: string }>> {
+  async batchMarkAsRead(
+    emailIds: string[],
+    options: { maxConcurrent?: number } = {}
+  ): Promise<Array<{ success: boolean; error?: string }>> {
     const { maxConcurrent = 5 } = options;
 
     console.error(`📖 Iniciando marcação em lote otimizada como lidos: ${emailIds.length} emails`);
@@ -2397,7 +2517,7 @@ export class EmailService {
     try {
       // Use ParallelProcessor for optimized batch processing
       const results = await this.parallelProcessor.processEmailsBatch(
-        emailIds.map(id => ({ id })),
+        emailIds.map((id) => ({ id })),
         async (emailData) => {
           await this.markAsRead(emailData.id);
           return { success: true };
@@ -2405,18 +2525,20 @@ export class EmailService {
         {
           priority: 'normal',
           batchSize: maxConcurrent,
-          timeout: 10000
+          timeout: 10000,
         }
       );
 
       // Convert ParallelProcessor results to expected format
-      const formattedResults = results.map(result => ({
+      const formattedResults = results.map((result) => ({
         success: result.success,
-        error: result.error?.message
+        error: result.error?.message,
       }));
 
-      const successCount = formattedResults.filter(r => r.success).length;
-      console.error(`✅ Marcação em lote otimizada concluída: ${successCount}/${emailIds.length} sucessos`);
+      const successCount = formattedResults.filter((r) => r.success).length;
+      console.error(
+        `✅ Marcação em lote otimizada concluída: ${successCount}/${emailIds.length} sucessos`
+      );
 
       // Invalidate email cache after bulk operations
       this.cacheManager.invalidateEmailCache();
@@ -2424,20 +2546,23 @@ export class EmailService {
       return formattedResults;
     } catch (error) {
       console.error('❌ Erro no processamento paralelo, usando fallback:', error);
-      
+
       // Fallback to original implementation
       const results: Array<{ success: boolean; error?: string }> = [];
 
       for (let i = 0; i < emailIds.length; i += maxConcurrent) {
         const batch = emailIds.slice(i, i + maxConcurrent);
-        
+
         const batchPromises = batch.map(async (emailId) => {
           try {
             await this.markAsRead(emailId);
             return { success: true };
           } catch (error) {
             console.warn(`⚠️ Falha ao marcar email ${emailId} como lido:`, error);
-            return { success: false, error: error instanceof Error ? error.message : 'Erro desconhecido' };
+            return {
+              success: false,
+              error: error instanceof Error ? error.message : 'Erro desconhecido',
+            };
           }
         });
 
@@ -2445,12 +2570,14 @@ export class EmailService {
         results.push(...batchResults);
 
         if (i + maxConcurrent < emailIds.length) {
-          await new Promise(resolve => setTimeout(resolve, 200));
+          await new Promise((resolve) => setTimeout(resolve, 200));
         }
       }
 
-      const successCount = results.filter(r => r.success).length;
-      console.error(`✅ Fallback de marcação concluído: ${successCount}/${emailIds.length} sucessos`);
+      const successCount = results.filter((r) => r.success).length;
+      console.error(
+        `✅ Fallback de marcação concluído: ${successCount}/${emailIds.length} sucessos`
+      );
 
       return results;
     }
@@ -2459,15 +2586,20 @@ export class EmailService {
   /**
    * Batch mark emails as unread
    */
-  async batchMarkAsUnread(emailIds: string[], options: { maxConcurrent?: number } = {}): Promise<Array<{ success: boolean; error?: string }>> {
+  async batchMarkAsUnread(
+    emailIds: string[],
+    options: { maxConcurrent?: number } = {}
+  ): Promise<Array<{ success: boolean; error?: string }>> {
     const { maxConcurrent = 5 } = options;
 
-    console.error(`📬 Iniciando marcação em lote otimizada como não lidos: ${emailIds.length} emails`);
+    console.error(
+      `📬 Iniciando marcação em lote otimizada como não lidos: ${emailIds.length} emails`
+    );
 
     try {
       // Use ParallelProcessor for optimized batch processing
       const results = await this.parallelProcessor.processEmailsBatch(
-        emailIds.map(id => ({ id })),
+        emailIds.map((id) => ({ id })),
         async (emailData) => {
           await this.markAsUnread(emailData.id);
           return { success: true };
@@ -2475,18 +2607,20 @@ export class EmailService {
         {
           priority: 'normal',
           batchSize: maxConcurrent,
-          timeout: 10000
+          timeout: 10000,
         }
       );
 
       // Convert ParallelProcessor results to expected format
-      const formattedResults = results.map(result => ({
+      const formattedResults = results.map((result) => ({
         success: result.success,
-        error: result.error?.message
+        error: result.error?.message,
       }));
 
-      const successCount = formattedResults.filter(r => r.success).length;
-      console.error(`✅ Marcação em lote otimizada concluída: ${successCount}/${emailIds.length} sucessos`);
+      const successCount = formattedResults.filter((r) => r.success).length;
+      console.error(
+        `✅ Marcação em lote otimizada concluída: ${successCount}/${emailIds.length} sucessos`
+      );
 
       // Invalidate email cache after bulk operations
       this.cacheManager.invalidateEmailCache();
@@ -2494,20 +2628,23 @@ export class EmailService {
       return formattedResults;
     } catch (error) {
       console.error('❌ Erro no processamento paralelo, usando fallback:', error);
-      
+
       // Fallback to original implementation
       const results: Array<{ success: boolean; error?: string }> = [];
 
       for (let i = 0; i < emailIds.length; i += maxConcurrent) {
         const batch = emailIds.slice(i, i + maxConcurrent);
-        
+
         const batchPromises = batch.map(async (emailId) => {
           try {
             await this.markAsUnread(emailId);
             return { success: true };
           } catch (error) {
             console.warn(`⚠️ Falha ao marcar email ${emailId} como não lido:`, error);
-            return { success: false, error: error instanceof Error ? error.message : 'Erro desconhecido' };
+            return {
+              success: false,
+              error: error instanceof Error ? error.message : 'Erro desconhecido',
+            };
           }
         });
 
@@ -2515,12 +2652,14 @@ export class EmailService {
         results.push(...batchResults);
 
         if (i + maxConcurrent < emailIds.length) {
-          await new Promise(resolve => setTimeout(resolve, 200));
+          await new Promise((resolve) => setTimeout(resolve, 200));
         }
       }
 
-      const successCount = results.filter(r => r.success).length;
-      console.error(`✅ Fallback de marcação concluído: ${successCount}/${emailIds.length} sucessos`);
+      const successCount = results.filter((r) => r.success).length;
+      console.error(
+        `✅ Fallback de marcação concluído: ${successCount}/${emailIds.length} sucessos`
+      );
 
       return results;
     }
@@ -2529,23 +2668,31 @@ export class EmailService {
   /**
    * Batch delete emails
    */
-  async batchDeleteEmails(emailIds: string[], options: { permanent?: boolean; maxConcurrent?: number } = {}): Promise<Array<{ success: boolean; error?: string }>> {
+  async batchDeleteEmails(
+    emailIds: string[],
+    options: { permanent?: boolean; maxConcurrent?: number } = {}
+  ): Promise<Array<{ success: boolean; error?: string }>> {
     const { permanent = false, maxConcurrent = 3 } = options; // Lower concurrency for delete operations
     const results: Array<{ success: boolean; error?: string }> = [];
 
-    console.error(`🗑️ Iniciando deleção em lote: ${emailIds.length} emails (${permanent ? 'permanente' : 'para lixeira'})`);
+    console.error(
+      `🗑️ Iniciando deleção em lote: ${emailIds.length} emails (${permanent ? 'permanente' : 'para lixeira'})`
+    );
 
     // Process in batches with lower concurrency for delete operations
     for (let i = 0; i < emailIds.length; i += maxConcurrent) {
       const batch = emailIds.slice(i, i + maxConcurrent);
-      
+
       const batchPromises = batch.map(async (emailId) => {
         try {
           await this.deleteEmail(emailId);
           return { success: true };
         } catch (error) {
           console.warn(`⚠️ Falha ao deletar email ${emailId}:`, error);
-          return { success: false, error: error instanceof Error ? error.message : 'Erro desconhecido' };
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Erro desconhecido',
+          };
         }
       });
 
@@ -2554,11 +2701,11 @@ export class EmailService {
 
       // Longer delay between batches for delete operations
       if (i + maxConcurrent < emailIds.length) {
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise((resolve) => setTimeout(resolve, 500));
       }
     }
 
-    const successCount = results.filter(r => r.success).length;
+    const successCount = results.filter((r) => r.success).length;
     console.error(`✅ Deleção em lote concluída: ${successCount}/${emailIds.length} sucessos`);
 
     return results;
@@ -2567,23 +2714,32 @@ export class EmailService {
   /**
    * Batch move emails to folder
    */
-  async batchMoveEmails(emailIds: string[], targetFolderId: string, options: { maxConcurrent?: number } = {}): Promise<Array<{ success: boolean; error?: string }>> {
+  async batchMoveEmails(
+    emailIds: string[],
+    targetFolderId: string,
+    options: { maxConcurrent?: number } = {}
+  ): Promise<Array<{ success: boolean; error?: string }>> {
     const { maxConcurrent = 5 } = options;
     const results: Array<{ success: boolean; error?: string }> = [];
 
-    console.error(`📦 Iniciando movimentação em lote: ${emailIds.length} emails para pasta ${targetFolderId}`);
+    console.error(
+      `📦 Iniciando movimentação em lote: ${emailIds.length} emails para pasta ${targetFolderId}`
+    );
 
     // Process in batches
     for (let i = 0; i < emailIds.length; i += maxConcurrent) {
       const batch = emailIds.slice(i, i + maxConcurrent);
-      
+
       const batchPromises = batch.map(async (emailId) => {
         try {
           await this.moveEmailsToFolder([emailId], targetFolderId);
           return { success: true };
         } catch (error) {
           console.warn(`⚠️ Falha ao mover email ${emailId}:`, error);
-          return { success: false, error: error instanceof Error ? error.message : 'Erro desconhecido' };
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Erro desconhecido',
+          };
         }
       });
 
@@ -2592,11 +2748,11 @@ export class EmailService {
 
       // Small delay between batches
       if (i + maxConcurrent < emailIds.length) {
-        await new Promise(resolve => setTimeout(resolve, 300));
+        await new Promise((resolve) => setTimeout(resolve, 300));
       }
     }
 
-    const successCount = results.filter(r => r.success).length;
+    const successCount = results.filter((r) => r.success).length;
     console.error(`✅ Movimentação em lote concluída: ${successCount}/${emailIds.length} sucessos`);
 
     return results;
@@ -2605,19 +2761,24 @@ export class EmailService {
   /**
    * Batch download all attachments from multiple emails
    */
-  async batchDownloadAllAttachments(emailIds: string[], options: {
-    targetDirectory?: string;
-    maxConcurrent?: number;
-    overwrite?: boolean;
-    validateIntegrity?: boolean;
-    sizeLimit?: number;
-  } = {}): Promise<Array<{
-    success: boolean;
-    filesDownloaded: number;
-    totalSizeMB: number;
-    fileNames?: string[];
-    error?: string;
-  }>> {
+  async batchDownloadAllAttachments(
+    emailIds: string[],
+    options: {
+      targetDirectory?: string;
+      maxConcurrent?: number;
+      overwrite?: boolean;
+      validateIntegrity?: boolean;
+      sizeLimit?: number;
+    } = {}
+  ): Promise<
+    Array<{
+      success: boolean;
+      filesDownloaded: number;
+      totalSizeMB: number;
+      fileNames?: string[];
+      error?: string;
+    }>
+  > {
     const { maxConcurrent = 3, sizeLimit: _sizeLimit = 25 } = options;
     const results: Array<{
       success: boolean;
@@ -2632,21 +2793,21 @@ export class EmailService {
     // Process in batches with low concurrency for downloads
     for (let i = 0; i < emailIds.length; i += maxConcurrent) {
       const batch = emailIds.slice(i, i + maxConcurrent);
-      
+
       const batchPromises = batch.map(async (emailId) => {
         try {
           const downloadResult = await this.downloadAllAttachmentsFromEmail(emailId, options);
-          
+
           // Calculate total size from successful downloads
-          const successfulResults = downloadResult.results.filter(r => r.success);
+          const successfulResults = downloadResult.results.filter((r) => r.success);
           const totalSizeMB = successfulResults.length * 0.5; // Estimate 500KB per file
-          const fileNames = successfulResults.map(r => r.filename);
-          
+          const fileNames = successfulResults.map((r) => r.filename);
+
           return {
             success: true,
             filesDownloaded: downloadResult.successfulDownloads,
             totalSizeMB,
-            fileNames
+            fileNames,
           };
         } catch (error) {
           console.warn(`⚠️ Falha no download dos anexos do email ${emailId}:`, error);
@@ -2654,7 +2815,7 @@ export class EmailService {
             success: false,
             filesDownloaded: 0,
             totalSizeMB: 0,
-            error: error instanceof Error ? error.message : 'Erro desconhecido'
+            error: error instanceof Error ? error.message : 'Erro desconhecido',
           };
         }
       });
@@ -2664,13 +2825,15 @@ export class EmailService {
 
       // Longer delay between batches for download operations
       if (i + maxConcurrent < emailIds.length) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
     }
 
-    const successCount = results.filter(r => r.success).length;
+    const successCount = results.filter((r) => r.success).length;
     const totalFiles = results.reduce((sum, r) => sum + r.filesDownloaded, 0);
-    console.error(`✅ Download em lote concluído: ${successCount}/${emailIds.length} emails, ${totalFiles} arquivos`);
+    console.error(
+      `✅ Download em lote concluído: ${successCount}/${emailIds.length} emails, ${totalFiles} arquivos`
+    );
 
     return results;
   }
@@ -2683,17 +2846,15 @@ export class EmailService {
    * Optimized email listing with caching and intelligent field selection
    */
   async listEmailsOptimized(options: EmailListOptions = {}): Promise<Message[]> {
-    const {
-      maxResults = 10,
-      filter,
-      search,
-      folder = 'inbox'
-    } = options;
+    const { maxResults = 10, filter, search, folder = 'inbox' } = options;
 
     try {
       // Generate cache key for this request
       const cacheKey = this.cacheManager.generateEmailKey('list', {
-        folder, maxResults, filter, search
+        folder,
+        maxResults,
+        filter,
+        search,
       });
 
       // Try cache first for better performance
@@ -2711,16 +2872,16 @@ export class EmailService {
         filter,
         enableCache: false, // We handle caching manually
         select: this.graphOptimizer.getOptimalFields('list'),
-        orderBy: search ? undefined : 'receivedDateTime desc'
+        orderBy: search ? undefined : 'receivedDateTime desc',
       };
 
       console.error(`📧 Listing emails: ${maxResults} results, folder: ${folder} (optimized)`);
 
       const emails = await this.graphOptimizer.getOptimizedEmails(optimizedOptions);
-      
+
       // Cache the results
       this.cacheManager.cacheEmails(cacheKey, emails, folder);
-      
+
       console.error(`✅ Found ${emails.length} emails (with optimization)`);
       return emails;
     } catch (error) {
@@ -2732,10 +2893,13 @@ export class EmailService {
   /**
    * Optimized folder listing with caching
    */
-  async listFoldersOptimized(includeSubfolders: boolean = true, maxDepth: number = 3): Promise<any[]> {
+  async listFoldersOptimized(
+    includeSubfolders: boolean = true,
+    maxDepth: number = 3
+  ): Promise<any[]> {
     try {
       const cacheKey = `folders:optimized:${includeSubfolders}:${maxDepth}`;
-      
+
       // Try cache first
       const cached = this.cacheManager.get<any[]>(cacheKey);
       if (cached) {
@@ -2749,7 +2913,7 @@ export class EmailService {
         includeSubfolders,
         maxDepth,
         enableCache: false,
-        select: ['id', 'displayName', 'totalItemCount', 'unreadItemCount', 'parentFolderId']
+        select: ['id', 'displayName', 'totalItemCount', 'unreadItemCount', 'parentFolderId'],
       });
 
       // Cache with longer TTL for folders
@@ -2780,16 +2944,18 @@ export class EmailService {
     console.error(`🔄 Processing ${emails.length} emails in parallel (batch: ${batchSize})`);
 
     try {
-      const results = await this.parallelProcessor.processEmailsBatch(
-        emails,
-        operation,
-        { priority, batchSize, timeout }
+      const results = await this.parallelProcessor.processEmailsBatch(emails, operation, {
+        priority,
+        batchSize,
+        timeout,
+      });
+
+      const successCount = results.filter((r) => r.success).length;
+      console.error(
+        `✅ Parallel processing completed: ${successCount}/${emails.length} successful`
       );
 
-      const successCount = results.filter(r => r.success).length;
-      console.error(`✅ Parallel processing completed: ${successCount}/${emails.length} successful`);
-
-      return results.filter(r => r.success).map(r => r.result);
+      return results.filter((r) => r.success).map((r) => r.result);
     } catch (error) {
       console.error('❌ Error in parallel email processing:', error);
       throw error;
@@ -2817,13 +2983,20 @@ export class EmailService {
       importance,
       hasAttachments,
       isRead,
-      maxResults = 50
+      maxResults = 50,
     } = options;
 
     try {
       // Generate cache key for search
       const cacheKey = this.cacheManager.generateEmailKey('search', {
-        query, folders, searchIn, dateRange, importance, hasAttachments, isRead, maxResults
+        query,
+        folders,
+        searchIn,
+        dateRange,
+        importance,
+        hasAttachments,
+        isRead,
+        maxResults,
       });
 
       // Try cache first
@@ -2841,14 +3014,14 @@ export class EmailService {
         dateRange,
         importance,
         hasAttachments,
-        isRead
+        isRead,
       });
 
       // Execute search across folders in parallel
-      const searchQueries = folders.map(folder => ({
+      const searchQueries = folders.map((folder) => ({
         query: searchFilter,
         folder,
-        options: { maxResults: Math.ceil(maxResults / folders.length) }
+        options: { maxResults: Math.ceil(maxResults / folders.length) },
       }));
 
       const allResults = await this.parallelProcessor.processSearchQueriesBatch(
@@ -2858,13 +3031,13 @@ export class EmailService {
             folder: queryData.folder,
             filter: queryData.query,
             maxResults: queryData.options.maxResults,
-            select: this.graphOptimizer.getOptimalFields('search')
+            select: this.graphOptimizer.getOptimalFields('search'),
           });
         },
         {
           mergeResults: true,
           deduplicate: true,
-          maxResultsPerQuery: maxResults
+          maxResultsPerQuery: maxResults,
         }
       );
 
@@ -2911,22 +3084,24 @@ export class EmailService {
     return {
       cache: this.cacheManager.getStats(),
       graphOptimizer: this.graphOptimizer.getOptimizationStats(),
-      parallelProcessor: this.parallelProcessor.getMetrics()
+      parallelProcessor: this.parallelProcessor.getMetrics(),
     };
   }
 
   /**
    * Email cleanup wizard
    */
-  async emailCleanupWizard(options: {
-    dryRun?: boolean;
-    olderThanDays?: number;
-    deleteRead?: boolean;
-    deleteLargeAttachments?: boolean;
-    attachmentSizeLimitMB?: number;
-    excludeFolders?: string[];
-    maxEmails?: number;
-  } = {}): Promise<{
+  async emailCleanupWizard(
+    options: {
+      dryRun?: boolean;
+      olderThanDays?: number;
+      deleteRead?: boolean;
+      deleteLargeAttachments?: boolean;
+      attachmentSizeLimitMB?: number;
+      excludeFolders?: string[];
+      maxEmails?: number;
+    } = {}
+  ): Promise<{
     emailsAnalyzed: number;
     emailsToClean: number;
     emailsDeleted: number;
@@ -2941,7 +3116,7 @@ export class EmailService {
       deleteLargeAttachments = false,
       attachmentSizeLimitMB = 10,
       excludeFolders = ['sent', 'drafts'],
-      maxEmails = 100
+      maxEmails = 100,
     } = options;
 
     console.error(`🧹 Iniciando assistente de limpeza (${dryRun ? 'simulação' : 'execução'})`);
@@ -2952,17 +3127,19 @@ export class EmailService {
       emailsDeleted: 0,
       spaceSavedMB: 0,
       categories: {} as Record<string, number>,
-      warnings: [] as string[]
+      warnings: [] as string[],
     };
 
     try {
       // Get all folders
       const folders = await this.listFolders(false, 1);
-      const targetFolders = folders.filter(folder => 
-        !excludeFolders.some(excluded => 
-          folder.displayName?.toLowerCase().includes(excluded) ||
-          folder.id?.toLowerCase().includes(excluded)
-        )
+      const targetFolders = folders.filter(
+        (folder) =>
+          !excludeFolders.some(
+            (excluded) =>
+              folder.displayName?.toLowerCase().includes(excluded) ||
+              folder.id?.toLowerCase().includes(excluded)
+          )
       );
 
       if (targetFolders.length === 0) {
@@ -2979,14 +3156,14 @@ export class EmailService {
         try {
           const emails = await this.listEmails({
             maxResults: Math.min(50, maxEmails - result.emailsAnalyzed),
-            folder: folder.displayName
+            folder: folder.displayName,
           });
 
           for (const email of emails) {
             if (result.emailsAnalyzed >= maxEmails) break;
-            
+
             result.emailsAnalyzed++;
-            
+
             let shouldClean = false;
             let category = 'outros';
 
@@ -3011,7 +3188,7 @@ export class EmailService {
                 const attachments = await this.listAttachments(email.id!);
                 const totalSize = attachments.reduce((sum, att) => sum + (att.size || 0), 0);
                 const sizeMB = totalSize / (1024 * 1024);
-                
+
                 if (sizeMB > attachmentSizeLimitMB) {
                   shouldClean = true;
                   category = 'anexos_grandes';
@@ -3024,7 +3201,7 @@ export class EmailService {
             if (shouldClean) {
               result.emailsToClean++;
               result.categories[category] = (result.categories[category] || 0) + 1;
-              
+
               // Estimate space saved (rough calculation)
               const bodySize = (email.body?.content?.length || email.bodyPreview?.length || 0) * 2;
               result.spaceSavedMB += bodySize / (1024 * 1024);
@@ -3050,7 +3227,9 @@ export class EmailService {
         result.emailsDeleted = result.emailsToClean;
       }
 
-      console.error(`✅ Assistente de limpeza concluído: ${result.emailsToClean} emails ${dryRun ? 'identificados' : 'deletados'}`);
+      console.error(
+        `✅ Assistente de limpeza concluído: ${result.emailsToClean} emails ${dryRun ? 'identificados' : 'deletados'}`
+      );
       return result;
     } catch (error) {
       console.error('❌ Erro no assistente de limpeza:', error);
@@ -3071,24 +3250,35 @@ export class EmailService {
 
     // Analyze cache efficiency
     if (stats.cache.hitRate < 50) {
-      recommendations.push('Cache hit rate is low. Consider warming up cache with common operations.');
+      recommendations.push(
+        'Cache hit rate is low. Consider warming up cache with common operations.'
+      );
     }
 
     if (stats.parallelProcessor.averageProcessingTime > 5000) {
-      recommendations.push('High processing times detected. Consider reducing batch sizes or optimizing operations.');
+      recommendations.push(
+        'High processing times detected. Consider reducing batch sizes or optimizing operations.'
+      );
     }
 
     if (stats.graphOptimizer.queuedRequests > 20) {
-      recommendations.push('High request queue detected. Consider enabling more aggressive batching.');
+      recommendations.push(
+        'High request queue detected. Consider enabling more aggressive batching.'
+      );
     }
 
     return {
       performance: stats,
       cacheEfficiency: {
         ...stats.cache,
-        efficiency: stats.cache.hitRate > 70 ? 'excellent' : stats.cache.hitRate > 50 ? 'good' : 'needs_improvement'
+        efficiency:
+          stats.cache.hitRate > 70
+            ? 'excellent'
+            : stats.cache.hitRate > 50
+              ? 'good'
+              : 'needs_improvement',
       },
-      recommendations
+      recommendations,
     };
   }
 
@@ -3117,12 +3307,12 @@ export class EmailService {
    */
   destroy(): void {
     console.error('💥 Shutting down EmailService optimizations...');
-    
+
     try {
       this.cacheManager.destroy();
       this.graphOptimizer.reset();
       this.parallelProcessor.destroy();
-      
+
       console.error('✅ EmailService cleanup completed');
     } catch (error) {
       console.error('❌ Error during EmailService cleanup:', error);

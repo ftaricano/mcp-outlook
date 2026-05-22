@@ -15,10 +15,11 @@
  *   --help, -h          Show this help
  *
  * Credentials are resolved in this order:
- *   1. --env-file <path> flag
- *   2. $OUTLOOK_ENV_FILE env var
- *   3. <repo-root>/.env   (same directory as this script's parent)
- *   4. Environment variables already set (MICROSOFT_GRAPH_CLIENT_ID, etc.)
+ *   1. --env-file <path> flag (overrides existing variables)
+ *   2. $OUTLOOK_ENV_FILE env var (overrides existing variables)
+ *   3. Environment variables already set (MICROSOFT_GRAPH_CLIENT_ID, etc.)
+ *   4. <repo-root>/.env for missing variables only
+ *   5. macOS Keychain for missing variables only
  */
 
 import { spawn } from 'node:child_process';
@@ -43,7 +44,7 @@ function parseArgs(argv) {
     timeout: 30_000,
     compact: false,
     help: false,
-    command: null,   // 'list' | 'schema' | <tool-name>
+    command: null, // 'list' | 'schema' | <tool-name>
     schemaTarget: null,
     jsonPayload: null,
     toolArgs: {},
@@ -53,13 +54,29 @@ function parseArgs(argv) {
   while (i < raw.length) {
     const a = raw[i];
     if (a === '--help' || a === '-h') {
-      opts.help = true; i++; continue;
+      opts.help = true;
+      i++;
+      continue;
     }
-    if (a === '--compact') { opts.compact = true; i++; continue; }
-    if (a === '--env-file') { opts.envFile = raw[++i]; i++; continue; }
-    if (a === '--timeout') { opts.timeout = Number(raw[++i]); i++; continue; }
+    if (a === '--compact') {
+      opts.compact = true;
+      i++;
+      continue;
+    }
+    if (a === '--env-file') {
+      opts.envFile = raw[++i];
+      i++;
+      continue;
+    }
+    if (a === '--timeout') {
+      opts.timeout = Number(raw[++i]);
+      i++;
+      continue;
+    }
     if (a === '--json') {
-      opts.jsonPayload = raw[++i]; i++; continue;
+      opts.jsonPayload = raw[++i];
+      i++;
+      continue;
     }
     if (a.startsWith('--')) {
       // --key=value or --key value
@@ -73,12 +90,19 @@ function parseArgs(argv) {
         val = raw[i + 1] && !raw[i + 1].startsWith('--') ? raw[++i] : 'true';
       }
       opts.toolArgs[key] = coerce(val);
-      i++; continue;
+      i++;
+      continue;
     }
     // Positional
-    if (!opts.command) { opts.command = a; i++; continue; }
+    if (!opts.command) {
+      opts.command = a;
+      i++;
+      continue;
+    }
     if (opts.command === 'schema' && !opts.schemaTarget) {
-      opts.schemaTarget = a; i++; continue;
+      opts.schemaTarget = a;
+      i++;
+      continue;
     }
     i++;
   }
@@ -93,7 +117,11 @@ function coerce(v) {
   if (!isNaN(n) && v.trim() !== '') return n;
   // Try JSON for arrays/objects passed as a flag value
   if ((v.startsWith('[') && v.endsWith(']')) || (v.startsWith('{') && v.endsWith('}'))) {
-    try { return JSON.parse(v); } catch { /* fall through */ }
+    try {
+      return JSON.parse(v);
+    } catch {
+      /* fall through */
+    }
   }
   return v;
 }
@@ -102,7 +130,7 @@ function coerce(v) {
 // .env loader (manual, no dependency on dotenv module path resolution)
 // ---------------------------------------------------------------------------
 
-function loadEnvFile(path) {
+function loadEnvFile(path, { override = false } = {}) {
   if (!path || !existsSync(path)) return;
   const lines = readFileSync(path, 'utf8').split('\n');
   for (const line of lines) {
@@ -115,8 +143,20 @@ function loadEnvFile(path) {
     if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
       val = val.slice(1, -1);
     }
-    if (!process.env[key]) process.env[key] = val;
+    if (override || !process.env[key]) process.env[key] = val;
   }
+}
+
+function resolveEnvSource(opts) {
+  if (opts.envFile) {
+    return { path: resolve(opts.envFile), override: true };
+  }
+
+  if (process.env.OUTLOOK_ENV_FILE) {
+    return { path: resolve(process.env.OUTLOOK_ENV_FILE), override: true };
+  }
+
+  return { path: resolve(REPO_ROOT, '.env'), override: false };
 }
 
 // ---------------------------------------------------------------------------
@@ -124,7 +164,8 @@ function loadEnvFile(path) {
 // ---------------------------------------------------------------------------
 
 function printHelp() {
-  process.stdout.write(`
+  process.stdout.write(
+    `
 outlook — one-shot CLI for mcp-outlook (40 Microsoft Graph email tools)
 
 Usage:
@@ -155,8 +196,23 @@ Credentials (env vars or .env file):
   MICROSOFT_GRAPH_TENANT_ID
   TARGET_USER_EMAIL
 
+  Resolution order: --env-file > $OUTLOOK_ENV_FILE > existing env vars >
+  <repo>/.env (missing only) > macOS Keychain (missing only).
+
+  Keychain lookup uses service \`mcp-outlook::<VAR>\` by default. Point at
+  existing Keychain entries with OUTLOOK_KEYCHAIN_<VAR>_SERVICES, e.g.:
+    export OUTLOOK_KEYCHAIN_MICROSOFT_GRAPH_CLIENT_ID_SERVICES=my-app::CLIENT_ID
+
+Filesystem allowlist (download_attachment_to_file, download_all_attachments,
+send_email_with_file, encode_file_for_attachment):
+  Writes are confined to DOWNLOAD_DIR (default: ~/Downloads/mcp-outlook-attachments).
+  Reads default to DOWNLOAD_DIR; extend with MCP_EMAIL_UPLOAD_DIRS (colon-separated).
+  Pass any targetDirectory outside DOWNLOAD_DIR and the call fails — set
+  DOWNLOAD_DIR to a parent that includes the paths you actually want to use.
+
 Repo: ${REPO_ROOT}
-`.trimStart());
+`.trimStart()
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -202,7 +258,11 @@ async function runMcp({ command, schemaTarget, toolArgs, jsonPayload, timeout, c
         buf = buf.slice(nl + 1);
         if (!line) continue;
         let frame;
-        try { frame = JSON.parse(line); } catch { continue; }
+        try {
+          frame = JSON.parse(line);
+        } catch {
+          continue;
+        }
         if (frame.id != null) responses.set(frame.id, frame);
         onFrame(frame);
       }
@@ -241,12 +301,22 @@ async function runMcp({ command, schemaTarget, toolArgs, jsonPayload, timeout, c
           // Regular tool call
           let args;
           if (jsonPayload) {
-            try { args = JSON.parse(jsonPayload); }
-            catch (e) { clearTimeout(timer); child.kill(); die(`--json parse error: ${e.message}`); }
+            try {
+              args = JSON.parse(jsonPayload);
+            } catch (e) {
+              clearTimeout(timer);
+              child.kill();
+              die(`--json parse error: ${e.message}`);
+            }
           } else {
             args = toolArgs;
           }
-          send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: command, arguments: args } });
+          send({
+            jsonrpc: '2.0',
+            id: 2,
+            method: 'tools/call',
+            params: { name: command, arguments: args },
+          });
         }
       }
 
@@ -264,9 +334,9 @@ async function runMcp({ command, schemaTarget, toolArgs, jsonPayload, timeout, c
           if (compact) {
             finish(JSON.stringify(tools));
           } else {
-            const lines = tools.map(t =>
-              `  ${t.name.padEnd(36)} ${t.description ?? ''}`
-            ).join('\n');
+            const lines = tools
+              .map((t) => `  ${t.name.padEnd(36)} ${t.description ?? ''}`)
+              .join('\n');
             finish(`${tools.length} tools:\n\n${lines}`);
           }
           return;
@@ -274,7 +344,7 @@ async function runMcp({ command, schemaTarget, toolArgs, jsonPayload, timeout, c
 
         if (command === 'schema') {
           const tools = frame.result?.tools ?? [];
-          const tool = tools.find(t => t.name === schemaTarget);
+          const tool = tools.find((t) => t.name === schemaTarget);
           if (!tool) {
             clearTimeout(timer);
             child.kill();
@@ -291,8 +361,8 @@ async function runMcp({ command, schemaTarget, toolArgs, jsonPayload, timeout, c
           finish(JSON.stringify(frame.result));
         } else {
           const text = content
-            .filter(c => c.type === 'text')
-            .map(c => c.text)
+            .filter((c) => c.type === 'text')
+            .map((c) => c.text)
             .join('\n');
           const isError = frame.result?.isError;
           if (isError) {
@@ -331,14 +401,10 @@ if (opts.help || !opts.command) {
   process.exit(0);
 }
 
-// Load credentials. Order (first to set wins): process.env → .env → Keychain.
-// .env runs before Keychain so `--env-file` / `OUTLOOK_ENV_FILE` can override
-// the default mailbox stored in the chain (multi-account use).
-const envFile =
-  opts.envFile ??
-  process.env.OUTLOOK_ENV_FILE ??
-  resolve(REPO_ROOT, '.env');
-loadEnvFile(envFile);
+// Explicit env files are account selectors and override existing credential vars
+// for this one-shot process. The repo-local .env remains a missing-value fallback.
+const envSource = resolveEnvSource(opts);
+loadEnvFile(envSource.path, { override: envSource.override });
 
 if (existsSync(KEYCHAIN_BOOTSTRAP)) {
   const mod = await import(KEYCHAIN_BOOTSTRAP);

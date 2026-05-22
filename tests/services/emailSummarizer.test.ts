@@ -10,7 +10,7 @@ function fakeEmail(overrides: any = {}) {
     body: { content: 'Olá, tudo bem?' },
     hasAttachments: false,
     attachments: [],
-    ...overrides
+    ...overrides,
   };
 }
 
@@ -40,7 +40,7 @@ describe('EmailSummarizer.summarizeEmail', () => {
     const summary = await summarizer.summarizeEmail(
       fakeEmail({
         subject: 'Convite para reunião de planejamento',
-        body: { content: 'Confirme presença' }
+        body: { content: 'Confirme presença' },
       }) as any
     );
     // body has "confirme" which is also a medium-priority word; subject is
@@ -59,7 +59,7 @@ describe('EmailSummarizer.summarizeEmail', () => {
     const summary = await summarizer.summarizeEmail(
       fakeEmail({
         subject: 'Fatura do mês',
-        body: { content: 'Segue a fatura de pagamento' }
+        body: { content: 'Segue a fatura de pagamento' },
       }) as any
     );
     expect(summary.category).toBe('Financeiro');
@@ -75,7 +75,7 @@ describe('EmailSummarizer.summarizeEmail', () => {
   it('detects positive sentiment when positive words present', async () => {
     const summary = await summarizer.summarizeEmail(
       fakeEmail({
-        body: { content: 'Obrigado pela excelente apresentação, ficamos satisfeitos.' }
+        body: { content: 'Obrigado pela excelente apresentação, ficamos satisfeitos.' },
       }) as any
     );
     expect(summary.sentiment).toBe('positivo');
@@ -84,31 +84,25 @@ describe('EmailSummarizer.summarizeEmail', () => {
   it('detects negative sentiment when negative words present', async () => {
     const summary = await summarizer.summarizeEmail(
       fakeEmail({
-        body: { content: 'Houve um problema grave e o pagamento foi rejeitado.' }
+        body: { content: 'Houve um problema grave e o pagamento foi rejeitado.' },
       }) as any
     );
     expect(summary.sentiment).toBe('negativo');
   });
 
   it('handles empty body without throwing', async () => {
-    const summary = await summarizer.summarizeEmail(
-      fakeEmail({ body: { content: '' } }) as any
-    );
+    const summary = await summarizer.summarizeEmail(fakeEmail({ body: { content: '' } }) as any);
     expect(summary).toBeDefined();
     expect(summary.subject).toBe('Teste padrão');
   });
 
   it('handles missing subject with "Sem assunto"', async () => {
-    const summary = await summarizer.summarizeEmail(
-      fakeEmail({ subject: undefined }) as any
-    );
+    const summary = await summarizer.summarizeEmail(fakeEmail({ subject: undefined }) as any);
     expect(summary.subject).toBe('Sem assunto');
   });
 
   it('handles missing from with "Remetente desconhecido"', async () => {
-    const summary = await summarizer.summarizeEmail(
-      fakeEmail({ from: undefined }) as any
-    );
+    const summary = await summarizer.summarizeEmail(fakeEmail({ from: undefined }) as any);
     expect(summary.from).toBe('Remetente desconhecido');
   });
 
@@ -123,7 +117,7 @@ describe('EmailSummarizer.summarizeEmail', () => {
     const summary = await summarizer.summarizeEmail(
       fakeEmail({
         hasAttachments: true,
-        attachments: [{ name: 'a.pdf' }, { name: 'b.xlsx' }]
+        attachments: [{ name: 'a.pdf' }, { name: 'b.xlsx' }],
       }) as any
     );
     expect(summary.attachments).toEqual(['a.pdf', 'b.xlsx']);
@@ -133,9 +127,8 @@ describe('EmailSummarizer.summarizeEmail', () => {
     const summary = await summarizer.summarizeEmail(
       fakeEmail({
         body: {
-          content:
-            '<p>Prezado, <b>por favor</b> confirme o recebimento do <i>documento</i>.</p>'
-        }
+          content: '<p>Prezado, <b>por favor</b> confirme o recebimento do <i>documento</i>.</p>',
+        },
       }) as any
     );
     // Should not contain tags
@@ -146,7 +139,7 @@ describe('EmailSummarizer.summarizeEmail', () => {
     const summary = await summarizer.summarizeEmail(
       fakeEmail({
         subject: 'Preciso de sua aprovação',
-        body: { content: 'Por favor, aprove o documento.' }
+        body: { content: 'Por favor, aprove o documento.' },
       }) as any
     );
     expect(summary.actionRequired).toBe(true);
@@ -157,12 +150,9 @@ describe('EmailSummarizer.summarizeEmailsBatch', () => {
   it('iterates over emailIds and returns summaries', async () => {
     const summarizer = new EmailSummarizer();
     const fakeService: any = {
-      getEmailById: async (id: string) => fakeEmail({ id })
+      getEmailById: async (id: string) => fakeEmail({ id }),
     };
-    const result = await summarizer.summarizeEmailsBatch(
-      ['id1', 'id2'],
-      fakeService
-    );
+    const result = await summarizer.summarizeEmailsBatch(['id1', 'id2'], fakeService);
     expect(result).toHaveLength(2);
     expect(result[0].id).toBe('id1');
     expect(result[1].id).toBe('id2');
@@ -174,18 +164,12 @@ describe('EmailSummarizer.summarizeEmailsBatch', () => {
       getEmailById: async (id: string) => {
         if (id === 'bad') throw new Error('not found');
         return fakeEmail({ id });
-      }
+      },
     };
     // Silence the expected console.error from the SUT.
-    const spy = vi
-      .spyOn(console, 'error')
-      .mockImplementation(() => {});
-    const result = await summarizer.summarizeEmailsBatch(
-      ['id1', 'bad', 'id2'],
-      fakeService
-    );
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const result = await summarizer.summarizeEmailsBatch(['id1', 'bad', 'id2'], fakeService);
     expect(result.map((r) => r.id)).toEqual(['id1', 'id2']);
     spy.mockRestore();
   });
 });
-

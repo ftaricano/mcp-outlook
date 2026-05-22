@@ -5,15 +5,15 @@ updates:
     schedule:
       interval: weekly
       day: monday
-      time: "07:00"
+      time: '07:00'
     open-pull-requests-limit: 5
     groups:
       dev-dependencies:
         dependency-type: development
       graph-sdk:
         patterns:
-          - "@microsoft/microsoft-graph-*"
-          - "@azure/msal-*"
+          - '@microsoft/microsoft-graph-*'
+          - '@azure/msal-*'
     reviewers:
       - ftaricano
     assignees:

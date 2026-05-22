@@ -207,6 +207,13 @@ describe('PathGuard', () => {
       expect(() => guard.resolveTargetDirectory('/etc')).toThrow(/outside downloadRoot/);
     });
 
+    it('error message points at DOWNLOAD_DIR env var as the escape hatch (JAR-257)', () => {
+      // Without this hint, callers hit `is outside downloadRoot` and have no
+      // signal that the root is configurable at all — they assumed it was hard-
+      // coded and spent the next 30 minutes reorganising their /tmp paths.
+      expect(() => guard.resolveTargetDirectory('/etc')).toThrow(/DOWNLOAD_DIR/);
+    });
+
     it('rejects targetDirectory walking through secret segment', () => {
       // Even if this happened to be inside downloadRoot, a `.ssh` segment is
       // nonsensical and cheaper to refuse than to reason about.
@@ -224,11 +231,9 @@ describe('PathGuard', () => {
 });
 
 describe('loadPathGuardConfig', () => {
-  it('defaults to ~/Downloads/mcp-email-attachments when DOWNLOAD_DIR unset', () => {
+  it('defaults to ~/Downloads/mcp-outlook-attachments when DOWNLOAD_DIR unset', () => {
     const cfg = loadPathGuardConfig({});
-    expect(cfg.downloadRoot).toBe(
-      path.join(os.homedir(), 'Downloads', 'mcp-email-attachments')
-    );
+    expect(cfg.downloadRoot).toBe(path.join(os.homedir(), 'Downloads', 'mcp-outlook-attachments'));
   });
 
   it('honours DOWNLOAD_DIR', () => {

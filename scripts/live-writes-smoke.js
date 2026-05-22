@@ -31,19 +31,29 @@ proc.stdout.on('data', (chunk) => {
     buffer = buffer.slice(idx + 1);
     if (!line) continue;
     let msg;
-    try { msg = JSON.parse(line); } catch { continue; }
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      continue;
+    }
     const h = pending.get(msg.id);
-    if (h) { pending.delete(msg.id); h(msg); }
+    if (h) {
+      pending.delete(msg.id);
+      h(msg);
+    }
   }
 });
 
 function call(method, params) {
   return new Promise((resolvePromise, rejectPromise) => {
     const id = nextId++;
-    pending.set(id, (msg) => msg.error ? rejectPromise(msg.error) : resolvePromise(msg.result));
+    pending.set(id, (msg) => (msg.error ? rejectPromise(msg.error) : resolvePromise(msg.result)));
     proc.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
     setTimeout(() => {
-      if (pending.has(id)) { pending.delete(id); rejectPromise(new Error(`timeout: ${method}`)); }
+      if (pending.has(id)) {
+        pending.delete(id);
+        rejectPromise(new Error(`timeout: ${method}`));
+      }
     }, 60000);
   });
 }
@@ -53,8 +63,13 @@ const txt = (res) => res?.content?.[0]?.text ?? '';
 
 function looksLikeError(t) {
   const s = t.slice(0, 160).toLowerCase();
-  return s.includes('❌') || s.startsWith('erro ') || s.startsWith('error ') ||
-         s.includes('graph error') || s.includes('authentication failed');
+  return (
+    s.includes('❌') ||
+    s.startsWith('erro ') ||
+    s.startsWith('error ') ||
+    s.includes('graph error') ||
+    s.includes('authentication failed')
+  );
 }
 
 const results = [];
@@ -91,7 +106,11 @@ function extractIds(text) {
 const stamp = Date.now();
 const FOLDER_NAME = `__mcp-smoke__${stamp}`;
 const SUBJECT = `__mcp-smoke__ ${stamp}`;
-const TARGET = process.env.TARGET_USER_EMAIL || 'fernando.taricano@cpzseg.com.br';
+const TARGET = process.env.TARGET_USER_EMAIL;
+
+if (!TARGET) {
+  throw new Error('TARGET_USER_EMAIL is required for live write smoke tests');
+}
 
 let folderId = null;
 let emailId = null;
@@ -104,19 +123,23 @@ let emailId = null;
   });
 
   // ---- 1. create_folder ----
-  const created = await run(`create_folder ${FOLDER_NAME}`, () => tool('create_folder', {
-    folderName: FOLDER_NAME,
-  }));
+  const created = await run(`create_folder ${FOLDER_NAME}`, () =>
+    tool('create_folder', {
+      folderName: FOLDER_NAME,
+    })
+  );
   const folderIds = extractIds(created.text);
   folderId = folderIds[0] ?? null;
   console.error(`[info] created folder id len=${folderId?.length}`);
 
   // ---- 2. create_draft (replaces send_email — only needs Mail.ReadWrite) ----
-  const draftCreated = await run('create_draft to self', () => tool('create_draft', {
-    to: [TARGET],
-    subject: SUBJECT,
-    body: `Automated write-path smoke. stamp=${stamp}. Safe to delete.`,
-  }));
+  const draftCreated = await run('create_draft to self', () =>
+    tool('create_draft', {
+      to: [TARGET],
+      subject: SUBJECT,
+      body: `Automated write-path smoke. stamp=${stamp}. Safe to delete.`,
+    })
+  );
   const draftIds = extractIds(draftCreated.text);
   emailId = draftIds[0] ?? null;
   console.error(`[info] draft id len=${emailId?.length}`);
@@ -134,20 +157,24 @@ let emailId = null;
 
   // ---- 6. copy_emails_to_folder (copy into __mcp-smoke__) ----
   if (emailId && folderId) {
-    await run('copy_emails_to_folder', () => tool('copy_emails_to_folder', {
-      emailIds: [emailId],
-      targetFolderId: folderId,
-    }));
+    await run('copy_emails_to_folder', () =>
+      tool('copy_emails_to_folder', {
+        emailIds: [emailId],
+        targetFolderId: folderId,
+      })
+    );
   } else {
     record('copy_emails_to_folder', false, 'skipped: missing emailId or folderId');
   }
 
   // ---- 7. move_emails_to_folder (move original into __mcp-smoke__) ----
   if (emailId && folderId) {
-    const moved = await run('move_emails_to_folder', () => tool('move_emails_to_folder', {
-      emailIds: [emailId],
-      targetFolderId: folderId,
-    }));
+    const moved = await run('move_emails_to_folder', () =>
+      tool('move_emails_to_folder', {
+        emailIds: [emailId],
+        targetFolderId: folderId,
+      })
+    );
     // Moving returns a NEW message id (Graph semantics). Try to capture it.
     const newIds = extractIds(moved.text);
     if (newIds.length > 0) {
@@ -160,10 +187,15 @@ let emailId = null;
 
   // ---- 8. get_folder_stats on __mcp-smoke__ ----
   if (folderId) {
-    await run('get_folder_stats __mcp-smoke__', () => tool('get_folder_stats', {
-      folderId,
-      includeSubfolders: false,
-    }), { check: (t) => /Total|emails/i.test(t) });
+    await run(
+      'get_folder_stats __mcp-smoke__',
+      () =>
+        tool('get_folder_stats', {
+          folderId,
+          includeSubfolders: false,
+        }),
+      { check: (t) => /Total|emails/i.test(t) }
+    );
   } else {
     record('get_folder_stats __mcp-smoke__', false, 'skipped: no folderId');
   }
@@ -177,10 +209,12 @@ let emailId = null;
 
   // ---- 10. cleanup: delete_folder (removes the folder + the remaining copy) ----
   if (folderId) {
-    await run('delete_folder __mcp-smoke__', () => tool('delete_folder', {
-      folderId,
-      permanent: false, // move to deleted-items so it's reversible
-    }));
+    await run('delete_folder __mcp-smoke__', () =>
+      tool('delete_folder', {
+        folderId,
+        permanent: false, // move to deleted-items so it's reversible
+      })
+    );
   } else {
     record('delete_folder', false, 'skipped: no folderId');
   }
