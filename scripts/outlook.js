@@ -29,7 +29,11 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
-const SERVER_ENTRY = resolve(REPO_ROOT, 'dist/index.js');
+// Server entry can be overridden (mainly for tests, which point this at a fake
+// MCP server). Defaults to the built server at <repo-root>/dist/index.js.
+const SERVER_ENTRY = process.env.OUTLOOK_SERVER_ENTRY
+  ? resolve(process.env.OUTLOOK_SERVER_ENTRY)
+  : resolve(REPO_ROOT, 'dist/index.js');
 
 const KEYCHAIN_BOOTSTRAP = resolve(REPO_ROOT, 'dist/config/keychain.js');
 
@@ -239,16 +243,28 @@ async function runMcp({ command, schemaTarget, toolArgs, jsonPayload, timeout, c
   let buf = '';
   let idCounter = 1;
   let timer;
+  // Set once we've printed a result or reported an error. After that point the
+  // server is only shutting down (we sent it SIGTERM), so its exit code must
+  // NOT be turned into a spurious "check credentials" failure.
+  let settled = false;
+  // Captured server stderr, surfaced verbatim when the server dies BEFORE
+  // answering (real reason — lock contention, bad env — beats a generic hint).
+  let serverStderr = '';
 
   return new Promise((resolve) => {
     const responses = new Map();
 
     timer = setTimeout(() => {
+      settled = true;
       child.kill();
       die(`Timeout after ${timeout}ms — is the server built and credentials set?`);
     }, timeout);
 
-    child.stderr.on('data', () => {}); // suppress server logs
+    // Capture (don't discard) server logs so a genuine startup failure can
+    // explain itself instead of falling back to the generic credentials hint.
+    child.stderr.on('data', (chunk) => {
+      serverStderr += chunk.toString('utf8');
+    });
 
     child.stdout.on('data', (chunk) => {
       buf += chunk.toString('utf8');
@@ -268,12 +284,28 @@ async function runMcp({ command, schemaTarget, toolArgs, jsonPayload, timeout, c
       }
     });
 
-    child.on('error', (err) => die(`Spawn error: ${err.message}`));
-    child.on('exit', (code) => {
-      if (code !== 0 && code !== null) {
-        // Non-zero exit before we resolved — likely credential error
-        clearTimeout(timer);
-        die(`Server exited with code ${code} — check credentials and .env`);
+    child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      die(`Spawn error: ${err.message}`);
+    });
+    // 'close' (not 'exit') so captured stderr is complete before we report.
+    child.on('close', (code, signal) => {
+      // Reaching here while unsettled means the server closed BEFORE producing
+      // our result — a genuine startup/early failure worth reporting. If we
+      // already settled, this is just the post-SIGTERM shutdown: ignore it.
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      const reason = serverStderr.trim();
+      const where = code != null ? `code ${code}` : `signal ${signal}`;
+      if (reason) {
+        die(`Server exited before responding (${where}):\n${reason}`);
+      } else {
+        die(
+          `Server exited before responding (${where}) — ensure it is built ` +
+            `(npm run build) and credentials are set (.env / Keychain).`
+        );
       }
     });
 
@@ -283,8 +315,12 @@ async function runMcp({ command, schemaTarget, toolArgs, jsonPayload, timeout, c
 
     function finish(output) {
       clearTimeout(timer);
-      child.kill('SIGTERM');
+      // Mark settled BEFORE killing so the server's shutdown exit (which can be
+      // non-zero) is ignored by the close handler. Write the result first so a
+      // natural process exit flushes it intact (process.exit would truncate).
+      settled = true;
       process.stdout.write(output + '\n');
+      child.kill('SIGTERM');
       resolve();
     }
 
