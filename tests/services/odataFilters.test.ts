@@ -94,4 +94,13 @@ describe('encodeGraphSegment', () => {
     const id = 'AAMkAGI2/Th+9=';
     expect(decodeURIComponent(encodeGraphSegment(id))).toBe(id);
   });
+
+  it('neutralizes bare dot and dot-dot segments (no relative-path navigation)', () => {
+    // encodeURIComponent alone would leave these as-is and URL normalization
+    // would rewrite e.g. /attachments/.. -> the parent resource.
+    expect(encodeGraphSegment('..')).toBe('%2E%2E');
+    expect(encodeGraphSegment('.')).toBe('%2E');
+    expect(encodeGraphSegment('..')).not.toContain('.');
+    expect(encodeGraphSegment('a.b')).toBe('a%2Eb');
+  });
 });
