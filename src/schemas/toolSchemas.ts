@@ -66,8 +66,12 @@ const FOLDER_REF_FORBIDDEN = /[?#%\s\\\x00]|\.\./;
 const folderRef = z
   .string()
   .min(1)
-  .refine((v) => !FOLDER_REF_FORBIDDEN.test(v), {
-    message: 'folder must not contain URL metacharacters (?, #, %, whitespace, backslash) or ".."',
+  // Reject URL metacharacters and relative-path segments. A bare "." / ".." is
+  // rejected too — URL normalization rewrites it into a different Graph route
+  // even when percent-encoded.
+  .refine((v) => !FOLDER_REF_FORBIDDEN.test(v) && v !== '.', {
+    message:
+      'folder must not contain URL metacharacters (?, #, %, whitespace, backslash) or "." / ".." segments',
   });
 const optionalFolderRef = folderRef.optional();
 

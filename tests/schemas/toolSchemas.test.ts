@@ -290,8 +290,8 @@ describe('validateToolInput - security hardening (folder / date injection)', () 
     expect(r.ok).toBe(false);
   });
 
-  it('rejects folder values with whitespace, #, % or .. traversal', () => {
-    for (const folder of ['in box', 'inbox#x', 'inbox%2e', '../../secret']) {
+  it('rejects folder values with whitespace, #, %, .. traversal, or bare . / .. segments', () => {
+    for (const folder of ['in box', 'inbox#x', 'inbox%2e', '../../secret', '.', '..']) {
       expect(validateToolInput('list_emails', { folder }).ok).toBe(false);
     }
   });

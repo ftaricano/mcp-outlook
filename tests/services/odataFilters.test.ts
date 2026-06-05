@@ -95,12 +95,17 @@ describe('encodeGraphSegment', () => {
     expect(decodeURIComponent(encodeGraphSegment(id))).toBe(id);
   });
 
-  it('neutralizes bare dot and dot-dot segments (no relative-path navigation)', () => {
-    // encodeURIComponent alone would leave these as-is and URL normalization
-    // would rewrite e.g. /attachments/.. -> the parent resource.
-    expect(encodeGraphSegment('..')).toBe('%2E%2E');
-    expect(encodeGraphSegment('.')).toBe('%2E');
-    expect(encodeGraphSegment('..')).not.toContain('.');
-    expect(encodeGraphSegment('a.b')).toBe('a%2Eb');
+  it('throws on bare "." / ".." segments (percent-encoding does not survive URL normalization)', () => {
+    // Encoding the dots is NOT enough: the WHATWG URL parser normalizes %2e/%2E
+    // back to "."/".." before fetch. The only safe option is to fail closed.
+    expect(() => encodeGraphSegment('.')).toThrow();
+    expect(() => encodeGraphSegment('..')).toThrow();
+  });
+
+  it('keeps a dot INSIDE a larger id (not a relative segment) and the route is unchanged', () => {
+    const seg = encodeGraphSegment('a.b');
+    const url = new URL(`https://graph.microsoft.com/v1.0/me/messages/${seg}/attachments`);
+    // Real URL normalization must leave the route ending at /attachments.
+    expect(url.pathname).toBe('/v1.0/me/messages/a.b/attachments');
   });
 });

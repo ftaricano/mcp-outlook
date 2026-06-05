@@ -40,13 +40,16 @@ export function escapeODataString(value: string): string {
  * side. Layer this at the URL boundary on top of the zod `folderRef` validation.
  */
 export function encodeGraphSegment(value: string): string {
-  // encodeURIComponent leaves "." and ".." untouched (they are unreserved), but
-  // a bare `.`/`..` segment is rewritten by WHATWG URL / fetch path
-  // normalization and would still change the Graph route (e.g.
-  // `/messages/{id}/attachments/..` -> `/messages/{id}`). Encode dots too so the
-  // value can never act as a relative-path segment. Legitimate Graph folder/
-  // message ids are base64 and contain no dots, so this is loss-free for them.
-  return encodeURIComponent(String(value)).replace(/\./g, '%2E');
+  const raw = String(value);
+  // Fail closed on relative-path segments. Neither encodeURIComponent NOR
+  // percent-encoding the dots stops these: the WHATWG URL/Request parser
+  // normalizes "."/".." AND their %2e/%2E forms before fetch, so a ".." segment
+  // collapses e.g. `/messages/{id}/attachments/..` to a different Graph route.
+  // A legitimate folder/message id is never exactly "." or "..".
+  if (raw === '.' || raw === '..') {
+    throw new Error(`unsafe Graph path segment: ${JSON.stringify(raw)}`);
+  }
+  return encodeURIComponent(raw);
 }
 
 /**
