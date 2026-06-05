@@ -1,5 +1,6 @@
 import { Client } from '@microsoft/microsoft-graph-client';
 import { CacheManager } from './cacheManager.js';
+import { escapeODataString } from './odataFilters.js';
 
 export interface GraphOptimizationConfig {
   enableBatching: boolean;
@@ -102,10 +103,16 @@ export class GraphOptimizer {
     } = options;
 
     // Generate cache key
+    // `filter` and `orderBy` MUST be part of the cache key: list_emails,
+    // getUnreadEmails (isRead eq false), getEmailsFromSender, date-range queries
+    // all resolve to the same folder/maxResults and would otherwise collide on a
+    // single cache entry and serve each other's results for the TTL.
     const cacheKey = this.cacheManager.generateEmailKey('list', {
       folder,
       maxResults,
       search,
+      filter: queryOptions.filter,
+      orderBy: queryOptions.orderBy,
       select: select.sort(),
     });
 
@@ -132,9 +139,11 @@ export class GraphOptimizer {
       query = query.select(select);
     }
 
-    // Add search filter
+    // Add search filter — escape the caller value so a single quote cannot
+    // break out of the string literal and inject extra $filter clauses.
     if (search) {
-      const searchFilter = `contains(subject,'${search}') or contains(from/emailAddress/address,'${search}')`;
+      const safeSearch = escapeODataString(search);
+      const searchFilter = `contains(subject,'${safeSearch}') or contains(from/emailAddress/address,'${safeSearch}')`;
       query = query.filter(searchFilter);
     }
 
@@ -375,7 +384,7 @@ export class GraphOptimizer {
     searchTerm: string,
     options: {
       searchIn?: ('subject' | 'body' | 'from' | 'to')[];
-      dateRange?: { start: string; end: string };
+      dateRange?: { start?: string; end?: string };
       importance?: 'low' | 'normal' | 'high';
       hasAttachments?: boolean;
       isRead?: boolean;
@@ -391,30 +400,32 @@ export class GraphOptimizer {
 
     const filters: string[] = [];
 
-    // Text search with field targeting
+    // Text search with field targeting. Escape the caller value once so a
+    // single quote cannot break out of the string literal and inject clauses.
     if (searchTerm) {
+      const safeTerm = escapeODataString(searchTerm);
       const searchConditions = searchIn.map((field) => {
         switch (field) {
           case 'subject':
-            return `contains(subject,'${searchTerm}')`;
+            return `contains(subject,'${safeTerm}')`;
           case 'body':
-            return `contains(body/content,'${searchTerm}')`;
+            return `contains(body/content,'${safeTerm}')`;
           case 'from':
-            return `contains(from/emailAddress/address,'${searchTerm}')`;
+            return `contains(from/emailAddress/address,'${safeTerm}')`;
           case 'to':
-            return `contains(toRecipients/any(to: to/emailAddress/address),'${searchTerm}')`;
+            return `contains(toRecipients/any(to: to/emailAddress/address),'${safeTerm}')`;
           default:
-            return `contains(subject,'${searchTerm}')`;
+            return `contains(subject,'${safeTerm}')`;
         }
       });
       filters.push(`(${searchConditions.join(' or ')})`);
     }
 
-    // Date range filter
+    // Date range filter — emit each bound independently so a one-sided range
+    // (only start, or only end) is still enforced instead of being dropped.
     if (dateRange) {
-      filters.push(
-        `receivedDateTime ge ${dateRange.start} and receivedDateTime le ${dateRange.end}`
-      );
+      if (dateRange.start) filters.push(`receivedDateTime ge ${dateRange.start}`);
+      if (dateRange.end) filters.push(`receivedDateTime le ${dateRange.end}`);
     }
 
     // Importance filter

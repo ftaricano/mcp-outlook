@@ -281,3 +281,45 @@ describe('validateToolInput - negative cases', () => {
     if (!r.ok) expect(r.error).toMatch(/Unknown tool/);
   });
 });
+
+describe('validateToolInput - security hardening (folder / date injection)', () => {
+  it('rejects a folder value carrying OData query injection (the ? metacharacter)', () => {
+    const r = validateToolInput('list_emails', {
+      folder: 'inbox/messages?$expand=attachments($select=contentBytes)',
+    });
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects folder values with whitespace, #, % or .. traversal', () => {
+    for (const folder of ['in box', 'inbox#x', 'inbox%2e', '../../secret']) {
+      expect(validateToolInput('list_emails', { folder }).ok).toBe(false);
+    }
+  });
+
+  it('accepts a plain well-known folder name and a base64-ish folder id', () => {
+    expect(validateToolInput('list_emails', { folder: 'inbox' }).ok).toBe(true);
+    // Real Graph folder ids carry / + = which must still be allowed.
+    expect(validateToolInput('get_folder_stats', { folderId: 'AAMkAGI2/Th+9=' }).ok).toBe(true);
+  });
+
+  it('rejects targetFolderId injection on move tools', () => {
+    expect(
+      validateToolInput('move_emails_to_folder', {
+        emailIds: 'id1',
+        targetFolderId: 'x?$expand=attachments',
+      }).ok
+    ).toBe(false);
+  });
+
+  it('rejects a non-ISO dateFrom that would inject a $filter clause', () => {
+    const r = validateToolInput('advanced_search', {
+      dateFrom: '2025-01-01 or isRead eq false',
+    });
+    expect(r.ok).toBe(false);
+  });
+
+  it('accepts well-formed ISO dates (date and datetime)', () => {
+    expect(validateToolInput('advanced_search', { dateFrom: '2025-01-01' }).ok).toBe(true);
+    expect(validateToolInput('advanced_search', { dateTo: '2025-12-31T23:59:59Z' }).ok).toBe(true);
+  });
+});

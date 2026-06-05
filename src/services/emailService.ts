@@ -11,7 +11,11 @@ import { CacheManager } from './cacheManager.js';
 import { GraphOptimizer } from './graphOptimizer.js';
 import { ParallelProcessor } from './parallelProcessor.js';
 import { PathGuard } from '../security/pathGuard.js';
-import { buildSenderContainsFilter, buildSenderExactFilter } from './odataFilters.js';
+import {
+  buildSenderContainsFilter,
+  buildSenderExactFilter,
+  escapeODataString,
+} from './odataFilters.js';
 
 export interface EmailListOptions {
   maxResults?: number;
@@ -1008,8 +1012,8 @@ export class EmailService {
   /**
    * Limpa arquivos antigos baixados
    */
-  cleanupOldDownloads(maxAgeHours: number = 24): number {
-    return this.fileManager.cleanupOldFiles(maxAgeHours);
+  cleanupOldDownloads(maxAgeHours: number = 24, dryRun = false): number {
+    return this.fileManager.cleanupOldFiles(maxAgeHours, dryRun);
   }
 
   /**
@@ -1926,7 +1930,7 @@ export class EmailService {
       // Use GraphOptimizer for intelligent search query optimization
       const optimizedFilter = this.graphOptimizer.optimizeSearchQuery(query || '', {
         searchIn: query ? ['subject', 'from', 'body'] : undefined,
-        dateRange: dateFrom && dateTo ? { start: dateFrom, end: dateTo } : undefined,
+        dateRange: dateFrom || dateTo ? { start: dateFrom, end: dateTo } : undefined,
         hasAttachments,
         isRead,
       });
@@ -2034,7 +2038,7 @@ export class EmailService {
         }
 
         if (subject) {
-          filterConditions.push(`contains(subject,'${subject}')`);
+          filterConditions.push(`contains(subject,'${escapeODataString(subject)}')`);
         }
 
         if (dateFrom) {
