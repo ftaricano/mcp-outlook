@@ -15,8 +15,20 @@ jobs:
         id: meta
         uses: dependabot/fetch-metadata@v3
 
-      - name: Enable auto-merge for patch and minor
-        if: steps.meta.outputs.update-type == 'version-update:semver-patch' || steps.meta.outputs.update-type == 'version-update:semver-minor'
+      # Restrict unattended auto-merge to DEV dependencies. Runtime/production
+      # deps — notably @azure/msal-node and @microsoft/microsoft-graph-* (the
+      # graph-sdk group) which handle the Azure credential — must go through the
+      # manual review configured in dependabot.yml: main has no branch protection
+      # / required checks, so `--auto` merges as soon as the PR is mergeable
+      # (before CI), and a patch/minor of a credential-handling lib would land one
+      # `git pull` away from running locally with real Keychain secrets.
+      # For a CI gate on ALL deps, enable branch protection on main with the
+      # `quality` + `audit` checks marked required (then `--auto` waits on them).
+      - name: Enable auto-merge for dev-dependency patch and minor
+        if: >
+          steps.meta.outputs.dependency-type == 'direct:development' &&
+          (steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+            steps.meta.outputs.update-type == 'version-update:semver-minor')
         run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
