@@ -11,7 +11,12 @@ import { CacheManager } from './cacheManager.js';
 import { GraphOptimizer } from './graphOptimizer.js';
 import { ParallelProcessor } from './parallelProcessor.js';
 import { PathGuard } from '../security/pathGuard.js';
-import { buildSenderContainsFilter, buildSenderExactFilter } from './odataFilters.js';
+import {
+  buildSenderContainsFilter,
+  buildSenderExactFilter,
+  escapeODataString,
+  encodeGraphSegment,
+} from './odataFilters.js';
 
 export interface EmailListOptions {
   maxResults?: number;
@@ -137,8 +142,8 @@ export class EmailService {
         const userEmail = process.env.TARGET_USER_EMAIL || 'me';
         const apiEndpoint =
           userEmail === 'me'
-            ? `/me/mailFolders/${folder}/messages`
-            : `/users/${userEmail}/mailFolders/${folder}/messages`;
+            ? `/me/mailFolders/${encodeGraphSegment(folder)}/messages`
+            : `/users/${userEmail}/mailFolders/${encodeGraphSegment(folder)}/messages`;
 
         const queryParams: string[] = [
           `$top=${Math.min(maxResults, 100)}`,
@@ -213,7 +218,9 @@ export class EmailService {
     try {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
       const apiPath =
-        userEmail === 'me' ? `/me/messages/${emailId}` : `/users/${userEmail}/messages/${emailId}`;
+        userEmail === 'me'
+          ? `/me/messages/${encodeGraphSegment(emailId)}`
+          : `/users/${userEmail}/messages/${encodeGraphSegment(emailId)}`;
 
       const email = await this.client
         .api(apiPath)
@@ -566,8 +573,8 @@ export class EmailService {
       const action = replyAll ? 'replyAll' : 'reply';
       const apiPath =
         userEmail === 'me'
-          ? `/me/messages/${emailId}/${action}`
-          : `/users/${userEmail}/messages/${emailId}/${action}`;
+          ? `/me/messages/${encodeGraphSegment(emailId)}/${action}`
+          : `/users/${userEmail}/messages/${encodeGraphSegment(emailId)}/${action}`;
 
       // Preparar conteúdo da resposta com template se solicitado
       let replyBody = body;
@@ -632,7 +639,9 @@ export class EmailService {
     try {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
       const apiPath =
-        userEmail === 'me' ? `/me/messages/${emailId}` : `/users/${userEmail}/messages/${emailId}`;
+        userEmail === 'me'
+          ? `/me/messages/${encodeGraphSegment(emailId)}`
+          : `/users/${userEmail}/messages/${encodeGraphSegment(emailId)}`;
 
       await this.client.api(apiPath).patch({ isRead: true });
       return true;
@@ -648,7 +657,9 @@ export class EmailService {
     try {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
       const apiPath =
-        userEmail === 'me' ? `/me/messages/${emailId}` : `/users/${userEmail}/messages/${emailId}`;
+        userEmail === 'me'
+          ? `/me/messages/${encodeGraphSegment(emailId)}`
+          : `/users/${userEmail}/messages/${encodeGraphSegment(emailId)}`;
 
       await this.client.api(apiPath).patch({ isRead: false });
       return true;
@@ -664,7 +675,9 @@ export class EmailService {
     try {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
       const apiPath =
-        userEmail === 'me' ? `/me/messages/${emailId}` : `/users/${userEmail}/messages/${emailId}`;
+        userEmail === 'me'
+          ? `/me/messages/${encodeGraphSegment(emailId)}`
+          : `/users/${userEmail}/messages/${encodeGraphSegment(emailId)}`;
 
       await this.client.api(apiPath).delete();
       return true;
@@ -682,8 +695,8 @@ export class EmailService {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
       const apiPath =
         userEmail === 'me'
-          ? `/me/messages/${emailId}/attachments`
-          : `/users/${userEmail}/messages/${emailId}/attachments`;
+          ? `/me/messages/${encodeGraphSegment(emailId)}/attachments`
+          : `/users/${userEmail}/messages/${encodeGraphSegment(emailId)}/attachments`;
 
       const response = await this.client.api(apiPath).get();
 
@@ -717,8 +730,8 @@ export class EmailService {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
       const apiPath =
         userEmail === 'me'
-          ? `/me/messages/${emailId}/attachments/${attachmentId}`
-          : `/users/${userEmail}/messages/${emailId}/attachments/${attachmentId}`;
+          ? `/me/messages/${encodeGraphSegment(emailId)}/attachments/${encodeGraphSegment(attachmentId)}`
+          : `/users/${userEmail}/messages/${encodeGraphSegment(emailId)}/attachments/${encodeGraphSegment(attachmentId)}`;
 
       console.error(`📥 Baixando anexo...`);
 
@@ -1008,8 +1021,8 @@ export class EmailService {
   /**
    * Limpa arquivos antigos baixados
    */
-  cleanupOldDownloads(maxAgeHours: number = 24): number {
-    return this.fileManager.cleanupOldFiles(maxAgeHours);
+  cleanupOldDownloads(maxAgeHours: number = 24, dryRun = false): number {
+    return this.fileManager.cleanupOldFiles(maxAgeHours, dryRun);
   }
 
   /**
@@ -1160,16 +1173,16 @@ export class EmailService {
       // 1. Buscar dados básicos do email
       const userEmail = process.env.TARGET_USER_EMAIL;
       const baseUrl = userEmail
-        ? `/users/${userEmail}/messages/${emailId}`
-        : `/me/messages/${emailId}`;
+        ? `/users/${userEmail}/messages/${encodeGraphSegment(emailId)}`
+        : `/me/messages/${encodeGraphSegment(emailId)}`;
 
       const client = this.authProvider.getGraphClient();
       const emailData = await client.api(baseUrl).get();
 
       // 2. Buscar o conteúdo MIME completo do email
       const mimeUrl = userEmail
-        ? `/users/${userEmail}/messages/${emailId}/$value`
-        : `/me/messages/${emailId}/$value`;
+        ? `/users/${userEmail}/messages/${encodeGraphSegment(emailId)}/$value`
+        : `/me/messages/${encodeGraphSegment(emailId)}/$value`;
 
       console.error('🔄 Obtendo conteúdo MIME completo...');
       const mimeContent = await client.api(mimeUrl).get();
@@ -1516,8 +1529,8 @@ export class EmailService {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
       const apiEndpoint =
         userEmail === 'me'
-          ? `/me/mailFolders/${parentFolderId}/childFolders`
-          : `/users/${userEmail}/mailFolders/${parentFolderId}/childFolders`;
+          ? `/me/mailFolders/${encodeGraphSegment(parentFolderId)}/childFolders`
+          : `/users/${userEmail}/mailFolders/${encodeGraphSegment(parentFolderId)}/childFolders`;
 
       const response = await this.client
         .api(apiEndpoint)
@@ -1548,8 +1561,8 @@ export class EmailService {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
       const apiEndpoint = parentFolderId
         ? userEmail === 'me'
-          ? `/me/mailFolders/${parentFolderId}/childFolders`
-          : `/users/${userEmail}/mailFolders/${parentFolderId}/childFolders`
+          ? `/me/mailFolders/${encodeGraphSegment(parentFolderId)}/childFolders`
+          : `/users/${userEmail}/mailFolders/${encodeGraphSegment(parentFolderId)}/childFolders`
         : userEmail === 'me'
           ? '/me/mailFolders'
           : `/users/${userEmail}/mailFolders`;
@@ -1581,8 +1594,8 @@ export class EmailService {
         const userEmail = process.env.TARGET_USER_EMAIL || 'me';
         const apiEndpoint =
           userEmail === 'me'
-            ? `/me/messages/${emailId}/move`
-            : `/users/${userEmail}/messages/${emailId}/move`;
+            ? `/me/messages/${encodeGraphSegment(emailId)}/move`
+            : `/users/${userEmail}/messages/${encodeGraphSegment(emailId)}/move`;
 
         console.error(
           `📦 Movendo email ${emailId.substring(0, 8)}... para pasta ${targetFolderId}`
@@ -1624,8 +1637,8 @@ export class EmailService {
         const userEmail = process.env.TARGET_USER_EMAIL || 'me';
         const apiEndpoint =
           userEmail === 'me'
-            ? `/me/messages/${emailId}/copy`
-            : `/users/${userEmail}/messages/${emailId}/copy`;
+            ? `/me/messages/${encodeGraphSegment(emailId)}/copy`
+            : `/users/${userEmail}/messages/${encodeGraphSegment(emailId)}/copy`;
 
         console.error(
           `📋 Copiando email ${emailId.substring(0, 8)}... para pasta ${targetFolderId}`
@@ -1665,8 +1678,8 @@ export class EmailService {
       // First get folder info
       const folderEndpoint =
         userEmail === 'me'
-          ? `/me/mailFolders/${folderId}`
-          : `/users/${userEmail}/mailFolders/${folderId}`;
+          ? `/me/mailFolders/${encodeGraphSegment(folderId)}`
+          : `/users/${userEmail}/mailFolders/${encodeGraphSegment(folderId)}`;
 
       const folder = await this.client.api(folderEndpoint).get();
 
@@ -1702,8 +1715,8 @@ export class EmailService {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
       const folderEndpoint =
         userEmail === 'me'
-          ? `/me/mailFolders/${folderId}`
-          : `/users/${userEmail}/mailFolders/${folderId}`;
+          ? `/me/mailFolders/${encodeGraphSegment(folderId)}`
+          : `/users/${userEmail}/mailFolders/${encodeGraphSegment(folderId)}`;
 
       console.error(
         `📊 Obtendo estatísticas da pasta ${folderId}${includeSubfolders ? ' (incluindo subpastas)' : ''}`
@@ -1714,8 +1727,8 @@ export class EmailService {
       // Get emails for date range analysis
       const messagesEndpoint =
         userEmail === 'me'
-          ? `/me/mailFolders/${folderId}/messages`
-          : `/users/${userEmail}/mailFolders/${folderId}/messages`;
+          ? `/me/mailFolders/${encodeGraphSegment(folderId)}/messages`
+          : `/users/${userEmail}/mailFolders/${encodeGraphSegment(folderId)}/messages`;
 
       const messages = await this.client
         .api(messagesEndpoint)
@@ -1786,8 +1799,8 @@ export class EmailService {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
       const messagesEndpoint =
         userEmail === 'me'
-          ? `/me/mailFolders/${sourceFolderId}/messages`
-          : `/users/${userEmail}/mailFolders/${sourceFolderId}/messages`;
+          ? `/me/mailFolders/${encodeGraphSegment(sourceFolderId)}/messages`
+          : `/users/${userEmail}/mailFolders/${encodeGraphSegment(sourceFolderId)}/messages`;
 
       // Get emails to organize
       const response = await this.client
@@ -1926,7 +1939,7 @@ export class EmailService {
       // Use GraphOptimizer for intelligent search query optimization
       const optimizedFilter = this.graphOptimizer.optimizeSearchQuery(query || '', {
         searchIn: query ? ['subject', 'from', 'body'] : undefined,
-        dateRange: dateFrom && dateTo ? { start: dateFrom, end: dateTo } : undefined,
+        dateRange: dateFrom || dateTo ? { start: dateFrom, end: dateTo } : undefined,
         hasAttachments,
         isRead,
       });
@@ -2019,8 +2032,8 @@ export class EmailService {
         const userEmail = process.env.TARGET_USER_EMAIL || 'me';
         const apiEndpoint =
           userEmail === 'me'
-            ? `/me/mailFolders/${folder}/messages`
-            : `/users/${userEmail}/mailFolders/${folder}/messages`;
+            ? `/me/mailFolders/${encodeGraphSegment(folder)}/messages`
+            : `/users/${userEmail}/mailFolders/${encodeGraphSegment(folder)}/messages`;
 
         const queryParams: string[] = [
           `$top=${Math.min(maxResults, 100)}`,
@@ -2034,7 +2047,7 @@ export class EmailService {
         }
 
         if (subject) {
-          filterConditions.push(`contains(subject,'${subject}')`);
+          filterConditions.push(`contains(subject,'${escapeODataString(subject)}')`);
         }
 
         if (dateFrom) {
@@ -2123,8 +2136,8 @@ export class EmailService {
       const userEmail = process.env.TARGET_USER_EMAIL || 'me';
       const apiEndpoint =
         userEmail === 'me'
-          ? `/me/mailFolders/${folder}/messages`
-          : `/users/${userEmail}/mailFolders/${folder}/messages`;
+          ? `/me/mailFolders/${encodeGraphSegment(folder)}/messages`
+          : `/users/${userEmail}/mailFolders/${encodeGraphSegment(folder)}/messages`;
 
       console.error(`🏢 Buscando emails do domínio: ${domain}`);
 

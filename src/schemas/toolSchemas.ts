@@ -19,7 +19,16 @@ const nonNegativeInt = z.number().int().nonnegative();
 const positiveInt = z.number().int().positive();
 
 const nonEmptyString = z.string().min(1);
-const isoDateString = z.string().min(1);
+
+// ISO-8601 date or datetime. Date bounds (dateFrom/dateTo, dateRange) are
+// interpolated UNQUOTED into an OData `$filter` (`receivedDateTime ge <value>`),
+// so a value like "2025-01-01 or isRead eq false" would inject extra filter
+// clauses. Pin to a strict ISO shape so only well-formed dates reach the filter
+// builder.
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
+const isoDateString = z
+  .string()
+  .regex(ISO_DATE_RE, 'must be an ISO-8601 date (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ)');
 
 const templateTheme = z.enum(['professional', 'modern', 'minimal', 'corporate']);
 
@@ -44,6 +53,28 @@ const searchString = z.union([z.string(), z.number()]).transform((v) => String(v
 
 const folderName = z.string().min(1);
 
+// Folder reference: a well-known name ("inbox", "sentitems", …) OR a Graph
+// folder id. These values are interpolated into the Graph URL *path*
+// (`/mailFolders/${folder}/messages`), so they must not carry URL
+// metacharacters the Graph SDK would re-parse: a `?` in this segment lets a
+// caller smuggle real OData query params (e.g. `$expand=attachments(...)`) and
+// pull attachment bytes the server's field projection deliberately omits. We
+// reject `? # % whitespace \ NUL` and any `..` segment, while still allowing the
+// `/ + = - _` that real base64 folder ids contain. Defense-in-depth on top of
+// the pinned `/users/<mailbox>` prefix.
+const FOLDER_REF_FORBIDDEN = /[?#%\s\\\x00]|\.\./;
+const folderRef = z
+  .string()
+  .min(1)
+  // Reject URL metacharacters and relative-path segments. A bare "." / ".." is
+  // rejected too — URL normalization rewrites it into a different Graph route
+  // even when percent-encoded.
+  .refine((v) => !FOLDER_REF_FORBIDDEN.test(v) && v !== '.', {
+    message:
+      'folder must not contain URL metacharacters (?, #, %, whitespace, backslash) or "." / ".." segments',
+  });
+const optionalFolderRef = folderRef.optional();
+
 const attachmentInput = z.object({
   name: nonEmptyString,
   contentType: nonEmptyString,
@@ -60,7 +91,7 @@ const dateRange = z
 
 const organizeRule = z.object({
   name: z.string().optional(),
-  targetFolderId: z.string().optional(),
+  targetFolderId: optionalFolderRef,
   subjectContains: z.array(z.string()).optional(),
   fromContains: z.array(z.string()).optional(),
   olderThanDays: z.number().optional(),
@@ -71,11 +102,11 @@ const searchCriteria = z
     query: searchString.optional(),
     sender: z.string().optional(),
     subject: searchString.optional(),
-    dateFrom: z.string().optional(),
-    dateTo: z.string().optional(),
+    dateFrom: isoDateString.optional(),
+    dateTo: isoDateString.optional(),
     hasAttachments: z.boolean().optional(),
     isRead: z.boolean().optional(),
-    folder: z.string().optional(),
+    folder: optionalFolderRef,
   })
   .optional();
 
@@ -86,7 +117,7 @@ const searchCriteria = z
 const listEmailsSchema = z.object({
   limit: nonNegativeInt.max(50).optional(),
   skip: nonNegativeInt.optional(),
-  folder: z.string().optional(),
+  folder: optionalFolderRef,
   search: searchString.optional(),
 });
 
@@ -128,7 +159,7 @@ const summarizeEmailSchema = z.object({ emailId: nonEmptyString });
 const summarizeEmailsBatchSchema = z.object({
   limit: nonNegativeInt.max(20).optional(),
   skip: nonNegativeInt.optional(),
-  folder: z.string().optional(),
+  folder: optionalFolderRef,
   priorityOnly: z.boolean().optional(),
 });
 
@@ -231,31 +262,31 @@ const listFoldersSchema = z.object({
 
 const createFolderSchema = z.object({
   folderName,
-  parentFolderId: z.string().optional(),
+  parentFolderId: optionalFolderRef,
 });
 
 const moveEmailsToFolderSchema = z.object({
   emailIds: stringOrStringArray,
-  targetFolderId: nonEmptyString,
+  targetFolderId: folderRef,
 });
 
 const copyEmailsToFolderSchema = z.object({
   emailIds: stringOrStringArray,
-  targetFolderId: nonEmptyString,
+  targetFolderId: folderRef,
 });
 
 const deleteFolderSchema = z.object({
-  folderId: nonEmptyString,
+  folderId: folderRef,
   permanent: z.boolean().optional(),
 });
 
 const getFolderStatsSchema = z.object({
-  folderId: nonEmptyString,
+  folderId: folderRef,
   includeSubfolders: z.boolean().optional(),
 });
 
 const organizeEmailsByRulesSchema = z.object({
-  sourceFolderId: nonEmptyString,
+  sourceFolderId: folderRef,
   rules: z.array(organizeRule).optional(),
   dryRun: z.boolean().optional(),
   maxEmails: positiveInt.optional(),
@@ -269,11 +300,11 @@ const advancedSearchSchema = z.object({
   query: searchString.optional(),
   sender: z.string().optional(),
   subject: searchString.optional(),
-  dateFrom: z.string().optional(),
-  dateTo: z.string().optional(),
+  dateFrom: isoDateString.optional(),
+  dateTo: isoDateString.optional(),
   hasAttachments: z.boolean().optional(),
   isRead: z.boolean().optional(),
-  folder: z.string().optional(),
+  folder: optionalFolderRef,
   maxResults: positiveInt.optional(),
   sortBy: z.enum(['receivedDateTime', 'subject', 'from']).optional(),
   sortOrder: z.enum(['asc', 'desc']).optional(),
@@ -283,21 +314,21 @@ const searchBySenderDomainSchema = z.object({
   domain: nonEmptyString,
   maxResults: positiveInt.optional(),
   includeSubdomains: z.boolean().optional(),
-  folder: z.string().optional(),
+  folder: optionalFolderRef,
   dateRange,
 });
 
 const searchByAttachmentTypeSchema = z.object({
   fileTypes: stringOrStringArray,
   maxResults: positiveInt.optional(),
-  folder: z.string().optional(),
+  folder: optionalFolderRef,
   sizeLimit: z.number().nonnegative().optional(),
   dateRange,
 });
 
 const findDuplicateEmailsSchema = z.object({
   criteria: z.enum(['subject', 'sender', 'subject+sender']).optional(),
-  folder: z.string().optional(),
+  folder: optionalFolderRef,
   maxResults: positiveInt.optional(),
   includeRead: z.boolean().optional(),
   dateRange,
@@ -306,7 +337,7 @@ const findDuplicateEmailsSchema = z.object({
 const searchBySizeSchema = z.object({
   minSizeMB: z.number().nonnegative().optional(),
   maxSizeMB: z.number().nonnegative().optional(),
-  folder: z.string().optional(),
+  folder: optionalFolderRef,
   maxResults: positiveInt.optional(),
   includeAttachments: z.boolean().optional(),
 });
@@ -342,7 +373,7 @@ const batchDeleteEmailsSchema = z.object({
 
 const batchMoveEmailsSchema = z.object({
   emailIds: emailIdsBatch(100),
-  targetFolderId: nonEmptyString,
+  targetFolderId: folderRef,
   maxConcurrent: positiveInt.optional(),
   validateTarget: z.boolean().optional(),
 });

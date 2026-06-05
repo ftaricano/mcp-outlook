@@ -263,7 +263,7 @@ export class AttachmentHandler extends BaseHandler {
     try {
       // Convert days to hours for the actual API
       const hoursOld = daysOld * 24;
-      const deletedCount = this.emailService.cleanupOldDownloads(hoursOld);
+      const deletedCount = this.emailService.cleanupOldDownloads(hoursOld, dryRun);
 
       let resultText = dryRun ? `🔍 Simulação de limpeza:\n\n` : `✅ Limpeza concluída:\n\n`;
 

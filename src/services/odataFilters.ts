@@ -28,6 +28,31 @@ export function escapeODataString(value: string): string {
 }
 
 /**
+ * Encode a single caller-supplied value for safe interpolation into a Microsoft
+ * Graph URL PATH segment (e.g. `/mailFolders/${seg}`, `/messages/${seg}`).
+ *
+ * The Graph SDK does NOT sanitize path segments: a raw `/` injects extra route
+ * segments (changing which resource is hit) and a `?` smuggles real OData query
+ * params (e.g. `$expand=attachments($select=contentBytes)`). encodeURIComponent
+ * collapses the value into one inert segment (`/`→`%2F`, `?`→`%3F`, `#`→`%23`,
+ * space→`%20`), while legitimate well-known names ("inbox") and base64 folder/
+ * message ids round-trip correctly — Graph percent-decodes the segment server
+ * side. Layer this at the URL boundary on top of the zod `folderRef` validation.
+ */
+export function encodeGraphSegment(value: string): string {
+  const raw = String(value);
+  // Fail closed on relative-path segments. Neither encodeURIComponent NOR
+  // percent-encoding the dots stops these: the WHATWG URL/Request parser
+  // normalizes "."/".." AND their %2e/%2E forms before fetch, so a ".." segment
+  // collapses e.g. `/messages/{id}/attachments/..` to a different Graph route.
+  // A legitimate folder/message id is never exactly "." or "..".
+  if (raw === '.' || raw === '..') {
+    throw new Error(`unsafe Graph path segment: ${JSON.stringify(raw)}`);
+  }
+  return encodeURIComponent(raw);
+}
+
+/**
  * Substring match on the sender address, case-insensitive on Graph.
  * Prefer this for caller-facing search where partial matches are useful.
  */

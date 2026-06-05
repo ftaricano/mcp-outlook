@@ -297,7 +297,7 @@ export class FileManager {
   /**
    * Limpa arquivos antigos
    */
-  cleanupOldFiles(maxAgeHours: number = 24): number {
+  cleanupOldFiles(maxAgeHours: number = 24, dryRun = false): number {
     try {
       const files = this.listDownloadedFiles();
       const cutoffTime = Date.now() - maxAgeHours * 60 * 60 * 1000;
@@ -305,9 +305,14 @@ export class FileManager {
 
       for (const file of files) {
         if (file.modified.getTime() < cutoffTime) {
-          fs.unlinkSync(file.path);
+          // dryRun counts matches without touching the filesystem — the tool
+          // layer reports this as a "simulation". Deleting here while claiming a
+          // dry run is silent, irreversible data loss.
+          if (!dryRun) {
+            fs.unlinkSync(file.path);
+            console.error(`🗑️  Removido arquivo antigo: ${file.name}`);
+          }
           cleanedCount++;
-          console.error(`🗑️  Removido arquivo antigo: ${file.name}`);
         }
       }
 
