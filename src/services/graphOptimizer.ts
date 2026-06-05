@@ -1,6 +1,6 @@
 import { Client } from '@microsoft/microsoft-graph-client';
 import { CacheManager } from './cacheManager.js';
-import { escapeODataString } from './odataFilters.js';
+import { escapeODataString, encodeGraphSegment } from './odataFilters.js';
 
 export interface GraphOptimizationConfig {
   enableBatching: boolean;
@@ -129,7 +129,7 @@ export class GraphOptimizer {
     const folderPath =
       folder === 'inbox'
         ? `${baseEndpoint}/mailFolders/inbox`
-        : `${baseEndpoint}/mailFolders/${folder}`;
+        : `${baseEndpoint}/mailFolders/${encodeGraphSegment(folder)}`;
 
     // Build optimized query with endpoint
     let query = this.buildOptimizedQuery(`${folderPath}/messages`, queryOptions);
@@ -492,7 +492,7 @@ export class GraphOptimizer {
     for (const folder of folders) {
       try {
         const subfolders = await this.client
-          .api(`${baseEndpoint}/mailFolders/${folder.id}/childFolders`)
+          .api(`${baseEndpoint}/mailFolders/${encodeGraphSegment(folder.id)}/childFolders`)
           .select(selectFields)
           .get();
 

@@ -3,6 +3,7 @@ import {
   escapeODataString,
   buildSenderContainsFilter,
   buildSenderExactFilter,
+  encodeGraphSegment,
 } from '../../src/services/odataFilters.js';
 
 describe('escapeODataString', () => {
@@ -70,5 +71,27 @@ describe('buildSenderExactFilter', () => {
     // the Codex review of PR #34.
     expect(buildSenderExactFilter('X')).not.toMatch(/\bcontains\b/);
     expect(buildSenderExactFilter('X')).toMatch(/\beq\b/);
+  });
+});
+
+describe('encodeGraphSegment', () => {
+  it('collapses a path-injection payload into one inert segment', () => {
+    // A raw `/` would inject extra Graph route segments and a `?` would smuggle
+    // OData query params; both must be percent-encoded away.
+    const encoded = encodeGraphSegment('inbox/messages?$expand=attachments($select=contentBytes)');
+    expect(encoded).not.toContain('/');
+    expect(encoded).not.toContain('?');
+    expect(encoded).toContain('%2F');
+    expect(encoded).toContain('%3F');
+  });
+
+  it('leaves well-known folder names untouched', () => {
+    expect(encodeGraphSegment('inbox')).toBe('inbox');
+    expect(encodeGraphSegment('sentitems')).toBe('sentitems');
+  });
+
+  it('round-trips a base64 Graph id (the / + = survive a decode)', () => {
+    const id = 'AAMkAGI2/Th+9=';
+    expect(decodeURIComponent(encodeGraphSegment(id))).toBe(id);
   });
 });

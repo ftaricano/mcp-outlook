@@ -67,3 +67,33 @@ describe('getOptimizedEmails - cache key includes the $filter', () => {
     expect(k1).not.toBe(k2);
   });
 });
+
+describe('getOptimizedEmails - path-segment encoding (no route injection)', () => {
+  // A chain that records the URL passed to client.api() and no-ops the rest of
+  // the fluent Graph request builder.
+  function capturingClient(calls: string[]) {
+    const chain: never = new Proxy(
+      {},
+      {
+        get(_t, prop) {
+          if (prop === 'get') return async () => ({ value: [] });
+          return () => chain;
+        },
+      }
+    ) as never;
+    return { api: (url: string) => (calls.push(url), chain) } as never;
+  }
+
+  it('percent-encodes the folder so a / or ? cannot alter the Graph route', async () => {
+    const calls: string[] = [];
+    const cache = new CacheManager();
+    vi.spyOn(cache, 'get').mockReturnValue(undefined as never); // cache miss -> hits the client
+    const opt = new GraphOptimizer(capturingClient(calls), cache, {});
+
+    await opt.getOptimizedEmails({ folder: 'inbox/messages?$expand=attachments', maxResults: 5 });
+
+    const url = calls[0] ?? '';
+    expect(url).toContain('mailFolders/inbox%2Fmessages%3F');
+    expect(url).not.toContain('mailFolders/inbox/messages?');
+  });
+});
