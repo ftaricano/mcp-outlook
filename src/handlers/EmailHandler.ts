@@ -373,19 +373,38 @@ export class EmailHandler extends BaseHandler {
         this.emailService
       );
 
+      // Surface fetch/summarization failures on EVERY exit path below, so an
+      // all-failed (or priority-filtered-to-empty) batch is never reported as a
+      // clean success.
+      const failureNote =
+        failed.length > 0
+          ? `⚠️ ${failed.length} de ${emailIds.length} email(s) não puderam ser resumidos (falha ao buscar/processar).`
+          : '';
+
+      // Every email failed to fetch/summarize — report an error, not a
+      // "nothing found" success.
+      if (summaries.length === 0) {
+        return this.formatError(
+          `Não foi possível resumir nenhum dos ${emailIds.length} emails.` +
+            (failureNote ? `\n\n${failureNote}` : '')
+        );
+      }
+
       // Filter by priority if requested
       const filteredSummaries = priorityOnly
         ? summaries.filter((s) => s.priority === 'alta')
         : summaries;
 
       if (filteredSummaries.length === 0) {
-        return this.formatSuccess('📭 Nenhum email prioritário encontrado');
+        return this.formatSuccess(
+          '📭 Nenhum email prioritário encontrado' + (failureNote ? `\n\n${failureNote}` : '')
+        );
       }
 
       let result = `📧 **Resumo de ${filteredSummaries.length} emails**\n\n`;
 
-      if (failed.length > 0) {
-        result += `⚠️ ${failed.length} email(s) não puderam ser resumidos (falha ao buscar/processar).\n\n`;
+      if (failureNote) {
+        result += `${failureNote}\n\n`;
       }
 
       // Group by priority
