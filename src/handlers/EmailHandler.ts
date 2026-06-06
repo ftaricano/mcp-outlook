@@ -368,7 +368,7 @@ export class EmailHandler extends BaseHandler {
       }
 
       const emailIds = emails.map((email) => email.id!);
-      const summaries = await this.emailSummarizer.summarizeEmailsBatch(
+      const { summaries, failed } = await this.emailSummarizer.summarizeEmailsBatch(
         emailIds,
         this.emailService
       );
@@ -383,6 +383,10 @@ export class EmailHandler extends BaseHandler {
       }
 
       let result = `📧 **Resumo de ${filteredSummaries.length} emails**\n\n`;
+
+      if (failed.length > 0) {
+        result += `⚠️ ${failed.length} email(s) não puderam ser resumidos (falha ao buscar/processar).\n\n`;
+      }
 
       // Group by priority
       const highPriority = filteredSummaries.filter((s) => s.priority === 'alta');
