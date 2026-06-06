@@ -17,6 +17,14 @@ const emailAddressList = z.array(emailAddress).min(1);
 
 const nonNegativeInt = z.number().int().nonnegative();
 const positiveInt = z.number().int().positive();
+// Caller-controlled fan-out. Capped so a single call cannot spawn an unbounded
+// number of concurrent Graph requests (socket/throttle exhaustion); 20 matches
+// the Graph $batch ceiling.
+const boundedConcurrency = z.number().int().positive().max(20);
+// Inline base64 attachment payloads are bounded to stop a single request from
+// forcing a huge Buffer allocation; large files must go through the hybrid file
+// tools (send_email_with_file / send_email_from_attachment).
+const MAX_INLINE_ATTACHMENT_CHARS = 50 * 1024 * 1024;
 
 const nonEmptyString = z.string().min(1);
 
@@ -78,7 +86,10 @@ const optionalFolderRef = folderRef.optional();
 const attachmentInput = z.object({
   name: nonEmptyString,
   contentType: nonEmptyString,
-  content: nonEmptyString,
+  content: nonEmptyString.max(
+    MAX_INLINE_ATTACHMENT_CHARS,
+    'attachment content too large; use send_email_with_file / send_email_from_attachment'
+  ),
   size: nonNegativeInt.optional(),
 });
 
@@ -127,7 +138,7 @@ const sendEmailSchema = z.object({
   body: z.string(),
   cc: z.array(emailAddress).optional(),
   bcc: z.array(emailAddress).optional(),
-  attachments: z.array(attachmentInput).optional(),
+  attachments: z.array(attachmentInput).max(50).optional(),
   useTemplate: z.boolean().optional(),
   templateTheme: templateTheme.optional(),
   ...templateCustomizationShape,
@@ -145,7 +156,7 @@ const createDraftSchema = z.object({
   body: z.string(),
   cc: z.array(emailAddress).optional(),
   bcc: z.array(emailAddress).optional(),
-  attachments: z.array(attachmentInput).optional(),
+  attachments: z.array(attachmentInput).max(50).optional(),
   useTemplate: z.boolean().optional(),
   templateTheme: templateTheme.optional(),
   ...templateCustomizationShape,
@@ -194,7 +205,7 @@ const downloadAllAttachmentsSchema = z.object({
   targetDirectory: z.string().optional(),
   overwrite: z.boolean().optional(),
   validateIntegrity: z.boolean().optional(),
-  maxConcurrent: positiveInt.optional(),
+  maxConcurrent: boundedConcurrency.optional(),
 });
 
 const listDownloadedFilesSchema = z.object({}).strict();
@@ -357,31 +368,31 @@ const emailIdsBatch = (max: number) =>
 
 const batchMarkAsReadSchema = z.object({
   emailIds: emailIdsBatch(100),
-  maxConcurrent: positiveInt.optional(),
+  maxConcurrent: boundedConcurrency.optional(),
 });
 
 const batchMarkAsUnreadSchema = z.object({
   emailIds: emailIdsBatch(100),
-  maxConcurrent: positiveInt.optional(),
+  maxConcurrent: boundedConcurrency.optional(),
 });
 
 const batchDeleteEmailsSchema = z.object({
   emailIds: emailIdsBatch(50),
   permanent: z.boolean().optional(),
-  maxConcurrent: positiveInt.optional(),
+  maxConcurrent: boundedConcurrency.optional(),
 });
 
 const batchMoveEmailsSchema = z.object({
   emailIds: emailIdsBatch(100),
   targetFolderId: folderRef,
-  maxConcurrent: positiveInt.optional(),
+  maxConcurrent: boundedConcurrency.optional(),
   validateTarget: z.boolean().optional(),
 });
 
 const batchDownloadAttachmentsSchema = z.object({
   emailIds: emailIdsBatch(20),
   targetDirectory: z.string().optional(),
-  maxConcurrent: positiveInt.optional(),
+  maxConcurrent: boundedConcurrency.optional(),
   overwrite: z.boolean().optional(),
   validateIntegrity: z.boolean().optional(),
   sizeLimit: z.number().nonnegative().optional(),
