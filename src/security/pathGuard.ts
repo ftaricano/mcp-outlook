@@ -245,7 +245,9 @@ export class PathGuard {
       );
     }
 
-    return resolved;
+    // Return the fully symlink-resolved path (not the lexical `resolved`) so the
+    // caller opens exactly what we validated, shrinking the TOCTOU window.
+    return real;
   }
 
   /**

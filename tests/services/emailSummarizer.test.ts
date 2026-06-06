@@ -153,12 +153,13 @@ describe('EmailSummarizer.summarizeEmailsBatch', () => {
       getEmailById: async (id: string) => fakeEmail({ id }),
     };
     const result = await summarizer.summarizeEmailsBatch(['id1', 'id2'], fakeService);
-    expect(result).toHaveLength(2);
-    expect(result[0].id).toBe('id1');
-    expect(result[1].id).toBe('id2');
+    expect(result.summaries).toHaveLength(2);
+    expect(result.summaries[0].id).toBe('id1');
+    expect(result.summaries[1].id).toBe('id2');
+    expect(result.failed).toEqual([]);
   });
 
-  it('skips failing emails without throwing', async () => {
+  it('skips failing emails without throwing and reports them as failed', async () => {
     const summarizer = new EmailSummarizer();
     const fakeService: any = {
       getEmailById: async (id: string) => {
@@ -169,7 +170,10 @@ describe('EmailSummarizer.summarizeEmailsBatch', () => {
     // Silence the expected console.error from the SUT.
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const result = await summarizer.summarizeEmailsBatch(['id1', 'bad', 'id2'], fakeService);
-    expect(result.map((r) => r.id)).toEqual(['id1', 'id2']);
+    // Successful subset is returned, and the failure is surfaced (not silently
+    // dropped) so the handler can report a partial result instead of faking success.
+    expect(result.summaries).toHaveLength(2);
+    expect(result.failed).toEqual(['bad']);
     spy.mockRestore();
   });
 });

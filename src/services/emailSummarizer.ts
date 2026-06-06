@@ -15,6 +15,12 @@ export interface EmailSummary {
   sentiment: 'positivo' | 'neutro' | 'negativo';
 }
 
+export interface BatchSummaryResult {
+  summaries: EmailSummary[];
+  /** IDs that could not be fetched/summarized, so the caller can report them. */
+  failed: string[];
+}
+
 export class EmailSummarizer {
   async summarizeEmail(email: Message): Promise<EmailSummary> {
     const bodyContent = email.body?.content || '';
@@ -39,8 +45,9 @@ export class EmailSummarizer {
   async summarizeEmailsBatch(
     emailIds: string[],
     emailService: EmailService
-  ): Promise<EmailSummary[]> {
+  ): Promise<BatchSummaryResult> {
     const summaries: EmailSummary[] = [];
+    const failed: string[] = [];
 
     for (const emailId of emailIds) {
       try {
@@ -48,12 +55,14 @@ export class EmailSummarizer {
         const summary = await this.summarizeEmail(email);
         summaries.push(summary);
       } catch (error) {
+        failed.push(emailId);
         console.error(`Erro ao resumir email ${emailId}:`, error);
-        // Continua com os próximos emails mesmo se um falhar
+        // Continue with the rest; the failure count is surfaced to the caller
+        // instead of silently shrinking the result.
       }
     }
 
-    return summaries;
+    return { summaries, failed };
   }
 
   private extractPlainText(htmlContent: string): string {

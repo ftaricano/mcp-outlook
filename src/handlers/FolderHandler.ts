@@ -292,7 +292,11 @@ export class FolderHandler extends BaseHandler {
       resultText += `   • Emails processados: ${result.emailsProcessed}\n`;
       resultText += `   • Emails organizados: ${result.emailsOrganized}\n`;
       resultText += `   • Regras aplicadas: ${result.rulesApplied}\n`;
-      resultText += `   • Taxa de organização: ${((result.emailsOrganized / result.emailsProcessed) * 100).toFixed(1)}%\n\n`;
+      const orgRate =
+        result.emailsProcessed > 0
+          ? ((result.emailsOrganized / result.emailsProcessed) * 100).toFixed(1)
+          : '0.0';
+      resultText += `   • Taxa de organização: ${orgRate}%\n\n`;
 
       if (result.ruleResults.length > 0) {
         resultText += `📋 **Resultados por Regra:**\n`;

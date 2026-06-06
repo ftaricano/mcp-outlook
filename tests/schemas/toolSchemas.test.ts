@@ -323,3 +323,30 @@ describe('validateToolInput - security hardening (folder / date injection)', () 
     expect(validateToolInput('advanced_search', { dateTo: '2025-12-31T23:59:59Z' }).ok).toBe(true);
   });
 });
+
+describe('validateToolInput - input bounds (DoS hardening)', () => {
+  it('caps maxConcurrent at 20', () => {
+    expect(validateToolInput('batch_mark_as_read', { emailIds: ['a'], maxConcurrent: 20 }).ok).toBe(
+      true
+    );
+    expect(validateToolInput('batch_mark_as_read', { emailIds: ['a'], maxConcurrent: 21 }).ok).toBe(
+      false
+    );
+    expect(
+      validateToolInput('batch_mark_as_read', { emailIds: ['a'], maxConcurrent: 9999 }).ok
+    ).toBe(false);
+  });
+
+  it('caps the inline attachments array length', () => {
+    const att = { name: 'f', contentType: 'text/plain', content: 'AAAA' };
+    const many = Array.from({ length: 51 }, () => att);
+    expect(
+      validateToolInput('send_email', {
+        to: ['a@b.com'],
+        subject: 's',
+        body: 'b',
+        attachments: many,
+      }).ok
+    ).toBe(false);
+  });
+});

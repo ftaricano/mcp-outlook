@@ -72,6 +72,11 @@ export class GraphAuthProvider implements AuthenticationProvider {
       this.tokenExpiresAt = response.expiresOn;
       return this.accessToken;
     } catch (error) {
+      // A failed (re)acquisition must not leave a stale token cached, or the
+      // next getAccessToken() could hand back an expired/invalid token instead
+      // of re-acquiring.
+      this.accessToken = null;
+      this.tokenExpiresAt = null;
       throw new Error(
         `Authentication failed: ${error instanceof Error ? error.message : 'unknown error'}`
       );

@@ -327,13 +327,21 @@ export class ParallelProcessor<T, R> extends EventEmitter {
     try {
       this.emit('task-started', task.id);
 
-      // Create timeout promise
+      // Race between actual processing and a timeout. Capture the timer handle
+      // and clear it once the race settles — otherwise a task that finishes
+      // before its timeout leaves a pending timer (up to task.timeout) armed,
+      // pinning the event loop and delaying process exit under bulk fan-out.
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Task timeout')), task.timeout);
+        timeoutHandle = setTimeout(() => reject(new Error('Task timeout')), task.timeout);
       });
 
-      // Race between actual processing and timeout
-      const result = await Promise.race([this.processingFunction(task.data), timeoutPromise]);
+      const result = await Promise.race([
+        this.processingFunction(task.data),
+        timeoutPromise,
+      ]).finally(() => {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+      });
 
       const processingTime = Date.now() - startTime;
 
