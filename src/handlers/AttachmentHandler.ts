@@ -5,11 +5,6 @@ export class AttachmentHandler extends BaseHandler {
    * Handler for listing attachments
    */
   async handleListAttachments(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['emailId']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     try {
       const attachments = await this.emailService.listAttachments(args.emailId);
 
@@ -38,11 +33,6 @@ export class AttachmentHandler extends BaseHandler {
    * Handler for downloading attachment
    */
   async handleDownloadAttachment(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['emailId', 'attachmentId']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     try {
       const attachment = await this.emailService.downloadAttachment(
         args.emailId,
@@ -79,11 +69,6 @@ export class AttachmentHandler extends BaseHandler {
    * Handler for downloading attachment to file
    */
   async handleDownloadAttachmentToFile(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['emailId', 'attachmentId']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     const {
       emailId,
       attachmentId,
@@ -131,11 +116,6 @@ export class AttachmentHandler extends BaseHandler {
    * Handler for downloading all attachments
    */
   async handleDownloadAllAttachments(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['emailId']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     const {
       emailId,
       targetDirectory,
@@ -285,11 +265,6 @@ export class AttachmentHandler extends BaseHandler {
    * Handler for exporting email as attachment
    */
   async handleExportEmailAsAttachment(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['emailId']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     try {
       const result = await this.emailService.exportEmailAsAttachment(args.emailId);
 
@@ -314,11 +289,6 @@ export class AttachmentHandler extends BaseHandler {
    * Handler for encoding file for attachment
    */
   async handleEncodeFileForAttachment(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['filePath']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     try {
       const result = await this.emailService.encodeFileForAttachment(args.filePath);
 

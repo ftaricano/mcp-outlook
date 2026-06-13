@@ -47,12 +47,6 @@ export class EmailHandler extends BaseHandler {
    * Handler for sending email
    */
   async handleSendEmail(args: any): Promise<HandlerResult> {
-    // Validate required fields
-    const validationError = this.validateRequiredArgs(args, ['to', 'subject', 'body']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     const validatedArgs = {
       to: args.to || [],
       subject: args.subject || '',
@@ -143,11 +137,6 @@ export class EmailHandler extends BaseHandler {
    * application sendMail but still permits message creation.
    */
   async handleCreateDraft(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['to', 'subject', 'body']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     const validatedArgs = {
       to: args.to || [],
       subject: args.subject || '',
@@ -231,11 +220,6 @@ export class EmailHandler extends BaseHandler {
    * Handler for replying to email
    */
   async handleReplyToEmail(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['emailId', 'body']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     try {
       const result = await this.emailService.replyToEmail(args.emailId, args.body, args.replyAll);
 
@@ -251,11 +235,6 @@ export class EmailHandler extends BaseHandler {
    * Handler for marking email as read
    */
   async handleMarkAsRead(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['emailId']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     try {
       await this.emailService.markAsRead(args.emailId);
       return this.formatSuccess(`✅ Email marcado como lido`);
@@ -268,11 +247,6 @@ export class EmailHandler extends BaseHandler {
    * Handler for marking email as unread
    */
   async handleMarkAsUnread(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['emailId']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     try {
       await this.emailService.markAsUnread(args.emailId);
       return this.formatSuccess(`✅ Email marcado como não lido`);
@@ -285,11 +259,6 @@ export class EmailHandler extends BaseHandler {
    * Handler for deleting email
    */
   async handleDeleteEmail(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['emailId']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     try {
       await this.emailService.deleteEmail(args.emailId);
       return this.formatSuccess(`✅ Email deletado com sucesso`);
@@ -302,11 +271,6 @@ export class EmailHandler extends BaseHandler {
    * Handler for summarizing single email
    */
   async handleSummarizeEmail(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['emailId']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     try {
       const email = await this.emailService.getEmailById(args.emailId);
       if (!email) {

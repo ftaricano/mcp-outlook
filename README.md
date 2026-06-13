@@ -150,13 +150,13 @@ docker run --rm -i --env-file .env mcp-outlook
 src/
   config/env.ts             # zod-validated env — fails fast on bad credentials
   auth/graphAuth.ts         # MSAL client-credentials token provider (auto-refresh)
-  services/emailService.ts  # Microsoft Graph wrapper with rate limiting + caching
+  services/emailService.ts  # Microsoft Graph wrapper with response caching + batch helpers
   schemas/toolSchemas.ts    # zod schemas for all 40 tool inputs
   handlers/*.ts             # one handler class per domain (email, folder, search…)
   handlers/HandlerRegistry  # zod validation + dispatch
   logging/logger.ts         # stderr JSON logger
   templates/                # HTML email templates (4 themes)
-  utils/                    # rate limiter, file manager, attachment validator
+  utils/                    # file manager, attachment validator, secret redaction
 ```
 
 Runtime flow:
@@ -164,7 +164,7 @@ Runtime flow:
 1. `loadEnv()` validates credentials via zod on startup — bad config exits immediately with a clear message.
 2. `GraphAuthProvider` lazily acquires tokens and refreshes 60 s before expiry.
 3. MCP requests hit `HandlerRegistry.handleTool(name, args)` → zod validation → domain handler.
-4. Handlers call `EmailService`, which wraps Graph with rate limiting, response caching, and batch helpers.
+4. Handlers call `EmailService`, which wraps Graph with response caching and batch helpers. Retry/backoff on 429 (honoring `Retry-After`) comes from the Graph SDK's default middleware, not a custom limiter.
 
 ## Develop
 
@@ -198,7 +198,7 @@ node scripts/live-writes-smoke.js     # 9 write-path tools (self-contained, safe
 
 **`delete_email` returns 404 after `move_emails_to_folder`** — Microsoft Graph issues a new message ID on move. The handler now returns the new ID in its output; re-read it before deleting.
 
-**Rate limiting (429)** — Reduce `maxConcurrent` in batch operations. The server implements automatic backoff, but very high concurrency can still hit Graph throttle limits.
+**Rate limiting (429)** — Reduce `maxConcurrent` in batch operations. The Graph SDK's retry middleware backs off automatically (honoring `Retry-After`), but very high concurrency can still hit Graph throttle limits.
 
 ## Security
 

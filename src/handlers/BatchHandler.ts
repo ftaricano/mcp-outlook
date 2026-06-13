@@ -5,11 +5,6 @@ export class BatchHandler extends BaseHandler {
    * Handler for batch marking emails as read
    */
   async handleBatchMarkAsRead(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['emailIds']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     const { emailIds, maxConcurrent = 5 } = args;
     const emailArray = Array.isArray(emailIds) ? emailIds : [emailIds];
 
@@ -62,11 +57,6 @@ export class BatchHandler extends BaseHandler {
    * Handler for batch marking emails as unread
    */
   async handleBatchMarkAsUnread(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['emailIds']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     const { emailIds, maxConcurrent = 5 } = args;
     const emailArray = Array.isArray(emailIds) ? emailIds : [emailIds];
 
@@ -121,11 +111,6 @@ export class BatchHandler extends BaseHandler {
    * Handler for batch deleting emails
    */
   async handleBatchDeleteEmails(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['emailIds']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     const { emailIds, permanent = false, maxConcurrent = 3 } = args;
     const emailArray = Array.isArray(emailIds) ? emailIds : [emailIds];
 
@@ -190,11 +175,6 @@ export class BatchHandler extends BaseHandler {
    * Handler for batch moving emails
    */
   async handleBatchMoveEmails(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['emailIds', 'targetFolderId']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     const { emailIds, targetFolderId, maxConcurrent = 5, validateTarget = true } = args;
     const emailArray = Array.isArray(emailIds) ? emailIds : [emailIds];
 
@@ -260,11 +240,6 @@ export class BatchHandler extends BaseHandler {
    * Handler for batch downloading attachments
    */
   async handleBatchDownloadAttachments(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['emailIds']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     const {
       emailIds,
       targetDirectory = 'downloads',

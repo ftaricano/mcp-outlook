@@ -1,5 +1,6 @@
 import { EmailService } from '../services/emailService.js';
 import { EmailSummarizer } from '../services/emailSummarizer.js';
+import { redactSecrets } from '../utils/redactSecrets.js';
 
 export interface HandlerResult {
   content: Array<{
@@ -18,7 +19,9 @@ export interface HandlerResult {
  * suite of `validateToolInput` / `checkPermissions` / `createAuditEntry` /
  * `executeSecureOperation` helpers — none of them were invoked by any
  * concrete handler. They were removed in the P0 audit cleanup to stop
- * advertising security features that did not exist.
+ * advertising security features that did not exist. The `validateRequiredArgs`
+ * helper went the same way: Zod (with non-empty constraints on required
+ * fields) is the single validation gate, so the runtime no-op was redundant.
  */
 export abstract class BaseHandler {
   protected readonly emailService: EmailService;
@@ -30,7 +33,10 @@ export abstract class BaseHandler {
   }
 
   protected formatError(message: string, error?: unknown): HandlerResult {
-    const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+    const rawMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+    // The raw Graph/runtime message can carry a token, address or password;
+    // redact before it crosses the MCP boundary.
+    const errorMessage = redactSecrets(rawMessage);
     return {
       content: [
         {
@@ -46,21 +52,5 @@ export abstract class BaseHandler {
     return {
       content: [{ type: 'text', text: message }],
     };
-  }
-
-  /**
-   * Defence-in-depth: Zod already validates required fields in
-   * `HandlerRegistry`, so this helper is effectively a no-op at runtime.
-   * Kept because concrete handlers still call it and removing the call
-   * sites is out of scope for the security-focused audit sweep.
-   */
-  protected validateRequiredArgs(args: Record<string, unknown>, required: string[]): string | null {
-    for (const field of required) {
-      const v = args?.[field];
-      if (v == null || v === '') {
-        return `Campo obrigatório ausente: ${field}`;
-      }
-    }
-    return null;
   }
 }
