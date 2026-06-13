@@ -6,18 +6,6 @@ export class HybridHandler extends BaseHandler {
    * This is a hybrid function that downloads an attachment and sends it with a new email
    */
   async handleSendEmailFromAttachment(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, [
-      'sourceEmailId',
-      'attachmentId',
-      'to',
-      'subject',
-      'body',
-    ]);
-
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     const {
       sourceEmailId,
       attachmentId,
@@ -101,12 +89,6 @@ export class HybridHandler extends BaseHandler {
    * This function reads a file from disk and sends it as an attachment
    */
   async handleSendEmailWithFile(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['filePath', 'to', 'subject', 'body']);
-
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     const {
       filePath,
       to,

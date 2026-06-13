@@ -13,7 +13,7 @@ These are enforced by CI or by design. Don't regress them.
 1. **40 tools exactly.** `scripts/smoke-test.js:21` hardcodes `EXPECTED_TOOL_COUNT`. When adding/removing a tool, bump this constant and the tool table in [README.md](README.md).
 2. **Every tool has a zod schema.** `src/schemas/toolSchemas.ts` is the gate — `HandlerRegistry.handleTool` runs `validateToolInput` before dispatching. No handler method runs on unvalidated args.
 3. **Filesystem access goes through `pathGuard`.** Handlers never call `fs.readFile` / `fs.writeFile` on caller-supplied paths directly; `src/services/fileManager.ts` and `src/services/emailService.ts` already route through `pathGuard.resolveSafe()`. Any new file-touching code must go through the same door.
-4. **Graph calls go through `EmailService`.** No direct `Client.api()` in handlers — that bypasses rate limiting, response caching, and retry.
+4. **Graph calls go through `EmailService`.** No direct `Client.api()` in handlers — that bypasses response caching (`CacheManager`) and the batch helpers. Retry/throttling (429 + `Retry-After`) is **not** custom: it comes from the Graph SDK's default middleware chain (`Client.initWithMiddleware` in `src/auth/graphAuth.ts`), which includes the SDK `RetryHandler`. There is no in-house rate limiter.
 5. **HTML template inputs are escaped by default.** `src/templates/` must keep escaping user-controlled fields before rendering. Do not add a trusted-HTML bypass without an explicit sanitizer and tests.
 
 ## Architecture at a glance
@@ -23,11 +23,11 @@ src/
   config/     zod-validated env, fails fast
   auth/       MSAL client-credentials
   security/   pathGuard — filesystem allowlist (DOWNLOAD_DIR, MCP_EMAIL_UPLOAD_DIRS)
-  services/   Graph wrapper: rate limit, cache, batch helpers
+  services/   Graph wrapper: response cache, batch helpers (retry via SDK middleware)
   schemas/    zod input schema per tool + jsonSchema converter
   handlers/   one class per domain, HandlerRegistry routes by tool name
   templates/  4 HTML themes
-  utils/      rate limiter, file manager, attachment validator
+  utils/      file manager, attachment validator, secret redaction
 ```
 
 Handler domains: `Email`, `Attachment`, `Hybrid` (large-file), `Folder`, `Search`, `Batch`. Stay in the right domain when adding a tool.

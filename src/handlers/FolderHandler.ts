@@ -44,11 +44,6 @@ export class FolderHandler extends BaseHandler {
    * Handler for creating a new folder
    */
   async handleCreateFolder(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['folderName']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     const { folderName, parentFolderId } = args;
 
     try {
@@ -73,11 +68,6 @@ export class FolderHandler extends BaseHandler {
    * Handler for moving emails between folders
    */
   async handleMoveEmailsToFolder(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['emailIds', 'targetFolderId']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     const { emailIds, targetFolderId } = args;
     const emailArray = Array.isArray(emailIds) ? emailIds : [emailIds];
 
@@ -100,7 +90,7 @@ export class FolderHandler extends BaseHandler {
           const status = moveResult.success ? '✅' : '❌';
           const details = moveResult.success
             ? `Movido para ${targetFolderId}`
-            : `Erro: ${moveResult.error}`;
+            : `Erro: ${this.redactError(moveResult.error)}`;
 
           result += `   ${index + 1}. ${status} Email ${emailArray[index].substring(0, 8)}... - ${details}\n`;
           // Surface new id so callers can chain follow-up ops (Graph issues a
@@ -133,11 +123,6 @@ export class FolderHandler extends BaseHandler {
    * Handler for copying emails to folder
    */
   async handleCopyEmailsToFolder(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['emailIds', 'targetFolderId']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     const { emailIds, targetFolderId } = args;
     const emailArray = Array.isArray(emailIds) ? emailIds : [emailIds];
 
@@ -160,7 +145,7 @@ export class FolderHandler extends BaseHandler {
           const status = copyResult.success ? '✅' : '❌';
           const details = copyResult.success
             ? `Copiado para ${targetFolderId}`
-            : `Erro: ${copyResult.error}`;
+            : `Erro: ${this.redactError(copyResult.error)}`;
 
           result += `   ${index + 1}. ${status} Email ${emailArray[index].substring(0, 8)}... - ${details}\n`;
           if (copyResult.success && copyResult.copiedId) {
@@ -187,11 +172,6 @@ export class FolderHandler extends BaseHandler {
    * Handler for deleting a folder
    */
   async handleDeleteFolder(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['folderId']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     const { folderId, permanent = false } = args;
 
     try {
@@ -227,11 +207,6 @@ export class FolderHandler extends BaseHandler {
    * Handler for getting folder statistics
    */
   async handleGetFolderStats(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['folderId']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     const { folderId, includeSubfolders = false } = args;
 
     try {
@@ -272,11 +247,6 @@ export class FolderHandler extends BaseHandler {
    * Handler for organizing emails by rules
    */
   async handleOrganizeEmailsByRules(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['sourceFolderId']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     const { sourceFolderId, rules = [], dryRun = true, maxEmails = 100 } = args;
 
     try {

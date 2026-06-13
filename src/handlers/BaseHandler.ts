@@ -1,5 +1,6 @@
 import { EmailService } from '../services/emailService.js';
 import { EmailSummarizer } from '../services/emailSummarizer.js';
+import { redactSecrets, formatRedactedError } from '../utils/redactSecrets.js';
 
 export interface HandlerResult {
   content: Array<{
@@ -18,7 +19,10 @@ export interface HandlerResult {
  * suite of `validateToolInput` / `checkPermissions` / `createAuditEntry` /
  * `executeSecureOperation` helpers — none of them were invoked by any
  * concrete handler. They were removed in the P0 audit cleanup to stop
- * advertising security features that did not exist.
+ * advertising security features that did not exist. The old per-handler
+ * required-args helper went the same way: Zod (with non-empty constraints on
+ * required fields) is the single validation gate, so the runtime no-op was
+ * redundant.
  */
 export abstract class BaseHandler {
   protected readonly emailService: EmailService;
@@ -30,37 +34,28 @@ export abstract class BaseHandler {
   }
 
   protected formatError(message: string, error?: unknown): HandlerResult {
-    const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+    // Redact the WHOLE line: handlers sometimes interpolate a raw Graph error
+    // straight into `message` (e.g. `Falha no download: ${result.error}`), so
+    // masking only the detail would still leak a token/address/password across
+    // the MCP boundary. Shared with the top-level catch in index.ts.
     return {
-      content: [
-        {
-          type: 'text',
-          text: `❌ ${message}: ${errorMessage}`,
-        },
-      ],
+      content: [{ type: 'text', text: formatRedactedError(`❌ ${message}`, error) }],
       isError: true,
     };
+  }
+
+  /**
+   * Redact a raw error string before it is interpolated into an otherwise
+   * success-shaped result — e.g. per-item failures in batch/folder operations
+   * that are reported through `formatSuccess`, not `formatError`.
+   */
+  protected redactError(error: unknown): string {
+    return redactSecrets(error == null ? '' : String(error));
   }
 
   protected formatSuccess(message: string): HandlerResult {
     return {
       content: [{ type: 'text', text: message }],
     };
-  }
-
-  /**
-   * Defence-in-depth: Zod already validates required fields in
-   * `HandlerRegistry`, so this helper is effectively a no-op at runtime.
-   * Kept because concrete handlers still call it and removing the call
-   * sites is out of scope for the security-focused audit sweep.
-   */
-  protected validateRequiredArgs(args: Record<string, unknown>, required: string[]): string | null {
-    for (const field of required) {
-      const v = args?.[field];
-      if (v == null || v === '') {
-        return `Campo obrigatório ausente: ${field}`;
-      }
-    }
-    return null;
   }
 }

@@ -93,11 +93,6 @@ export class SearchHandler extends BaseHandler {
    * Handler for searching emails by sender domain
    */
   async handleSearchBySenderDomain(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['domain']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     const { domain, maxResults = 20, includeSubdomains = true, folder = 'inbox', dateRange } = args;
 
     try {
@@ -164,11 +159,6 @@ export class SearchHandler extends BaseHandler {
    * Handler for searching emails with specific attachments
    */
   async handleSearchByAttachmentType(args: any): Promise<HandlerResult> {
-    const validationError = this.validateRequiredArgs(args, ['fileTypes']);
-    if (validationError) {
-      return this.formatError(validationError);
-    }
-
     const { fileTypes, maxResults = 20, folder = 'inbox', sizeLimit, dateRange } = args;
 
     const typesArray = Array.isArray(fileTypes) ? fileTypes : [fileTypes];
