@@ -1,6 +1,6 @@
 import { EmailService } from '../services/emailService.js';
 import { EmailSummarizer } from '../services/emailSummarizer.js';
-import { redactSecrets } from '../utils/redactSecrets.js';
+import { redactSecrets, formatRedactedError } from '../utils/redactSecrets.js';
 
 export interface HandlerResult {
   content: Array<{
@@ -34,14 +34,12 @@ export abstract class BaseHandler {
   }
 
   protected formatError(message: string, error?: unknown): HandlerResult {
-    const detail = error instanceof Error ? error.message : 'Erro desconhecido';
     // Redact the WHOLE line: handlers sometimes interpolate a raw Graph error
     // straight into `message` (e.g. `Falha no download: ${result.error}`), so
-    // masking only `detail` would still leak a token/address/password across
-    // the MCP boundary.
-    const text = redactSecrets(`❌ ${message}: ${detail}`);
+    // masking only the detail would still leak a token/address/password across
+    // the MCP boundary. Shared with the top-level catch in index.ts.
     return {
-      content: [{ type: 'text', text }],
+      content: [{ type: 'text', text: formatRedactedError(`❌ ${message}`, error) }],
       isError: true,
     };
   }

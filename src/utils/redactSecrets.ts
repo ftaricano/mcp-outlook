@@ -27,3 +27,15 @@ export function redactSecrets(message: string): string {
       .replace(/\b[A-Za-z0-9+/_-]{20,}={0,2}\b/g, '[token]')
   );
 }
+
+/**
+ * Build a redacted error line for the MCP client. Single source of truth for
+ * every error path that crosses the boundary — the per-handler `formatError`
+ * and the top-level `CallToolRequestSchema` catch in `index.ts`. The whole line
+ * is masked because the caller-supplied `prefix` can itself carry an
+ * interpolated raw error.
+ */
+export function formatRedactedError(prefix: string, error: unknown): string {
+  const detail = error instanceof Error ? error.message : 'Erro desconhecido';
+  return redactSecrets(`${prefix}: ${detail}`);
+}

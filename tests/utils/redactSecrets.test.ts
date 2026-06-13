@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { redactSecrets } from '../../src/utils/redactSecrets.js';
+import { redactSecrets, formatRedactedError } from '../../src/utils/redactSecrets.js';
 
 describe('redactSecrets', () => {
   it('masks email addresses', () => {
@@ -47,5 +47,21 @@ describe('redactSecrets', () => {
     expect(redactSecrets('client_secret=AbC~xyz.123val')).toContain('[hidden]');
     expect(redactSecrets('client_secret=AbC~xyz.123val')).not.toContain('AbC~xyz.123val');
     expect(redactSecrets('api_key: zzz999aaa')).toContain('[hidden]');
+  });
+});
+
+describe('formatRedactedError', () => {
+  it('masks a leaked token/email in the top-level error line', () => {
+    const out = formatRedactedError(
+      'Erro ao executar send_email',
+      new Error('graph 401: invalid Bearer eyJaaa.bbbccc.dddeee for fulano@acme.com')
+    );
+    expect(out).not.toContain('fulano@acme.com');
+    expect(out).not.toContain('eyJaaa.bbbccc.dddeee');
+    expect(out).toContain('Erro ao executar send_email');
+  });
+
+  it('uses a generic detail for a non-Error throwable', () => {
+    expect(formatRedactedError('Erro', 'oops')).toBe('Erro: Erro desconhecido');
   });
 });
