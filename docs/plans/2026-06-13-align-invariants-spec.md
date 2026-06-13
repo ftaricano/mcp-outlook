@@ -29,7 +29,7 @@ Eliminar o gap entre invariantes **documentados** e o **código real** do `mcp-o
 
 1. **Deletar** `src/utils/RateLimiter.ts` + `tests/utils/RateLimiter.test.ts`.
 2. **Deletar** `src/utils/ErrorHandler.ts` (359 LOC; sem teste dedicado — confirmar antes).
-3. **Extrair** `redactSecrets(message: string): string` (regex de email / token base64 ≥20 / `password:=`) num módulo pequeno (`src/utils/redactSecrets.ts`) e **aplicá-lo no `BaseHandler.formatError`** ao montar o texto de erro. Assinatura de `formatError` inalterada.
+3. **Extrair** `redactSecrets(message: string): string` num módulo pequeno (`src/utils/redactSecrets.ts`) cobrindo email, JWT/Bearer, base64/base64url ≥20, e atribuições nomeadas (`password|client_secret|access_token|api_key|secret|token = …`). Aplicá-lo em **TODOS os caminhos de erro para o cliente**: `BaseHandler.formatError` mascara a linha inteira (handlers interpolam `result.error` no `message`), e um helper `BaseHandler.redactError` mascara os `*.error` interpolados nos resultados parciais de batch/folder/attachment (reportados via `formatSuccess`). Assinatura de `formatError` inalterada. *(escopo do redact ampliado pelo gate Codex — ver Revisão pós-gate.)*
 4. **Remover** `validateRequiredArgs` de `BaseHandler` + os 28 call-sites. **Pré-requisito:** auditar, para cada campo passado ao helper, o schema zod correspondente em `src/schemas/toolSchemas.ts`; onde um campo `required` aceitar `''` (string) ou `[]` (array), **adicionar `.min(1)`** antes de remover o call-site. Endurecer, nunca afrouxar.
 5. **Corrigir `CLAUDE.md`** invariante #4: declarar que **retry/throttling vêm do default middleware do Graph SDK** (`initWithMiddleware`) e caching do `CacheManager`; remover a implicação de rate-limiter/error-contract custom.
 6. **Corrigir README** linhas 153, 159, 167, 201: remover "rate limiting" custom; creditar o retry/backoff ao SDK middleware; tirar "rate limiter" da lista de utils.
@@ -78,6 +78,14 @@ Eliminar o gap entre invariantes **documentados** e o **código real** do `mcp-o
 5. Deletar `RateLimiter`/`ErrorHandler` + teste órfão.
 6. Corrigir `CLAUDE.md` + README.
 7. `build` + `test` + `smoke` + `lint` + `format:check` + grep de confirmação.
+
+## Revisão pós-gate (Codex iteração 1)
+
+O gate Codex (BLOCK na 1ª passada) confirmou os 2 pontos críticos (validação **não** afrouxou; retry do SDK intacto — `RetryHandler` honra `Retry-After`), mas pegou que mascarar só o 2º arg do `formatError` deixava ~13 caminhos de vazamento abertos:
+- 5× `formatError(\`...${result.error}\`)` — erro interpolado no 1º arg, não mascarado → fechado: `formatError` mascara a linha inteira.
+- 8× resultados parciais (batch/folder/attachment) interpolando `*.error` cru via `formatSuccess` → fechado: helper `BaseHandler.redactError`.
+- regex de token não cobria JWT/Bearer/base64url (o token do Graph é JWT) → fortalecido.
+- testes de rejeição de vazio agora também via `HandlerRegistry.handleTool` (gate real), não só `validateToolInput`.
 
 ## Pontos de atenção para o gate (Codex senior / fallback)
 

@@ -1,15 +1,29 @@
 /**
- * Redact secrets that may surface inside an error message before it reaches the
- * MCP client. Extracted from the former `ErrorHandler.createSafeErrorMessage`
- * (dead code — never invoked) and wired into `BaseHandler.formatError`, which
- * previously emitted `error.message` verbatim.
+ * Redact secrets that may surface inside an error string before it reaches the
+ * MCP client. Extracted from a former centralized error-handling helper (dead
+ * code, never invoked) and wired into the live error path (BaseHandler
+ * formatError / redactError), which previously emitted raw error text verbatim.
  *
  * Fail-safe by design: on the error path we prefer over-masking (e.g. a long
- * Graph message id mistaken for a token) over leaking a credential.
+ * Graph message id mistaken for a token) over leaking a credential. Every
+ * pattern is linear (no nested quantifiers) to avoid ReDoS on attacker text.
  */
 export function redactSecrets(message: string): string {
-  return message
-    .replace(/\b[\w.-]+@[\w.-]+\.\w+\b/g, '[email]')
-    .replace(/\b[A-Za-z0-9+/]{20,}={0,2}\b/g, '[token]')
-    .replace(/\bpassword\s*[:=]\s*\S+/gi, 'password: [hidden]');
+  return (
+    message
+      // JWT / Graph access tokens: eyJ<base64url>.<base64url>.<base64url>.
+      // Handled before the generic base64 rule so the dots don't split it.
+      .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '[token]')
+      // `Bearer <token>` authorization values.
+      .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [token]')
+      // Named secret assignments: password/secret/token/api_key = value.
+      .replace(
+        /\b(password|client_secret|access_token|api[_-]?key|secret|token)\s*[:=]\s*\S+/gi,
+        '$1: [hidden]'
+      )
+      // Email addresses.
+      .replace(/\b[\w.-]+@[\w.-]+\.\w+\b/g, '[email]')
+      // Long opaque base64 / base64url blobs (covers bare tokens / Azure keys).
+      .replace(/\b[A-Za-z0-9+/_-]{20,}={0,2}\b/g, '[token]')
+  );
 }

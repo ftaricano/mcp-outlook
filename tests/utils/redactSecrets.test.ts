@@ -29,4 +29,23 @@ describe('redactSecrets', () => {
   it('handles empty string', () => {
     expect(redactSecrets('')).toBe('');
   });
+
+  it('masks a JWT / Graph access token (base64url with dots)', () => {
+    const jwt =
+      'eyJ0eXAiOiJKV1QifQ.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
+    const out = redactSecrets(`auth failed: Bearer ${jwt}`);
+    expect(out).not.toContain('eyJ0eXAiOiJKV1QifQ');
+    expect(out).toContain('[token]');
+  });
+
+  it('masks a base64url token containing - and _', () => {
+    const t = 'abcDEF123456_-7890ghijKLmno_pq';
+    expect(redactSecrets(`opaque ${t} value`)).not.toContain(t);
+  });
+
+  it('masks named secret assignments (client_secret, api_key)', () => {
+    expect(redactSecrets('client_secret=AbC~xyz.123val')).toContain('[hidden]');
+    expect(redactSecrets('client_secret=AbC~xyz.123val')).not.toContain('AbC~xyz.123val');
+    expect(redactSecrets('api_key: zzz999aaa')).toContain('[hidden]');
+  });
 });

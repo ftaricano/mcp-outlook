@@ -34,7 +34,9 @@ export class BatchHandler extends BaseHandler {
         results.forEach((batchResult, index) => {
           const status = batchResult.success ? '✅' : '❌';
           const emailPreview = emailArray[index].substring(0, 8) + '...';
-          const details = batchResult.success ? 'Marcado como lido' : `Erro: ${batchResult.error}`;
+          const details = batchResult.success
+            ? 'Marcado como lido'
+            : `Erro: ${this.redactError(batchResult.error)}`;
 
           result += `${index + 1}. ${status} ${emailPreview} - ${details}\n`;
         });
@@ -88,7 +90,7 @@ export class BatchHandler extends BaseHandler {
           const emailPreview = emailArray[index].substring(0, 8) + '...';
           const details = batchResult.success
             ? 'Marcado como não lido'
-            : `Erro: ${batchResult.error}`;
+            : `Erro: ${this.redactError(batchResult.error)}`;
 
           result += `${index + 1}. ${status} ${emailPreview} - ${details}\n`;
         });
@@ -148,7 +150,7 @@ export class BatchHandler extends BaseHandler {
             ? permanent
               ? 'Deletado permanentemente'
               : 'Movido para lixeira'
-            : `Erro: ${batchResult.error}`;
+            : `Erro: ${this.redactError(batchResult.error)}`;
 
           result += `${index + 1}. ${status} ${emailPreview} - ${details}\n`;
         });
@@ -217,7 +219,9 @@ export class BatchHandler extends BaseHandler {
         results.forEach((batchResult, index) => {
           const status = batchResult.success ? '✅' : '❌';
           const emailPreview = emailArray[index].substring(0, 8) + '...';
-          const details = batchResult.success ? 'Movido com sucesso' : `Erro: ${batchResult.error}`;
+          const details = batchResult.success
+            ? 'Movido com sucesso'
+            : `Erro: ${this.redactError(batchResult.error)}`;
 
           result += `${index + 1}. ${status} ${emailPreview} - ${details}\n`;
         });
@@ -298,7 +302,7 @@ export class BatchHandler extends BaseHandler {
             result += `   Arquivos: ${fileList}${moreFiles}\n`;
           }
         } else {
-          result += `${index + 1}. ${status} ${emailPreview} - Erro: ${downloadResult.error}\n`;
+          result += `${index + 1}. ${status} ${emailPreview} - Erro: ${this.redactError(downloadResult.error)}\n`;
         }
       });
 

@@ -14,6 +14,9 @@ function makeMocks() {
 
   const emailService: any = {
     listEmails: vi.fn().mockResolvedValue([]),
+    createFolder: vi.fn(),
+    moveEmailsToFolder: vi.fn(),
+    sendEmail: vi.fn(),
   };
 
   return { emailService, emailSummarizer };
@@ -61,6 +64,48 @@ describe('HandlerRegistry.handleTool', () => {
     expect(mocks.emailService.listEmails).toHaveBeenCalledWith(
       expect.objectContaining({ maxResults: 10, folder: 'inbox' })
     );
+  });
+});
+
+describe('HandlerRegistry.handleTool - empty required fields rejected at the gate', () => {
+  // The removed per-handler required-args helper used to reject '' / null.
+  // Zod is now the single gate: assert dispatch is refused (no service call)
+  // for empty-string and empty-array required fields, via the real handleTool.
+  it('rejects empty-string folderName (create_folder) without dispatching', async () => {
+    const mocks = makeMocks();
+    const registry = new HandlerRegistry(mocks.emailService, mocks.emailSummarizer);
+
+    const result = await registry.handleTool('create_folder', { folderName: '' });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/Invalid arguments for create_folder/);
+    expect(mocks.emailService.createFolder).not.toHaveBeenCalled();
+  });
+
+  it('rejects empty-array emailIds (move_emails_to_folder) without dispatching', async () => {
+    const mocks = makeMocks();
+    const registry = new HandlerRegistry(mocks.emailService, mocks.emailSummarizer);
+
+    const result = await registry.handleTool('move_emails_to_folder', {
+      emailIds: [],
+      targetFolderId: 'f1',
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/Invalid arguments for move_emails_to_folder/);
+    expect(mocks.emailService.moveEmailsToFolder).not.toHaveBeenCalled();
+  });
+
+  it('rejects empty body (send_email) without dispatching', async () => {
+    const mocks = makeMocks();
+    const registry = new HandlerRegistry(mocks.emailService, mocks.emailSummarizer);
+
+    const result = await registry.handleTool('send_email', {
+      to: ['a@b.com'],
+      subject: 's',
+      body: '',
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/Invalid arguments for send_email/);
+    expect(mocks.emailService.sendEmail).not.toHaveBeenCalled();
   });
 });
 

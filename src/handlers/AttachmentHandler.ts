@@ -151,7 +151,7 @@ export class AttachmentHandler extends BaseHandler {
           const status = fileResult.success ? '✅' : '❌';
           const details = fileResult.success
             ? `Local: ${fileResult.filePath}`
-            : `Erro: ${fileResult.error}`;
+            : `Erro: ${this.redactError(fileResult.error)}`;
 
           resultText += `   ${index + 1}. ${status} ${fileResult.filename}\n      ${details}\n`;
         });

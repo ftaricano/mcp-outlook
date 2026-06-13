@@ -90,7 +90,7 @@ export class FolderHandler extends BaseHandler {
           const status = moveResult.success ? '✅' : '❌';
           const details = moveResult.success
             ? `Movido para ${targetFolderId}`
-            : `Erro: ${moveResult.error}`;
+            : `Erro: ${this.redactError(moveResult.error)}`;
 
           result += `   ${index + 1}. ${status} Email ${emailArray[index].substring(0, 8)}... - ${details}\n`;
           // Surface new id so callers can chain follow-up ops (Graph issues a
@@ -145,7 +145,7 @@ export class FolderHandler extends BaseHandler {
           const status = copyResult.success ? '✅' : '❌';
           const details = copyResult.success
             ? `Copiado para ${targetFolderId}`
-            : `Erro: ${copyResult.error}`;
+            : `Erro: ${this.redactError(copyResult.error)}`;
 
           result += `   ${index + 1}. ${status} Email ${emailArray[index].substring(0, 8)}... - ${details}\n`;
           if (copyResult.success && copyResult.copiedId) {
