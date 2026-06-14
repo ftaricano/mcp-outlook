@@ -18,6 +18,7 @@ import { createPathGuard } from './security/pathGuard.js';
 import { HandlerRegistry } from './handlers/HandlerRegistry.js';
 import { Logger } from './logging/logger.js';
 import { LockManager } from './utils/lockManager.js';
+import { formatRedactedError } from './utils/redactSecrets.js';
 
 class EmailMCPServer {
   private readonly server: Server;
@@ -92,7 +93,9 @@ class EmailMCPServer {
           content: [
             {
               type: 'text',
-              text: `Erro ao executar ${name}: ${error instanceof Error ? error.message : 'Erro desconhecido'}`,
+              // Top-level safety net: a thrown error here bypasses the handlers'
+              // own formatError, so redact before it reaches the MCP client.
+              text: formatRedactedError(`Erro ao executar ${name}`, error),
             },
           ],
           isError: true,

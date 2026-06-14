@@ -350,3 +350,48 @@ describe('validateToolInput - input bounds (DoS hardening)', () => {
     ).toBe(false);
   });
 });
+
+describe('validateToolInput - empty required fields rejected', () => {
+  // Regression guard: `validateRequiredArgs` (which rejected '' / null) was
+  // removed in favour of Zod as the single validation gate. These assert the
+  // schemas still reject empty required values, so the contract did not loosen.
+  it('rejects empty body on send/draft/reply/hybrid tools', () => {
+    expect(validateToolInput('send_email', { to: ['a@b.com'], subject: 's', body: '' }).ok).toBe(
+      false
+    );
+    expect(validateToolInput('create_draft', { to: ['a@b.com'], subject: 's', body: '' }).ok).toBe(
+      false
+    );
+    expect(validateToolInput('reply_to_email', { emailId: 'x', body: '' }).ok).toBe(false);
+    expect(
+      validateToolInput('send_email_with_file', {
+        filePath: '/tmp/f.pdf',
+        to: ['a@b.com'],
+        subject: 's',
+        body: '',
+      }).ok
+    ).toBe(false);
+    expect(
+      validateToolInput('send_email_from_attachment', {
+        sourceEmailId: 's',
+        attachmentId: 'a',
+        to: ['a@b.com'],
+        subject: 's',
+        body: '',
+      }).ok
+    ).toBe(false);
+  });
+
+  it('rejects empty string / empty array on other required fields', () => {
+    expect(validateToolInput('create_folder', { folderName: '' }).ok).toBe(false);
+    expect(
+      validateToolInput('move_emails_to_folder', { emailIds: '', targetFolderId: 'f' }).ok
+    ).toBe(false);
+    expect(
+      validateToolInput('move_emails_to_folder', { emailIds: [], targetFolderId: 'f' }).ok
+    ).toBe(false);
+    expect(validateToolInput('send_email', { to: [], subject: 's', body: 'b' }).ok).toBe(false);
+    expect(validateToolInput('search_by_sender_domain', { domain: '' }).ok).toBe(false);
+    expect(validateToolInput('batch_mark_as_read', { emailIds: [] }).ok).toBe(false);
+  });
+});

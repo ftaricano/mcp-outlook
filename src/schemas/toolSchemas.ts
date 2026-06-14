@@ -135,7 +135,7 @@ const listEmailsSchema = z.object({
 const sendEmailSchema = z.object({
   to: emailAddressList,
   subject: nonEmptyString,
-  body: z.string(),
+  body: nonEmptyString,
   cc: z.array(emailAddress).optional(),
   bcc: z.array(emailAddress).optional(),
   attachments: z.array(attachmentInput).max(50).optional(),
@@ -146,14 +146,14 @@ const sendEmailSchema = z.object({
 
 const replyToEmailSchema = z.object({
   emailId: nonEmptyString,
-  body: z.string(),
+  body: nonEmptyString,
   replyAll: z.boolean().optional(),
 });
 
 const createDraftSchema = z.object({
   to: emailAddressList,
   subject: nonEmptyString,
-  body: z.string(),
+  body: nonEmptyString,
   cc: z.array(emailAddress).optional(),
   bcc: z.array(emailAddress).optional(),
   attachments: z.array(attachmentInput).max(50).optional(),
@@ -235,7 +235,7 @@ const sendEmailFromAttachmentSchema = z.object({
   attachmentId: nonEmptyString,
   to: emailAddressList,
   subject: nonEmptyString,
-  body: z.string(),
+  body: nonEmptyString,
   cc: z.array(emailAddress).optional(),
   bcc: z.array(emailAddress).optional(),
   useTemplate: z.boolean().optional(),
@@ -252,7 +252,7 @@ const sendEmailWithFileSchema = z.object({
   filePath: nonEmptyString,
   to: emailAddressList,
   subject: nonEmptyString,
-  body: z.string(),
+  body: nonEmptyString,
   cc: z.array(emailAddress).optional(),
   bcc: z.array(emailAddress).optional(),
   useTemplate: z.boolean().optional(),
