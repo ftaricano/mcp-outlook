@@ -1,65 +1,91 @@
-# CLAUDE.md — agent notes
+# CLAUDE.md -- mcp-outlook
 
-Guidance for agents working **on this repo**. End-user docs (tool catalog, setup, troubleshooting) live in [README.md](README.md); don't duplicate them here.
+End-user docs (tool catalog, setup, troubleshooting) em [README.md](README.md) -- nao duplicar aqui.
 
-## What this is
+## O que e
 
-MCP server exposing Microsoft Graph email operations as 40 tools over stdio, plus a standalone `outlook` CLI wrapper. Auth is Azure AD client-credentials (no user login). Single-mailbox per process — `TARGET_USER_EMAIL` pins it.
+MCP server expondo operacoes de email via Microsoft Graph como 40 ferramentas stdio, mais CLI `outlook` standalone. Auth via Azure AD client-credentials (sem login de usuario). Single-mailbox por processo -- `TARGET_USER_EMAIL` fixa a caixa alvo. Consumido por Claude/Codex/Hermes via MCP e pelo `outlook` CLI.
 
-## Hard invariants
+## Stack & estrutura
 
-These are enforced by CI or by design. Don't regress them.
-
-1. **40 tools exactly.** `scripts/smoke-test.js:21` hardcodes `EXPECTED_TOOL_COUNT`. When adding/removing a tool, bump this constant and the tool table in [README.md](README.md).
-2. **Every tool has a zod schema.** `src/schemas/toolSchemas.ts` is the gate — `HandlerRegistry.handleTool` runs `validateToolInput` before dispatching. No handler method runs on unvalidated args.
-3. **Filesystem access goes through `pathGuard`.** Handlers never call `fs.readFile` / `fs.writeFile` on caller-supplied paths directly; `src/services/fileManager.ts` and `src/services/emailService.ts` already route through `pathGuard.resolveSafe()`. Any new file-touching code must go through the same door.
-4. **Graph calls go through `EmailService`.** No direct `Client.api()` in handlers — that bypasses response caching (`CacheManager`) and the batch helpers. Retry/throttling (429 + `Retry-After`) is **not** custom: it comes from the Graph SDK's default middleware chain (`Client.initWithMiddleware` in `src/auth/graphAuth.ts`), which includes the SDK `RetryHandler`. There is no in-house rate limiter.
-5. **HTML template inputs are escaped by default.** `src/templates/` must keep escaping user-controlled fields before rendering. Do not add a trusted-HTML bypass without an explicit sanitizer and tests.
-
-## Architecture at a glance
+TypeScript + Node >=20 + @microsoft/microsoft-graph-client + @azure/msal-node + zod + Vitest
 
 ```
 src/
-  config/     zod-validated env, fails fast
-  auth/       MSAL client-credentials
-  security/   pathGuard — filesystem allowlist (DOWNLOAD_DIR, MCP_EMAIL_UPLOAD_DIRS)
+  config/     env validado por zod, falha rapido
+  auth/       MSAL client-credentials (graphAuth.ts)
+  security/   pathGuard -- filesystem allowlist (DOWNLOAD_DIR, MCP_EMAIL_UPLOAD_DIRS)
   services/   Graph wrapper: response cache, batch helpers (retry via SDK middleware)
-  schemas/    zod input schema per tool + jsonSchema converter
-  handlers/   one class per domain, HandlerRegistry routes by tool name
-  templates/  4 HTML themes
-  utils/      file manager, attachment validator, secret redaction
+  schemas/    zod schema por ferramenta + conversor jsonSchema
+  handlers/   uma classe por dominio; HandlerRegistry roteia por tool name
+  templates/  4 temas HTML de email
+  utils/      fileManager, attachmentValidator, secret redaction
+scripts/
+  smoke-test.js          valida contagem de 40 tools
+  live-readonly-smoke.js smoke com creds reais (nao corre em CI)
+  live-writes-smoke.js   smoke de escrita com creds reais
 ```
 
-Handler domains: `Email`, `Attachment`, `Hybrid` (large-file), `Folder`, `Search`, `Batch`. Stay in the right domain when adding a tool.
+Dominios de handler: `Email`, `Attachment`, `Hybrid` (large-file), `Folder`, `Search`, `Batch`. Ao adicionar uma tool, fique no dominio correto.
 
-## Adding a tool
+## Como rodar / validar
 
-1. zod schema → `src/schemas/toolSchemas.ts`
-2. handler method on the appropriate domain class under `src/handlers/`
-3. case branch in `HandlerRegistry.handleTool`
-4. unit test in `tests/schemas/toolSchemas.test.ts` (validation) + handler test
-5. bump `EXPECTED_TOOL_COUNT` in [scripts/smoke-test.js](scripts/smoke-test.js)
-6. add row to the tools table in [README.md](README.md)
+```bash
+# build + testes + smoke (obrigatorio antes de PR)
+npm run build && npm test && npm run smoke
 
-## Testing gates
+# cobertura (thresholds: 40% linhas/funcoes/branches)
+npm run test:coverage
 
-| Command | Gate |
+# typecheck + lint
+npm run typecheck && npm run lint
+
+# arquivo especifico (hotfix loop -- rodar o arquivo mais estreito primeiro, nao a suite completa)
+npm test -- tests/path/file.test.ts
+```
+
+### Testing gates
+
+| Comando | Gate |
 |---|---|
-| `npm run build && npm test && npm run smoke` | pre-PR — must all pass |
+| `npm run build && npm test && npm run smoke` | pre-PR -- todos devem passar |
 | `npm run test:coverage` | enforces coverage thresholds |
-| `node scripts/live-readonly-smoke.js` | live Graph read smoke — requires real creds, not in CI |
-| `node scripts/live-writes-smoke.js` | live Graph write smoke — same |
+| `node scripts/live-readonly-smoke.js` | smoke de leitura com creds reais -- nao corre em CI |
+| `node scripts/live-writes-smoke.js` | smoke de escrita com creds reais -- nao corre em CI |
 
-The failing-test / hotfix loop: run the narrowest vitest file first (`npm test -- tests/path/file.test.ts`), not the full suite.
+## Invariantes / regras criticas
 
-## Dev workflow for non-trivial changes
+Estas sao enforced por CI ou por design. Nao regredir.
 
-README's [Development workflow](README.md#development-workflow) section is the canonical reference: **plan → execute task-by-task → verify diff before declaring done**. Skip the ceremony for typo-class fixes; apply it the moment a change touches `src/security/`, credentials, Graph permission scopes, or spans multiple files.
+1. **40 tools exatamente.** `scripts/smoke-test.js:21` hardcodes `EXPECTED_TOOL_COUNT`. Ao adicionar/remover tool, bump essa constante e a tabela de tools no [README.md](README.md).
+2. **Toda tool tem zod schema.** `src/schemas/toolSchemas.ts` e o gate -- `HandlerRegistry.handleTool` roda `validateToolInput` antes de despachar. Nenhum metodo handler executa em args nao-validados.
+3. **Acesso a filesystem vai pelo `pathGuard`.** Handlers nunca chamam `fs.readFile` / `fs.writeFile` em paths fornecidos pelo caller diretamente; `src/services/fileManager.ts` e `src/services/emailService.ts` ja roteiam por `pathGuard.resolveSafe()`. Qualquer codigo novo que toque arquivos deve usar a mesma porta.
+4. **Chamadas Graph vao pelo `EmailService`.** Sem `Client.api()` direto em handlers -- isso bypassa response caching (`CacheManager`) e os batch helpers. Retry/throttling (429 + `Retry-After`) **nao e custom**: vem do middleware chain do Graph SDK (`Client.initWithMiddleware` em `src/auth/graphAuth.ts`), que inclui o SDK `RetryHandler`. Nao ha rate limiter proprio.
+5. **Inputs de template HTML sao escapados por padrao.** `src/templates/` deve manter escaping de campos controlados pelo usuario antes de renderizar. Nao adicionar bypass de HTML confiavel sem sanitizer explicito e testes.
+
+## Gotchas
+
+- `live-readonly-smoke.js` e `live-writes-smoke.js` requerem creds reais e NAO rodam em CI -- use so em dev local com `.env` configurado.
+- `path.resolve()` NAO garante o allowlist de filesystem -- sempre `pathGuard.resolveSafe()`.
+- Retry 429 vem do SDK `RetryHandler`, nao de codigo proprio -- nao reimplementar.
+
+## Como adicionar uma tool
+
+1. zod schema -> `src/schemas/toolSchemas.ts`
+2. metodo handler na classe de dominio correta em `src/handlers/` -- fique no dominio certo
+3. case branch em `HandlerRegistry.handleTool`
+4. teste unitario em `tests/schemas/toolSchemas.test.ts` (validacao) + teste do handler
+5. bump `EXPECTED_TOOL_COUNT` em [scripts/smoke-test.js](scripts/smoke-test.js)
+6. adicionar linha na tabela de tools em [README.md](README.md)
+
+## Workflow para mudancas nao-triviais
+
+Referencia canonica: secao [Development workflow](README.md#development-workflow) do README -- plan -> execute task-by-task -> verify diff. Aplicar sempre que a mudanca tocar `src/security/`, credenciais, Graph permission scopes ou abranger multiplos arquivos.
 
 ## Anti-patterns
 
-- `fetch()` directly to `graph.microsoft.com` — route through `EmailService`.
-- `path.resolve()` as a "safety" step — it doesn't follow symlinks or enforce the allowlist. Use `pathGuard.resolveSafe(path, 'read' | 'write')`.
-- Base64 payloads >500 KB through `send_email` — use the hybrid tools (`send_email_from_attachment`, `send_email_with_file`).
-- AI-generated attribution lines such as `Co-Authored-By: Claude` or `Generated with Claude Code` in commits or PR bodies.
-- Comments that narrate what the code does. Comment only when the _why_ is non-obvious.
+- `fetch()` direto para `graph.microsoft.com` -- rotear pelo `EmailService`.
+- `path.resolve()` como passo de "seguranca" -- nao segue symlinks nem valida o allowlist. Usar `pathGuard.resolveSafe(path, 'read' | 'write')`.
+- Payloads Base64 >500 KB via `send_email` -- usar as hybrid tools (`send_email_from_attachment`, `send_email_with_file`).
+- Linhas de atribuicao AI (`Co-Authored-By: Claude`, `Generated with Claude Code`) em commits ou PRs.
+- Comentarios que descrevem o que o codigo faz -- comentar so quando o "por que" nao e obvio.
