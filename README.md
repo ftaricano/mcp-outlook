@@ -12,7 +12,7 @@ Works with any MCP-compatible client (Claude Desktop, Cursor, custom agents, etc
 | Metric | Value |
 |---|---|
 | Tools | 40 |
-| Tests | 183 passing |
+| Tests | 242 passing |
 | Node | ≥ 20 |
 | MCP SDK | ^1.29.0 |
 | License | MIT |
@@ -179,12 +179,12 @@ Runtime flow:
 | `npm run smoke` | Protocol smoke — verify `tools/list` returns 40 entries |
 | `npm run audit:prod` | Audit runtime deps only |
 
-CI runs lint + typecheck + tests + smoke on Node 20 and 22.
+CI runs lint + typecheck + tests + smoke on Node 20, 22, and 24.
 
 Live integration smoke tests (require Graph credentials in env):
 
 ```bash
-node scripts/live-readonly-smoke.js   # 20 read-only + dry-run tools
+node scripts/live-readonly-smoke.js   # 18 read-only + dry-run tools
 node scripts/live-writes-smoke.js     # 9 write-path tools (self-contained, safe)
 ```
 
