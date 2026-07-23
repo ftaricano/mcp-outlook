@@ -14,6 +14,13 @@ updates:
         patterns:
           - '@microsoft/microsoft-graph-*'
           - '@azure/msal-*'
+    ignore:
+      # TypeScript majors are held back until @typescript-eslint's peer range
+      # (currently >=4.8.4 <6.1.0) catches up. A grouped TS major otherwise breaks
+      # the whole dev-dependencies PR with an npm ERESOLVE conflict (see PR #52).
+      - dependency-name: typescript
+        update-types:
+          - version-update:semver-major
     reviewers:
       - ftaricano
     assignees:
