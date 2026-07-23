@@ -79,7 +79,12 @@ describe('outlook CLI agent output and local commands', () => {
   it('journals search evidence even when the tool returns an error result', async () => {
     const stateDir = await tempStateDir();
     const result = await runCli(
-      ['fake_tool', '--query=Secret Client', '--sender=private@example.com', '--session=test-session'],
+      [
+        'fake_tool',
+        '--query=Secret Client',
+        '--sender=private@example.com',
+        '--session=test-session',
+      ],
       stateDir,
       'structured-error'
     );
