@@ -82,7 +82,11 @@ class EmailMCPServer {
           toolName: name,
           durationMs: Date.now() - startedAt,
         });
-        return { content: result.content, isError: result.isError };
+        return {
+          content: result.content,
+          isError: result.isError,
+          structuredContent: result.structuredContent,
+        };
       } catch (error) {
         this.logger.error('tool failed', error, {
           operation: 'call_tool',

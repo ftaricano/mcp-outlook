@@ -33,11 +33,7 @@ export class PathSecurityError extends Error {
   constructor(
     message: string,
     public readonly code:
-      | 'OUTSIDE_ALLOWLIST'
-      | 'SYMLINK_DENIED'
-      | 'SECRET_FILENAME'
-      | 'NOT_FOUND'
-      | 'INVALID_INPUT'
+      'OUTSIDE_ALLOWLIST' | 'SYMLINK_DENIED' | 'SECRET_FILENAME' | 'NOT_FOUND' | 'INVALID_INPUT'
   ) {
     super(message);
     this.name = 'PathSecurityError';
