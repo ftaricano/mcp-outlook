@@ -84,12 +84,14 @@ export async function runReliableTextSearch<T extends ReliableSearchMessage>({
   let canaryMatched = false;
   let canaryFailed = false;
   let graphSearchSucceeded = false;
+  let graphHadCandidates = false;
   let graphPages = 0;
   let graphCandidates = 0;
 
   try {
     const graphResult = await executeSearch(query);
     graphSearchSucceeded = true;
+    graphHadCandidates = graphResult.items.length > 0;
     graphPages += graphResult.pagesScanned;
     graphCandidates += graphResult.itemsScanned;
 
@@ -141,6 +143,24 @@ export async function runReliableTextSearch<T extends ReliableSearchMessage>({
         strategy: 'local_scan',
         confidence: resultTruncated ? 'medium' : 'high',
         messages: matches,
+        pagesScanned,
+        candidatesScanned,
+        truncated: resultTruncated,
+        canaryMatched,
+        warnings,
+      };
+    }
+
+    // Graph surfaced candidates we could not trust (canary matched or failed) and the
+    // lower-recall local matcher confirmed none of them. Those candidates may be real
+    // matches the exact-token scan discards ("fatura" vs "faturas"), so absence is
+    // unproven — report it as untrusted rather than a clean NOT_FOUND.
+    if (graphHadCandidates && (canaryMatched || canaryFailed)) {
+      return {
+        status: 'SEARCH_UNTRUSTED',
+        strategy: 'local_scan',
+        confidence: 'low',
+        messages: [],
         pagesScanned,
         candidatesScanned,
         truncated: resultTruncated,

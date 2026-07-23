@@ -196,6 +196,27 @@ describe('runReliableTextSearch', () => {
     expect(result.confidence).toBe('medium');
   });
 
+  it('returns SEARCH_UNTRUSTED when Graph had candidates, canary failed, and fallback confirms none', async () => {
+    const executeSearch = vi
+      .fn()
+      .mockResolvedValueOnce(complete([message('candidate', { subject: 'faturas do mes' })]))
+      .mockRejectedValueOnce(new Error('canary failed'));
+
+    const result = await runReliableTextSearch({
+      query: 'fatura',
+      maxResults: 10,
+      executeSearch,
+      // Fallback scans cleanly but the exact-token matcher misses "fatura" inside "faturas".
+      executeFallback: vi
+        .fn()
+        .mockResolvedValue(complete([message('candidate', { subject: 'faturas do mes' })])),
+    });
+
+    expect(result.status).toBe('SEARCH_UNTRUSTED');
+    expect(result.messages).toEqual([]);
+    expect(result.warnings).toContain('canary_failed');
+  });
+
   it('returns SEARCH_UNTRUSTED when canary and fallback verification both fail', async () => {
     const executeSearch = vi
       .fn()

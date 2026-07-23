@@ -126,7 +126,7 @@ export class SavedSearchStore {
       raw = await readFile(this.filePath, 'utf8');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return { version: 1, searches: {} };
+        return { version: 1, searches: Object.create(null) };
       }
       throw error;
     }
@@ -136,7 +136,9 @@ export class SavedSearchStore {
       if (parsed.version !== 1 || !validateSearches(parsed.searches)) {
         throw new Error('unsupported state schema');
       }
-      return parsed as SavedSearchFile;
+      // Null-prototype so name lookups (get/delete/save) can't resolve inherited members
+      // like "toString" or "constructor" as if they were saved searches.
+      return { version: 1, searches: Object.assign(Object.create(null), parsed.searches) };
     } catch (error) {
       throw new Error(
         `Saved-search state is corrupt at ${this.filePath}: ${

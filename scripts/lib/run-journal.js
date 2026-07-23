@@ -139,6 +139,33 @@ export function argumentShape(args) {
   );
 }
 
+const SHAPE_TYPE_LABELS = new Set([
+  'string',
+  'number',
+  'boolean',
+  'object',
+  'undefined',
+  'bigint',
+  'symbol',
+  'function',
+  'array',
+  'null',
+]);
+
+// Defense-in-depth: re-shape at the persistence boundary so a caller that mistakenly
+// hands raw values (instead of type labels) never leaks them. Keys are re-allowlisted and
+// any value that is not already a known type label is collapsed to its typeof.
+function sanitizeArgumentShape(shape) {
+  if (!shape || typeof shape !== 'object' || Array.isArray(shape)) return undefined;
+  let unknownIndex = 0;
+  return Object.fromEntries(
+    Object.entries(shape).map(([key, value]) => {
+      const safeKey = SAFE_ARGUMENT_NAMES.has(key) ? key : `unknown_${++unknownIndex}`;
+      return [safeKey, SHAPE_TYPE_LABELS.has(value) ? value : typeof value];
+    })
+  );
+}
+
 export function hashSessionId(sessionId) {
   if (!sessionId) return undefined;
   const digest = createHash('sha256').update(String(sessionId)).digest('hex').slice(0, 16);
@@ -200,13 +227,22 @@ async function appendEvent(stateDir, event) {
 }
 
 export async function appendRun(stateDir, run) {
+  // Construct the event from an explicit allowlist. The metadata-only invariant is enforced
+  // here, not delegated to callers: spreading `run` would persist any extra caller-supplied
+  // property (raw errors, message metadata, credentials) verbatim.
   await appendEvent(stateDir, {
     version: 1,
     eventType: 'run',
     timestamp: new Date().toISOString(),
-    ...run,
+    runId: typeof run.runId === 'string' ? run.runId : undefined,
     command: sanitizeCommand(run.command),
     sessionId: hashSessionId(run.sessionId),
+    startedAt: typeof run.startedAt === 'string' ? run.startedAt : undefined,
+    durationMs: Number.isFinite(run.durationMs) ? run.durationMs : undefined,
+    exitStatus: typeof run.exitStatus === 'string' ? run.exitStatus : undefined,
+    argumentShape: sanitizeArgumentShape(run.argumentShape),
+    searchEvidence: extractSearchEvidence(run.searchEvidence),
+    errorClass: typeof run.errorClass === 'string' ? run.errorClass : undefined,
   });
 }
 

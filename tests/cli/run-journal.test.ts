@@ -94,6 +94,35 @@ describe('run journal', () => {
     );
   });
 
+  it('drops caller-supplied properties outside the metadata allowlist', async () => {
+    const stateDir = await tempStateDir();
+    await appendRun(stateDir, {
+      runId: 'run-leak',
+      command: 'advanced_search',
+      startedAt: '2026-07-23T12:00:00.000Z',
+      durationMs: 5,
+      exitStatus: 'success',
+      argumentShape: {},
+      // Everything below is off-allowlist and must never reach runs.jsonl.
+      rawError: 'Graph 500: mailbox private@example.com body "segredo"',
+      messageSubject: 'Fatura confidencial do cliente',
+      attachmentName: 'contrato-secreto.pdf',
+      accessToken: 'eyJ0.super.secret',
+    } as never);
+
+    const raw = await readFile(join(stateDir, 'runs.jsonl'), 'utf8');
+    expect(raw).not.toContain('private@example.com');
+    expect(raw).not.toContain('Fatura confidencial');
+    expect(raw).not.toContain('contrato-secreto.pdf');
+    expect(raw).not.toContain('super.secret');
+    const event = JSON.parse(raw);
+    expect(event).not.toHaveProperty('rawError');
+    expect(event).not.toHaveProperty('messageSubject');
+    expect(event).not.toHaveProperty('attachmentName');
+    expect(event).not.toHaveProperty('accessToken');
+    expect(event).toMatchObject({ runId: 'run-leak', command: 'advanced_search' });
+  });
+
   it('stores only a normalized error class', async () => {
     expect(normalizeErrorClass('429 Too Many Requests secret@example.com')).toBe('throttled');
     expect(normalizeErrorClass('Access to OData is disabled: [RAOP]')).toBe('access_policy');

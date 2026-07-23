@@ -42,6 +42,22 @@ describe('SavedSearchStore', () => {
     expect(await second.delete('missing')).toBe(false);
   });
 
+  it('does not resolve inherited object members as saved searches', async () => {
+    const dir = await tempStateDir();
+    const store = new SavedSearchStore(dir);
+
+    // On a plain object these names resolve to inherited functions; a naive lookup would
+    // return them from get() and make delete() report a false success.
+    expect(await store.get('toString')).toBeNull();
+    expect(await store.get('constructor')).toBeNull();
+    expect(await store.delete('toString')).toBe(false);
+    expect(await store.delete('hasOwnProperty')).toBe(false);
+
+    await store.save('faturas', { query: 'fatura' });
+    expect(await store.get('valueOf')).toBeNull();
+    expect(await store.list()).toHaveLength(1);
+  });
+
   it('writes the state file with owner-only permissions', async () => {
     const dir = await tempStateDir();
     const store = new SavedSearchStore(dir);

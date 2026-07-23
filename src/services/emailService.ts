@@ -1906,17 +1906,6 @@ export class EmailService {
   // ADVANCED SEARCH METHODS
   // ===============================
 
-  /**
-   * Advanced email search with multiple criteria
-   */
-  async advancedSearchEmails(options: AdvancedSearchOptions): Promise<Message[]> {
-    const result = await this.advancedSearchEmailsDetailed(options);
-    if (result.status === 'SEARCH_FAILED' || result.status === 'SEARCH_UNTRUSTED') {
-      throw new Error(`Advanced search ended with status ${result.status}`);
-    }
-    return result.messages;
-  }
-
   async advancedSearchEmailsDetailed(
     options: AdvancedSearchOptions
   ): Promise<ReliableSearchResult<Message>> {
