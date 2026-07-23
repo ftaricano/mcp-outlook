@@ -16,7 +16,7 @@ interface CliResult {
 
 function runCli(args: string[], fakeMode: string): Promise<CliResult> {
   return new Promise((resolveP, rejectP) => {
-    const child = spawn(process.execPath, [CLI, ...args], {
+    const child = spawn(process.execPath, [CLI, ...args, '--no-journal'], {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
         ...process.env,
