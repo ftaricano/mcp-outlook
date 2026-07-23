@@ -2,11 +2,7 @@ import { createHash } from 'node:crypto';
 import type { GraphPaginationResult } from './graphPagination.js';
 
 export type SearchStatus =
-  | 'FOUND'
-  | 'NOT_FOUND'
-  | 'SEARCH_INCOMPLETE'
-  | 'SEARCH_FAILED'
-  | 'SEARCH_UNTRUSTED';
+  'FOUND' | 'NOT_FOUND' | 'SEARCH_INCOMPLETE' | 'SEARCH_FAILED' | 'SEARCH_UNTRUSTED';
 
 export type SearchStrategy = 'graph_search' | 'local_scan';
 export type SearchConfidence = 'high' | 'medium' | 'low';
