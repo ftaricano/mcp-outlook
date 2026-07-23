@@ -110,7 +110,7 @@ describe('runReliableTextSearch', () => {
     expect(result.strategy).toBe('local_scan');
   });
 
-  it('returns NOT_FOUND only after an exhaustive fallback scan', async () => {
+  it('returns NOT_FOUND at medium confidence after an exhaustive fallback scan', async () => {
     const result = await runReliableTextSearch({
       query: 'cliente inexistente',
       maxResults: 10,
@@ -119,8 +119,11 @@ describe('runReliableTextSearch', () => {
     });
 
     expect(result.status).toBe('NOT_FOUND');
-    expect(result.confidence).toBe('high');
+    // Local matcher recall < Graph KQL (whole-token, no stemming), so a completed
+    // negative is capped below 'high' and flags its exact-match limitation.
+    expect(result.confidence).toBe('medium');
     expect(result.truncated).toBe(false);
+    expect(result.warnings).toContain('fallback_exact_token_match');
   });
 
   it('returns SEARCH_INCOMPLETE instead of NOT_FOUND when fallback scanning is truncated', async () => {

@@ -149,10 +149,14 @@ export async function runReliableTextSearch<T extends ReliableSearchMessage>({
       };
     }
 
+    // The local matcher requires whole-token equality, so its recall is strictly below
+    // Graph KQL (no stemming/prefix): a completed scan negative can still miss "fatura" in
+    // "faturas". Cap the NOT_FOUND at medium so callers don't over-trust the absence.
+    if (!fallbackResult.truncated) warnings.push('fallback_exact_token_match');
     return {
       status: fallbackResult.truncated ? 'SEARCH_INCOMPLETE' : 'NOT_FOUND',
       strategy: 'local_scan',
-      confidence: fallbackResult.truncated ? 'low' : 'high',
+      confidence: fallbackResult.truncated ? 'low' : 'medium',
       messages: [],
       pagesScanned,
       candidatesScanned,
