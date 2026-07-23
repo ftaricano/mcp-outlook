@@ -12,7 +12,7 @@ Works with any MCP-compatible client (Claude Desktop, Cursor, custom agents, etc
 | Metric | Value |
 |---|---|
 | Tools | 40 |
-| Tests | 242 passing |
+| Tests | 302 passing |
 | Node | ≥ 20 |
 | MCP SDK | ^1.29.0 |
 | License | MIT |
@@ -50,6 +50,8 @@ Four required values feed both the server and the CLI:
 | `DOWNLOAD_DIR` | no | Absolute write root. All attachment downloads land here; everything else is rejected. Default: `~/Downloads/mcp-outlook-attachments`. |
 | `MCP_EMAIL_UPLOAD_DIRS` | no | Colon-separated read allowlist for `send_email_with_file` / `encode_file_for_attachment`. Anything outside — including symlinks pointing out and files in `~/.ssh`, `~/.aws`, `*.env`, `*.pem`, etc. — is rejected. Defaults to `DOWNLOAD_DIR`. |
 | `MAX_ATTACHMENT_MB` | no | Attachment size cap (default: 25) |
+| `OUTLOOK_STATE_DIR` | no | Local state root for persistent saved searches and sanitized run telemetry. Defaults to `$XDG_STATE_HOME/mcp-outlook` or `~/.local/state/mcp-outlook`. |
+| `OUTLOOK_JOURNAL` | no | Set to `0` to disable sanitized CLI run telemetry globally. Individual calls can use `--no-journal`. |
 
 Resolution order (first hit wins): `process.env` → `<repo>/.env` (if present) → **macOS Keychain** (`security find-generic-password -s "<prefix>::<VARIABLE>" -a "$USER"`). On macOS, the default prefix is `mcp-outlook`; set `OUTLOOK_KEYCHAIN_PREFIX` if you want a different namespace.
 
@@ -111,10 +113,26 @@ outlook create_draft --to='["a@b.com"]' --subject="Hi" --body="Hello"
 # Call with raw JSON (useful for arrays/objects)
 outlook batch_mark_as_read --json '{"emailIds":["id1","id2"]}'
 
-# Flags: --env-file <path>, --timeout <ms>, --compact, --help
+# Agent-oriented structured output
+outlook advanced_search --query="invoice" --output=json
+
+# Record operator feedback and inspect recurring learning signals
+outlook feedback <run-id> --outcome=missed --output=json
+outlook harvest --since=7d --skill-target=outlook-mcp --output=json
+
+# Flags: --env-file, --timeout, --output, --session, --no-journal, --compact, --help
 ```
 
 CLI credentials resolve in this order: `--env-file <path>` → `$OUTLOOK_ENV_FILE` → existing env vars → `<repo>/.env` for missing values → macOS Keychain. Explicit env files override existing credential variables for this one-shot process; the default repo `.env` does not.
+
+Output modes:
+
+- `--output=text` — human-readable output (default).
+- `--output=json` — stable `structuredContent` when the tool supplies it; otherwise `{content,isError}`.
+- `--output=mcp` — raw MCP result envelope.
+- `--compact` — backwards-compatible alias for `--output=mcp`.
+
+Every server-backed CLI call appends a sanitized event to `runs.jsonl` unless disabled. The journal stores argument names/types, duration, normalized error class, and search counters. It never stores argument values, message bodies, subjects, addresses, attachment names, credentials, or raw Graph errors.
 
 ### Docker
 
@@ -144,6 +162,59 @@ docker run --rm -i --env-file .env mcp-outlook
 
 `create_draft` only requires `Mail.ReadWrite`. Use it when your tenant policy blocks `Mail.Send` (common in restrictive enterprise environments). The draft lands in the Drafts folder; open Outlook to review and send.
 
+### Reliable search contract
+
+`advanced_search` distinguishes five outcomes in `structuredContent`:
+
+- `FOUND`
+- `NOT_FOUND`
+- `SEARCH_INCOMPLETE`
+- `SEARCH_FAILED`
+- `SEARCH_UNTRUSTED`
+
+Text queries run a negative canary against Graph. Empty or suspicious `$search` results trigger a bounded local scan over paginated messages, body previews/bodies, sender fields, and attachment names. A negative result is only `NOT_FOUND` when that fallback scan completes; hitting `maxPages` or `scanLimit` returns `SEARCH_INCOMPLETE`.
+
+```bash
+outlook advanced_search \
+  --query="invoice 100151515" \
+  --dateFrom="2026-01-01T00:00:00Z" \
+  --maxPages=10 \
+  --scanLimit=500 \
+  --output=json
+```
+
+Search-related tools also expose machine-readable result arrays. Human-readable text remains unchanged by default.
+
+### Persistent saved searches
+
+Saved searches are stored atomically in `saved-searches.json` under `OUTLOOK_STATE_DIR`, with owner-only permissions. They therefore survive separate one-shot CLI calls:
+
+```bash
+outlook saved_searches --json '{"action":"save","name":"invoices","searchCriteria":{"query":"invoice"}}'
+outlook saved_searches --action=list --output=json
+outlook saved_searches --action=execute --name=invoices --output=json
+```
+
+Corrupt state fails loudly and is never overwritten automatically.
+
+### Governed self-improvement
+
+The CLI records evidence and emits proposals; it does not modify its own code or skills.
+
+```bash
+# Link a call to an operator session
+outlook advanced_search --query="invoice" --session=case-123 --output=json
+
+# Record whether the result was useful
+outlook feedback <run-id> --outcome=correct
+outlook feedback <run-id> --outcome=missed
+
+# Recurring signals require at least two occurrences
+outlook harvest --since=7d --minimum-occurrences=2 --output=json
+```
+
+`harvest` returns `learning-proposals` compatible objects for an external governance process. It never enqueues or applies them automatically.
+
 ## Architecture
 
 ```
@@ -164,7 +235,7 @@ Runtime flow:
 1. `loadEnv()` validates credentials via zod on startup — bad config exits immediately with a clear message.
 2. `GraphAuthProvider` lazily acquires tokens and refreshes 60 s before expiry.
 3. MCP requests hit `HandlerRegistry.handleTool(name, args)` → zod validation → domain handler.
-4. Handlers call `EmailService`, which wraps Graph with response caching and batch helpers. Retry/backoff on 429 (honoring `Retry-After`) comes from the Graph SDK's default middleware, not a custom limiter.
+4. Handlers call `EmailService`, which wraps Graph with response caching, pagination, search reliability evidence, and batch helpers. Retry/backoff on 429 (honoring `Retry-After`) comes from the Graph SDK's default middleware, not a custom limiter.
 
 ## Develop
 
@@ -227,7 +298,8 @@ Report vulnerabilities privately through [GitHub Security Advisories](https://gi
 ## Known limitations
 
 - `TARGET_USER_EMAIL` is optional in the schema for delegated `/me` experiments, but client-credentials deployments should set it. Microsoft Graph application permissions do not infer a mailbox.
-- The `outlook` CLI has a few tracked edge cases around numeric search flags, sender filtering, and download target paths. See [issue #30](https://github.com/ftaricano/mcp-outlook/issues/30); use `--json` for numeric search terms until that issue is closed.
+- Full-text Graph `$search` behavior can vary under application permissions. `advanced_search` uses a canary and fallback scan, but callers must still inspect `status`, `truncated`, `pagesScanned`, and `confidence` before treating a negative result as definitive.
+- Local fallback scans search message metadata/body text and attachment names, not the binary contents of attachments.
 
 ## Contributing
 

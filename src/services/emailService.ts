@@ -17,12 +17,31 @@ import {
   escapeODataString,
   encodeGraphSegment,
 } from './odataFilters.js';
+import { collectGraphPages, GraphPaginationResult } from './graphPagination.js';
+import { ReliableSearchResult, runReliableTextSearch, SearchStatus } from './reliableSearch.js';
+import { SavedSearchStore } from './savedSearchStore.js';
 
 export interface EmailListOptions {
   maxResults?: number;
   filter?: string;
   search?: string;
   folder?: string;
+}
+
+export interface AdvancedSearchOptions {
+  query?: string;
+  sender?: string;
+  subject?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  hasAttachments?: boolean;
+  isRead?: boolean;
+  folder?: string;
+  maxResults?: number;
+  maxPages?: number;
+  scanLimit?: number;
+  sortBy?: string;
+  sortOrder?: string;
 }
 
 export interface EmailAttachment {
@@ -56,6 +75,7 @@ export class EmailService {
   private cacheManager: CacheManager;
   private graphOptimizer: GraphOptimizer;
   private parallelProcessor: ParallelProcessor<any, any>;
+  private savedSearchStore: SavedSearchStore;
 
   constructor(
     private authProvider: GraphAuthProvider,
@@ -77,6 +97,7 @@ export class EmailService {
       enableSelectiveFields: true,
       enableCompression: true,
     });
+    this.savedSearchStore = new SavedSearchStore();
 
     this.parallelProcessor = new ParallelProcessor(
       async (data: any) => data, // Default identity function
@@ -1885,212 +1906,250 @@ export class EmailService {
   // ADVANCED SEARCH METHODS
   // ===============================
 
-  /**
-   * Advanced email search with multiple criteria
-   */
-  async advancedSearchEmails(options: {
-    query?: string;
+  async advancedSearchEmailsDetailed(
+    options: AdvancedSearchOptions
+  ): Promise<ReliableSearchResult<Message>> {
+    const {
+      query,
+      sender,
+      subject,
+      dateFrom,
+      dateTo,
+      hasAttachments,
+      isRead,
+      folder = 'inbox',
+      maxResults = 20,
+      maxPages = 10,
+      scanLimit = 500,
+      sortBy = 'receivedDateTime',
+      sortOrder = 'desc',
+    } = options;
+
+    const apiEndpoint = this.messagesEndpoint(folder);
+    const effectiveFrom = dateFrom;
+
+    if (query) {
+      const searchResult = await runReliableTextSearch({
+        query,
+        maxResults: scanLimit,
+        executeSearch: async (term) => {
+          const cleanTerm = term.replace(/['"]/g, '');
+          const endpoint =
+            `${apiEndpoint}?$search="${encodeURIComponent(cleanTerm)}"` +
+            `&$top=${Math.min(scanLimit, Math.max(maxResults * 3, 50), 100)}` +
+            '&$select=id,subject,from,receivedDateTime,isRead,hasAttachments,bodyPreview,body';
+          const page = await this.collectMessagePages(endpoint, scanLimit, maxPages);
+          return {
+            ...page,
+            items: this.filterAdvancedMessages(page.items, {
+              sender,
+              subject,
+              dateFrom: effectiveFrom,
+              dateTo,
+              hasAttachments,
+              isRead,
+            }),
+          };
+        },
+        executeFallback: async () => {
+          const filter = this.buildAdvancedFilter({
+            sender,
+            subject,
+            dateFrom: effectiveFrom,
+            dateTo,
+            hasAttachments,
+            isRead,
+          });
+          const params = [
+            `$top=${Math.min(scanLimit, 100)}`,
+            '$select=id,subject,from,receivedDateTime,isRead,hasAttachments,bodyPreview,body',
+            '$expand=attachments($select=name,contentType,size)',
+          ];
+          if (filter) params.push(`$filter=${encodeURIComponent(filter)}`);
+          return this.collectMessagePages(
+            `${apiEndpoint}?${params.join('&')}`,
+            scanLimit,
+            maxPages
+          );
+        },
+      });
+      if (searchResult.messages.length === 0) return searchResult;
+
+      const sortedMessages = this.sortAdvancedMessages(searchResult.messages, sortBy, sortOrder);
+      const truncated = searchResult.truncated || sortedMessages.length > maxResults;
+      return {
+        ...searchResult,
+        messages: sortedMessages.slice(0, maxResults),
+        truncated,
+        confidence:
+          truncated && searchResult.confidence === 'high' ? 'medium' : searchResult.confidence,
+      };
+    }
+
+    try {
+      const combinedFilter = this.buildAdvancedFilter({
+        sender,
+        subject,
+        dateFrom: effectiveFrom,
+        dateTo,
+        hasAttachments,
+        isRead,
+      });
+      const page = await this.graphOptimizer.getOptimizedEmailsDetailed({
+        folder,
+        maxResults: scanLimit,
+        maxPages,
+        filter: combinedFilter,
+        enableCache: false,
+        select: this.graphOptimizer.getOptimalFields('search'),
+        orderBy: sortBy === 'receivedDateTime' ? `${sortBy} ${sortOrder}` : undefined,
+      });
+      const sortedMessages = this.sortAdvancedMessages(
+        this.filterAdvancedMessages(page.items, {
+          sender,
+          subject,
+          dateFrom: effectiveFrom,
+          dateTo,
+          hasAttachments,
+          isRead,
+        }),
+        sortBy,
+        sortOrder
+      );
+      const messages = sortedMessages.slice(0, maxResults);
+      const resultTruncated = page.truncated || sortedMessages.length > maxResults;
+      const status: SearchStatus =
+        messages.length > 0 ? 'FOUND' : resultTruncated ? 'SEARCH_INCOMPLETE' : 'NOT_FOUND';
+      return {
+        status,
+        strategy: 'local_scan',
+        confidence:
+          status === 'FOUND'
+            ? resultTruncated
+              ? 'medium'
+              : 'high'
+            : resultTruncated
+              ? 'low'
+              : 'high',
+        messages,
+        pagesScanned: page.pagesScanned,
+        candidatesScanned: page.itemsScanned,
+        truncated: resultTruncated,
+        canaryMatched: false,
+        warnings: [],
+      };
+    } catch {
+      return {
+        status: 'SEARCH_FAILED',
+        strategy: 'local_scan',
+        confidence: 'low',
+        messages: [],
+        pagesScanned: 0,
+        candidatesScanned: 0,
+        truncated: true,
+        canaryMatched: false,
+        warnings: ['graph_filter_failed'],
+      };
+    }
+  }
+
+  private messagesEndpoint(folder: string): string {
+    const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+    return userEmail === 'me'
+      ? `/me/mailFolders/${encodeGraphSegment(folder)}/messages`
+      : `/users/${userEmail}/mailFolders/${encodeGraphSegment(folder)}/messages`;
+  }
+
+  private async collectMessagePages(
+    endpoint: string,
+    maxItems: number,
+    maxPages: number
+  ): Promise<GraphPaginationResult<Message>> {
+    const firstPage = await this.client.api(endpoint).get();
+    return collectGraphPages({
+      firstPage,
+      fetchNext: (nextLink) => this.client.api(nextLink).get(),
+      maxItems,
+      maxPages,
+    });
+  }
+
+  private buildAdvancedFilter(options: {
     sender?: string;
     subject?: string;
     dateFrom?: string;
     dateTo?: string;
     hasAttachments?: boolean;
     isRead?: boolean;
-    folder?: string;
-    maxResults?: number;
-    sortBy?: string;
-    sortOrder?: string;
-  }): Promise<Message[]> {
-    try {
-      // Graph rejects `$filter` predicates that aren't indexed-first on large
-      // folders ("InefficientFilter"). Inject a 90-day receivedDateTime narrow
-      // when the caller provided any non-date predicate but no date range,
-      // so the query hits a fast path.
-      const needsDateNarrow =
-        !options.dateFrom &&
-        !options.dateTo &&
-        (options.hasAttachments !== undefined ||
-          options.isRead !== undefined ||
-          options.sender ||
-          options.subject);
-      if (needsDateNarrow) {
-        options = {
-          ...options,
-          dateFrom: new Date(Date.now() - 90 * 86_400_000).toISOString(),
-        };
-      }
-
-      const {
-        query,
-        sender,
-        subject,
-        dateFrom,
-        dateTo,
-        hasAttachments,
-        isRead,
-        folder = 'inbox',
-        maxResults = 20,
-        sortBy = 'receivedDateTime',
-        sortOrder = 'desc',
-      } = options;
-
-      console.error(`🔍 Executando busca avançada otimizada na pasta ${folder}`);
-
-      // Use GraphOptimizer for intelligent search query optimization
-      const optimizedFilter = this.graphOptimizer.optimizeSearchQuery(query || '', {
-        searchIn: query ? ['subject', 'from', 'body'] : undefined,
-        dateRange: dateFrom || dateTo ? { start: dateFrom, end: dateTo } : undefined,
-        hasAttachments,
-        isRead,
-      });
-
-      // Push `sender` into the Graph filter — without this, large inboxes
-      // return the first N messages by date and then the client-side filter
-      // below has nothing to match (JAR-257 bug #1).
-      const combinedFilter = sender
-        ? [optimizedFilter, buildSenderContainsFilter(sender)].filter(Boolean).join(' and ')
-        : optimizedFilter;
-
-      // Generate cache key for this search
-      const cacheKey = this.cacheManager.generateEmailKey('advanced_search', {
-        ...options,
-        combinedFilter,
-      });
-
-      // Try cache first
-      const cached = this.cacheManager.get<Message[]>(cacheKey);
-      if (cached) {
-        console.error(`⚡ Cache hit: busca avançada (${cached.length} resultados)`);
-        return cached;
-      }
-
-      // Build search request for GraphOptimizer.
-      //
-      // We deliberately do NOT pass `search: query` here. `optimizedFilter`
-      // already encodes the text search as `contains()` over subject/from/body,
-      // and `getOptimizedEmails` calls `.filter(...)` a second time when
-      // `search` is set — and the Graph SDK's GraphRequest keeps only the
-      // last `$filter`, which means the sender predicate we just merged in
-      // would be silently dropped. Surface the text search through
-      // `combinedFilter` only.
-      const searchOptions = {
-        folder,
-        maxResults,
-        filter: combinedFilter,
-        enableCache: false, // We handle caching here
-        select: this.graphOptimizer.getOptimalFields('search'),
-        orderBy: query ? undefined : `${sortBy} ${sortOrder}`,
-      };
-
-      const emails = await this.graphOptimizer.getOptimizedEmails(searchOptions);
-
-      // Apply additional filtering for complex criteria not handled by Graph API
-      let filteredEmails = emails;
-
-      if (sender) {
-        const senderLower = sender.toLowerCase();
-        filteredEmails = filteredEmails.filter((email) =>
-          email.from?.emailAddress?.address?.toLowerCase().includes(senderLower)
-        );
-      }
-
-      if (subject) {
-        filteredEmails = filteredEmails.filter((email) =>
-          email.subject?.toLowerCase().includes(subject.toLowerCase())
-        );
-      }
-
-      // Cache results based on complexity
-      const complexity = this.calculateSearchComplexity(options);
-      this.cacheManager.cacheSearchResults(cacheKey, filteredEmails, complexity);
-
-      console.error(
-        `✅ Busca avançada otimizada concluída: ${filteredEmails.length} emails encontrados`
-      );
-      return filteredEmails;
-    } catch (error) {
-      console.error('❌ Erro na busca avançada otimizada:', error);
-
-      // Fallback to original implementation
-      console.error('🔄 Fallback para busca avançada original...');
-
-      try {
-        const {
-          query,
-          sender,
-          subject,
-          dateFrom,
-          dateTo,
-          hasAttachments,
-          isRead,
-          folder = 'inbox',
-          maxResults = 20,
-          sortBy = 'receivedDateTime',
-          sortOrder = 'desc',
-        } = options;
-
-        const userEmail = process.env.TARGET_USER_EMAIL || 'me';
-        const apiEndpoint =
-          userEmail === 'me'
-            ? `/me/mailFolders/${encodeGraphSegment(folder)}/messages`
-            : `/users/${userEmail}/mailFolders/${encodeGraphSegment(folder)}/messages`;
-
-        const queryParams: string[] = [
-          `$top=${Math.min(maxResults, 100)}`,
-          `$select=id,subject,from,receivedDateTime,isRead,hasAttachments,bodyPreview,body`,
-        ];
-
-        const filterConditions: string[] = [];
-
-        if (sender) {
-          filterConditions.push(buildSenderContainsFilter(sender));
-        }
-
-        if (subject) {
-          filterConditions.push(`contains(subject,'${escapeODataString(subject)}')`);
-        }
-
-        if (dateFrom) {
-          filterConditions.push(`receivedDateTime ge ${dateFrom}`);
-        }
-
-        if (dateTo) {
-          filterConditions.push(`receivedDateTime le ${dateTo}`);
-        }
-
-        if (hasAttachments !== undefined) {
-          filterConditions.push(`hasAttachments eq ${hasAttachments}`);
-        }
-
-        if (isRead !== undefined) {
-          filterConditions.push(`isRead eq ${isRead}`);
-        }
-
-        if (filterConditions.length > 0) {
-          queryParams.push(`$filter=${filterConditions.join(' and ')}`);
-        }
-
-        if (query) {
-          const cleanQuery = query.replace(/['"]/g, '');
-          queryParams.push(`$search="${encodeURIComponent(cleanQuery)}"`);
-        } else {
-          queryParams.push(`$orderby=${sortBy} ${sortOrder}`);
-        }
-
-        const queryString = queryParams.join('&');
-        const fullEndpoint = `${apiEndpoint}?${queryString}`;
-
-        const response = await this.client.api(fullEndpoint).get();
-
-        console.error(
-          `✅ Fallback de busca concluído: ${response.value?.length || 0} emails encontrados`
-        );
-        return response.value || [];
-      } catch (fallbackError) {
-        console.error('❌ Erro no fallback da busca avançada:', fallbackError);
-        throw fallbackError;
-      }
+  }): string {
+    const conditions: string[] = [];
+    if (options.dateFrom) conditions.push(`receivedDateTime ge ${options.dateFrom}`);
+    if (options.dateTo) conditions.push(`receivedDateTime le ${options.dateTo}`);
+    if (options.sender) conditions.push(buildSenderContainsFilter(options.sender));
+    if (options.subject) {
+      conditions.push(`contains(subject,'${escapeODataString(options.subject)}')`);
     }
+    if (options.hasAttachments !== undefined) {
+      conditions.push(`hasAttachments eq ${options.hasAttachments}`);
+    }
+    if (options.isRead !== undefined) conditions.push(`isRead eq ${options.isRead}`);
+    return conditions.join(' and ');
+  }
+
+  private filterAdvancedMessages(
+    messages: Message[],
+    options: {
+      sender?: string;
+      subject?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      hasAttachments?: boolean;
+      isRead?: boolean;
+    }
+  ): Message[] {
+    const sender = options.sender?.toLowerCase();
+    const subject = options.subject?.toLowerCase();
+    const fromTime = options.dateFrom ? new Date(options.dateFrom).getTime() : undefined;
+    const toTime = options.dateTo ? new Date(options.dateTo).getTime() : undefined;
+
+    return messages.filter((message) => {
+      if (sender && !message.from?.emailAddress?.address?.toLowerCase().includes(sender)) {
+        return false;
+      }
+      if (subject && !message.subject?.toLowerCase().includes(subject)) return false;
+      if (
+        options.hasAttachments !== undefined &&
+        message.hasAttachments !== options.hasAttachments
+      ) {
+        return false;
+      }
+      if (options.isRead !== undefined && message.isRead !== options.isRead) return false;
+      if (message.receivedDateTime) {
+        const received = new Date(message.receivedDateTime).getTime();
+        if (fromTime !== undefined && received < fromTime) return false;
+        if (toTime !== undefined && received > toTime) return false;
+      }
+      return true;
+    });
+  }
+
+  private sortAdvancedMessages(messages: Message[], sortBy: string, sortOrder: string): Message[] {
+    const direction = sortOrder === 'asc' ? 1 : -1;
+    return [...messages].sort((left, right) => {
+      const leftValue =
+        sortBy === 'from'
+          ? left.from?.emailAddress?.address
+          : sortBy === 'subject'
+            ? left.subject
+            : left.receivedDateTime;
+      const rightValue =
+        sortBy === 'from'
+          ? right.from?.emailAddress?.address
+          : sortBy === 'subject'
+            ? right.subject
+            : right.receivedDateTime;
+      return String(leftValue ?? '').localeCompare(String(rightValue ?? '')) * direction;
+    });
   }
 
   /**
@@ -2122,10 +2181,18 @@ export class EmailService {
       includeSubdomains?: boolean;
       folder?: string;
       dateRange?: { from: string; to: string };
+      maxPages?: number;
+      scanLimit?: number;
     } = {}
   ): Promise<Message[]> {
     try {
-      const { maxResults = 20, includeSubdomains = true, folder = 'inbox' } = options;
+      const {
+        maxResults = 20,
+        includeSubdomains = true,
+        folder = 'inbox',
+        maxPages = 10,
+        scanLimit = Math.max(maxResults * 10, 100),
+      } = options;
       // Inject 90-day receivedDateTime narrow when caller didn't pass a date
       // range, so Graph accepts the filter on large mailboxes.
       const dateRange = options.dateRange ?? {
@@ -2146,16 +2213,16 @@ export class EmailService {
       // KQL `$search="from:<domain>"` is index-backed, handles subdomains
       // naturally, and allows the client-side date narrow applied below.
       const queryParams: string[] = [
-        `$top=${Math.min(maxResults * 3, 100)}`, // over-fetch for post-filter
+        `$top=${Math.min(scanLimit, 100)}`,
         `$select=id,subject,from,receivedDateTime,isRead,hasAttachments,bodyPreview`,
         `$search="from:${encodeURIComponent(domain)}"`,
       ];
 
       const fullEndpoint = `${apiEndpoint}?${queryParams.join('&')}`;
-      const response = await this.client.api(fullEndpoint).get();
+      const pagination = await this.collectMessagePages(fullEndpoint, scanLimit, maxPages);
 
       // Apply client-side filters because $search cannot be combined with $filter.
-      let emails: Message[] = response.value ?? [];
+      let emails: Message[] = pagination.items;
       const fromLower = new Date(dateRange.from).getTime();
       const toUpper = new Date(dateRange.to).getTime();
       emails = emails.filter((m) => {
@@ -2432,18 +2499,7 @@ export class EmailService {
    */
   async saveSearchCriteria(name: string, criteria: any): Promise<boolean> {
     try {
-      // In a real implementation, this would save to a database or file
-      // For now, we'll use a simple in-memory storage
-      if (!this.savedSearches) {
-        this.savedSearches = new Map();
-      }
-
-      this.savedSearches.set(name, {
-        name,
-        criteria,
-        created: new Date().toISOString(),
-      });
-
+      await this.savedSearchStore.save(name, criteria);
       console.error(`💾 Busca salva: ${name}`);
       return true;
     } catch (error) {
@@ -2452,18 +2508,12 @@ export class EmailService {
     }
   }
 
-  private savedSearches?: Map<string, any>;
-
   /**
    * List saved searches
    */
   async listSavedSearches(): Promise<any[]> {
     try {
-      if (!this.savedSearches) {
-        return [];
-      }
-
-      return Array.from(this.savedSearches.values());
+      return await this.savedSearchStore.list();
     } catch (error) {
       console.error('❌ Erro ao listar buscas salvas:', error);
       throw error;
@@ -2473,20 +2523,23 @@ export class EmailService {
   /**
    * Execute a saved search
    */
-  async executeSavedSearch(name: string): Promise<{ emails: Message[]; criteria: any } | null> {
+  async executeSavedSearch(name: string): Promise<{
+    emails: Message[];
+    criteria: any;
+    evidence: ReliableSearchResult<Message>;
+  } | null> {
     try {
-      if (!this.savedSearches || !this.savedSearches.has(name)) {
-        return null;
-      }
-
-      const savedSearch = this.savedSearches.get(name);
-      const emails = await this.advancedSearchEmails(savedSearch.criteria);
+      const savedSearch = await this.savedSearchStore.get(name);
+      if (!savedSearch) return null;
+      const evidence = await this.advancedSearchEmailsDetailed(savedSearch.criteria);
+      const emails = evidence.messages;
 
       console.error(`🔍 Executada busca salva "${name}": ${emails.length} emails encontrados`);
 
       return {
         emails,
         criteria: savedSearch.criteria,
+        evidence,
       };
     } catch (error) {
       console.error(`❌ Erro ao executar busca salva "${name}":`, error);
@@ -2499,13 +2552,9 @@ export class EmailService {
    */
   async deleteSavedSearch(name: string): Promise<boolean> {
     try {
-      if (!this.savedSearches || !this.savedSearches.has(name)) {
-        return false;
-      }
-
-      this.savedSearches.delete(name);
-      console.error(`🗑️ Busca salva deletada: ${name}`);
-      return true;
+      const deleted = await this.savedSearchStore.delete(name);
+      if (deleted) console.error(`🗑️ Busca salva deletada: ${name}`);
+      return deleted;
     } catch (error) {
       console.error(`❌ Erro ao deletar busca salva "${name}":`, error);
       throw error;
