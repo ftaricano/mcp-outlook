@@ -1,6 +1,7 @@
 import { Client } from '@microsoft/microsoft-graph-client';
 import { CacheManager } from './cacheManager.js';
 import { escapeODataString, encodeGraphSegment } from './odataFilters.js';
+import { collectGraphPages, GraphPaginationResult } from './graphPagination.js';
 
 export interface GraphOptimizationConfig {
   enableBatching: boolean;
@@ -83,9 +84,22 @@ export class GraphOptimizer {
       search?: string;
     }
   ): Promise<any[]> {
+    const result = await this.getOptimizedEmailsDetailed(options);
+    return result.items;
+  }
+
+  async getOptimizedEmailsDetailed(
+    options: OptimizedQueryOptions & {
+      folder?: string;
+      maxResults?: number;
+      maxPages?: number;
+      search?: string;
+    }
+  ): Promise<GraphPaginationResult<any>> {
     const {
       folder = 'inbox',
       maxResults = 10,
+      maxPages = 10,
       search,
       enableCache = true,
       select = [
@@ -121,7 +135,12 @@ export class GraphOptimizer {
       const cached = this.cacheManager.get<any[]>(cacheKey);
       if (cached) {
         console.error(`⚡ Cache hit: emails from ${folder}`);
-        return cached;
+        return {
+          items: cached,
+          pagesScanned: 0,
+          itemsScanned: cached.length,
+          truncated: false,
+        };
       }
     }
 
@@ -149,21 +168,28 @@ export class GraphOptimizer {
 
     // Add pagination
     if (maxResults) {
-      query = query.top(Math.min(maxResults, 999)); // Graph API limit
+      query = query.top(Math.min(maxResults, 100));
     }
 
     try {
-      const emails = await query.get();
-
-      const emailList = emails.value || [];
+      const firstPage = await query.get();
+      const pagination = await collectGraphPages({
+        firstPage,
+        fetchNext: (nextLink) => this.client.api(nextLink).get(),
+        maxItems: maxResults,
+        maxPages,
+      });
 
       // Cache results
       if (enableCache) {
-        this.cacheManager.cacheEmails(cacheKey, emailList, folder);
+        this.cacheManager.cacheEmails(cacheKey, pagination.items, folder);
       }
 
-      console.error(`⚡ Fetched ${emailList.length} emails from ${folder} (optimized)`);
-      return emailList;
+      console.error(
+        `⚡ Fetched ${pagination.items.length} emails from ${folder} ` +
+          `(${pagination.pagesScanned} page(s), optimized)`
+      );
+      return pagination;
     } catch (error) {
       console.error('❌ Error in optimized email fetch:', error);
       throw error;

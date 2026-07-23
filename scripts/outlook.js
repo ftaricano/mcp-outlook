@@ -11,7 +11,7 @@
  * Flags (can appear anywhere):
  *   --env-file <path>   Load credentials from this .env file
  *   --timeout <ms>      Max wait for server response (default: 30000)
- *   --compact           Print raw JSON instead of human-readable text
+ *   --compact           Backwards-compatible alias for --output=mcp
  *   --help, -h          Show this help
  *
  * Credentials are resolved in this order:
@@ -23,9 +23,20 @@
  */
 
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  appendFeedback,
+  appendRun,
+  argumentShape,
+  defaultStateDir,
+  extractSearchEvidence,
+  normalizeErrorClass,
+  readJournal,
+} from './lib/run-journal.js';
+import { harvestEvents } from './lib/harvest.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -47,11 +58,15 @@ function parseArgs(argv) {
     envFile: null,
     timeout: 30_000,
     compact: false,
+    output: 'text',
+    sessionId: null,
+    noJournal: false,
     help: false,
     command: null, // 'list' | 'schema' | <tool-name>
     schemaTarget: null,
     jsonPayload: null,
     toolArgs: {},
+    positionals: [],
   };
 
   let i = 0;
@@ -64,6 +79,27 @@ function parseArgs(argv) {
     }
     if (a === '--compact') {
       opts.compact = true;
+      opts.output = 'mcp';
+      i++;
+      continue;
+    }
+    if (a === '--no-journal') {
+      opts.noJournal = true;
+      i++;
+      continue;
+    }
+    if (a === '--output' || a.startsWith('--output=')) {
+      const value = a.includes('=') ? a.slice(a.indexOf('=') + 1) : raw[++i];
+      if (!['text', 'json', 'mcp'].includes(value)) {
+        die(`Invalid --output value: ${value}. Use text, json, or mcp.`);
+      }
+      opts.output = value;
+      opts.compact = value === 'mcp';
+      i++;
+      continue;
+    }
+    if (a === '--session' || a.startsWith('--session=')) {
+      opts.sessionId = a.includes('=') ? a.slice(a.indexOf('=') + 1) : raw[++i];
       i++;
       continue;
     }
@@ -108,6 +144,7 @@ function parseArgs(argv) {
       i++;
       continue;
     }
+    opts.positionals.push(a);
     i++;
   }
   return opts;
@@ -177,6 +214,8 @@ Usage:
   outlook schema <tool>                  Show a tool's input schema
   outlook <tool> [--key=value ...]       Call a tool with individual flags
   outlook <tool> --json '<JSON>'         Call a tool with a raw JSON args object
+  outlook feedback <runId> --outcome=missed
+  outlook harvest --since=7d --output=json
 
 Examples:
   outlook list
@@ -192,6 +231,9 @@ Flags:
   --env-file <path>   Load credentials from this .env file
   --timeout <ms>      Response timeout in ms (default: 30000)
   --compact           Raw JSON output instead of human-readable text
+  --output <mode>     text (default), json (structured), or mcp (raw envelope)
+  --session <id>      Link the sanitized run event to an operator session
+  --no-journal        Do not append a sanitized run event
   --help, -h          Show this help
 
 Credentials (env vars or .env file):
@@ -238,8 +280,22 @@ function die(msg, code = 1) {
   process.exit(code);
 }
 
-async function runMcp({ command, schemaTarget, toolArgs, jsonPayload, timeout, compact }) {
+async function runMcp({
+  command,
+  schemaTarget,
+  toolArgs,
+  jsonPayload,
+  timeout,
+  compact,
+  output,
+  sessionId,
+  noJournal,
+}) {
   const child = startServer();
+  const runId = randomUUID();
+  const startedAt = new Date().toISOString();
+  const startedMs = Date.now();
+  let invocationArgs = toolArgs;
   let buf = '';
   let idCounter = 1;
   let timer;
@@ -255,9 +311,7 @@ async function runMcp({ command, schemaTarget, toolArgs, jsonPayload, timeout, c
     const responses = new Map();
 
     timer = setTimeout(() => {
-      settled = true;
-      child.kill();
-      die(`Timeout after ${timeout}ms — is the server built and credentials set?`);
+      fail(`Timeout after ${timeout}ms — is the server built and credentials set?`);
     }, timeout);
 
     // Capture (don't discard) server logs so a genuine startup failure can
@@ -286,8 +340,7 @@ async function runMcp({ command, schemaTarget, toolArgs, jsonPayload, timeout, c
 
     child.on('error', (err) => {
       if (settled) return;
-      settled = true;
-      die(`Spawn error: ${err.message}`);
+      fail(`Spawn error: ${err.message}`);
     });
     // 'close' (not 'exit') so captured stderr is complete before we report.
     child.on('close', (code, signal) => {
@@ -295,14 +348,12 @@ async function runMcp({ command, schemaTarget, toolArgs, jsonPayload, timeout, c
       // our result — a genuine startup/early failure worth reporting. If we
       // already settled, this is just the post-SIGTERM shutdown: ignore it.
       if (settled) return;
-      settled = true;
-      clearTimeout(timer);
       const reason = serverStderr.trim();
       const where = code != null ? `code ${code}` : `signal ${signal}`;
       if (reason) {
-        die(`Server exited before responding (${where}):\n${reason}`);
+        fail(`Server exited before responding (${where}):\n${reason}`);
       } else {
-        die(
+        fail(
           `Server exited before responding (${where}) — ensure it is built ` +
             `(npm run build) and credentials are set (.env / Keychain).`
         );
@@ -313,15 +364,43 @@ async function runMcp({ command, schemaTarget, toolArgs, jsonPayload, timeout, c
       child.stdin.write(JSON.stringify(msg) + '\n');
     }
 
-    function finish(output) {
+    async function recordRun(exitStatus, result, rawError) {
+      if (noJournal || process.env.OUTLOOK_JOURNAL === '0') return;
+      try {
+        await appendRun(defaultStateDir(), {
+          runId,
+          sessionId: sessionId || undefined,
+          command,
+          startedAt,
+          durationMs: Date.now() - startedMs,
+          exitStatus,
+          argumentShape: argumentShape(invocationArgs),
+          searchEvidence: extractSearchEvidence(result?.structuredContent),
+          errorClass: rawError ? normalizeErrorClass(rawError) : undefined,
+        });
+      } catch (error) {
+        process.stderr.write(
+          `[outlook] journal warning: ${error instanceof Error ? error.message : String(error)}\n`
+        );
+      }
+    }
+
+    function finish(renderedOutput, result) {
       clearTimeout(timer);
-      // Mark settled BEFORE killing so the server's shutdown exit (which can be
-      // non-zero) is ignored by the close handler. Write the result first so a
-      // natural process exit flushes it intact (process.exit would truncate).
       settled = true;
-      process.stdout.write(output + '\n');
-      child.kill('SIGTERM');
-      resolve();
+      void recordRun('success', result).finally(() => {
+        process.stdout.write(renderedOutput + '\n');
+        child.kill('SIGTERM');
+        resolve();
+      });
+    }
+
+    function fail(message) {
+      if (settled) return;
+      clearTimeout(timer);
+      settled = true;
+      child.kill();
+      void recordRun('error', undefined, message).finally(() => die(message));
     }
 
     function onFrame(frame) {
@@ -339,10 +418,10 @@ async function runMcp({ command, schemaTarget, toolArgs, jsonPayload, timeout, c
           if (jsonPayload) {
             try {
               args = JSON.parse(jsonPayload);
+              invocationArgs = args;
             } catch (e) {
-              clearTimeout(timer);
-              child.kill();
-              die(`--json parse error: ${e.message}`);
+              fail(`--json parse error: ${e.message}`);
+              return;
             }
           } else {
             args = toolArgs;
@@ -359,21 +438,19 @@ async function runMcp({ command, schemaTarget, toolArgs, jsonPayload, timeout, c
       // Step 2: our request response
       if (frame.id === 2) {
         if (frame.error) {
-          clearTimeout(timer);
-          child.kill();
-          die(`Tool error: ${frame.error.message ?? JSON.stringify(frame.error)}`);
+          fail(`Tool error: ${frame.error.message ?? JSON.stringify(frame.error)}`);
           return;
         }
 
         if (command === 'list') {
           const tools = frame.result?.tools ?? [];
-          if (compact) {
-            finish(JSON.stringify(tools));
+          if (output !== 'text') {
+            finish(JSON.stringify(tools), frame.result);
           } else {
             const lines = tools
               .map((t) => `  ${t.name.padEnd(36)} ${t.description ?? ''}`)
               .join('\n');
-            finish(`${tools.length} tools:\n\n${lines}`);
+            finish(`${tools.length} tools:\n\n${lines}`, frame.result);
           }
           return;
         }
@@ -382,32 +459,38 @@ async function runMcp({ command, schemaTarget, toolArgs, jsonPayload, timeout, c
           const tools = frame.result?.tools ?? [];
           const tool = tools.find((t) => t.name === schemaTarget);
           if (!tool) {
-            clearTimeout(timer);
-            child.kill();
-            die(`Unknown tool: ${schemaTarget}`);
+            fail(`Unknown tool: ${schemaTarget}`);
             return;
           }
-          finish(JSON.stringify(tool.inputSchema, null, compact ? 0 : 2));
+          finish(JSON.stringify(tool.inputSchema, null, compact ? 0 : 2), frame.result);
           return;
         }
 
         // tool call result
         const content = frame.result?.content ?? [];
-        if (compact) {
-          finish(JSON.stringify(frame.result));
+        const text = content
+          .filter((c) => c.type === 'text')
+          .map((c) => c.text)
+          .join('\n');
+        const isError = frame.result?.isError;
+        if (isError) {
+          fail(`error:\n${text || 'Tool returned an error'}`);
+          return;
+        }
+        if (output === 'mcp') {
+          finish(JSON.stringify(frame.result), frame.result);
+        } else if (output === 'json') {
+          finish(
+            JSON.stringify(
+              frame.result?.structuredContent ?? {
+                content: text,
+                isError: false,
+              }
+            ),
+            frame.result
+          );
         } else {
-          const text = content
-            .filter((c) => c.type === 'text')
-            .map((c) => c.text)
-            .join('\n');
-          const isError = frame.result?.isError;
-          if (isError) {
-            clearTimeout(timer);
-            child.kill();
-            process.stderr.write(`[outlook] error:\n${text}\n`);
-            process.exit(1);
-          }
-          finish(text || JSON.stringify(frame.result, null, 2));
+          finish(text || JSON.stringify(frame.result, null, 2), frame.result);
         }
       }
     }
@@ -434,6 +517,54 @@ const opts = parseArgs(process.argv);
 
 if (opts.help || !opts.command) {
   printHelp();
+  process.exit(0);
+}
+
+function parseSince(value) {
+  const match = /^(\d+)([dh])$/.exec(String(value || '7d'));
+  if (!match) die(`Invalid --since value: ${value}. Use values such as 24h or 7d.`);
+  const amount = Number(match[1]);
+  const unitMs = match[2] === 'h' ? 3_600_000 : 86_400_000;
+  return Date.now() - amount * unitMs;
+}
+
+if (opts.command === 'feedback') {
+  const runId = opts.positionals[0];
+  const outcome = opts.toolArgs.outcome;
+  if (!runId || typeof outcome !== 'string') {
+    die('Usage: outlook feedback <runId> --outcome=<correct|missed|wrong_match|failed>');
+  }
+  try {
+    await appendFeedback(defaultStateDir(), runId, outcome);
+  } catch (error) {
+    die(error instanceof Error ? error.message : String(error));
+  }
+  const result = { ok: true, runId, outcome };
+  process.stdout.write(
+    opts.output === 'text'
+      ? `Feedback recorded for ${runId}: ${outcome}\n`
+      : `${JSON.stringify(result)}\n`
+  );
+  process.exit(0);
+}
+
+if (opts.command === 'harvest') {
+  const cutoff = parseSince(opts.toolArgs.since);
+  const events = (await readJournal(defaultStateDir())).filter((event) => {
+    const timestamp = Date.parse(event.timestamp);
+    return Number.isFinite(timestamp) && timestamp >= cutoff;
+  });
+  const result = harvestEvents(events, {
+    skillTarget:
+      typeof (opts.toolArgs.skillTarget ?? opts.toolArgs['skill-target']) === 'string'
+        ? (opts.toolArgs.skillTarget ?? opts.toolArgs['skill-target'])
+        : 'outlook-mcp',
+    minimumOccurrences:
+      typeof (opts.toolArgs.minimumOccurrences ?? opts.toolArgs['minimum-occurrences']) === 'number'
+        ? (opts.toolArgs.minimumOccurrences ?? opts.toolArgs['minimum-occurrences'])
+        : 2,
+  });
+  process.stdout.write(`${JSON.stringify(result, null, opts.output === 'text' ? 2 : 0)}\n`);
   process.exit(0);
 }
 

@@ -59,10 +59,23 @@ process.stdin.on('data', (chunk) => {
         result: { tools: [{ name: 'fake_tool', description: 'a fake tool' }] },
       });
     } else if (frame.method === 'tools/call') {
+      const structuredContent =
+        mode === 'structured-success'
+          ? {
+              status: 'FOUND',
+              strategy: 'local_scan',
+              pagesScanned: 2,
+              candidatesScanned: 80,
+              truncated: false,
+            }
+          : undefined;
       send({
         jsonrpc: '2.0',
         id: frame.id,
-        result: { content: [{ type: 'text', text: 'FAKE_RESULT_OK' }] },
+        result: {
+          content: [{ type: 'text', text: 'FAKE_RESULT_OK' }],
+          structuredContent,
+        },
       });
     }
     // notifications/initialized (no id) → nothing to answer

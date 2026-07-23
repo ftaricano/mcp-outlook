@@ -176,10 +176,17 @@ describe('validateToolInput - realistic second inputs', () => {
       isRead: false,
       folder: 'inbox',
       maxResults: 50,
+      maxPages: 5,
+      scanLimit: 500,
       sortBy: 'receivedDateTime',
       sortOrder: 'desc',
     });
     expect(r.ok).toBe(true);
+  });
+
+  it('advanced_search rejects non-positive pagination limits', () => {
+    expect(validateToolInput('advanced_search', { query: 'x', maxPages: 0 }).ok).toBe(false);
+    expect(validateToolInput('advanced_search', { query: 'x', scanLimit: -1 }).ok).toBe(false);
   });
 });
 
@@ -393,5 +400,13 @@ describe('validateToolInput - empty required fields rejected', () => {
     expect(validateToolInput('send_email', { to: [], subject: 's', body: 'b' }).ok).toBe(false);
     expect(validateToolInput('search_by_sender_domain', { domain: '' }).ok).toBe(false);
     expect(validateToolInput('batch_mark_as_read', { emailIds: [] }).ok).toBe(false);
+  });
+});
+
+describe('validateToolInput - saved search names', () => {
+  it.each(['__proto__', 'prototype', 'constructor'])('rejects reserved name %s', (name) => {
+    expect(
+      validateToolInput('saved_searches', { action: 'save', name, searchCriteria: {} }).ok
+    ).toBe(false);
   });
 });
