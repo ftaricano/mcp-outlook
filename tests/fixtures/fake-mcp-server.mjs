@@ -59,24 +59,44 @@ process.stdin.on('data', (chunk) => {
         result: { tools: [{ name: 'fake_tool', description: 'a fake tool' }] },
       });
     } else if (frame.method === 'tools/call') {
-      const structuredContent =
-        mode === 'structured-success'
-          ? {
-              status: 'FOUND',
+      if (mode === 'structured-error') {
+        // isError result that still carries structured evidence — mirrors a
+        // SEARCH_UNTRUSTED/SEARCH_FAILED search that the journal must still capture.
+        send({
+          jsonrpc: '2.0',
+          id: frame.id,
+          result: {
+            content: [{ type: 'text', text: 'FAKE_SEARCH_UNTRUSTED' }],
+            structuredContent: {
+              status: 'SEARCH_UNTRUSTED',
               strategy: 'local_scan',
-              pagesScanned: 2,
-              candidatesScanned: 80,
-              truncated: false,
-            }
-          : undefined;
-      send({
-        jsonrpc: '2.0',
-        id: frame.id,
-        result: {
-          content: [{ type: 'text', text: 'FAKE_RESULT_OK' }],
-          structuredContent,
-        },
-      });
+              pagesScanned: 4,
+              candidatesScanned: 200,
+              truncated: true,
+            },
+            isError: true,
+          },
+        });
+      } else {
+        const structuredContent =
+          mode === 'structured-success'
+            ? {
+                status: 'FOUND',
+                strategy: 'local_scan',
+                pagesScanned: 2,
+                candidatesScanned: 80,
+                truncated: false,
+              }
+            : undefined;
+        send({
+          jsonrpc: '2.0',
+          id: frame.id,
+          result: {
+            content: [{ type: 'text', text: 'FAKE_RESULT_OK' }],
+            structuredContent,
+          },
+        });
+      }
     }
     // notifications/initialized (no id) → nothing to answer
   }

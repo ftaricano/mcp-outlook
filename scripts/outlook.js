@@ -395,12 +395,15 @@ async function runMcp({
       });
     }
 
-    function fail(message) {
+    // `result` is the MCP frame result when one exists (e.g. an isError tool response that
+    // still carries structuredContent). Forwarding it keeps the search evidence of failed
+    // runs — SEARCH_FAILED/SEARCH_UNTRUSTED — in the journal for harvest to observe.
+    function fail(message, result) {
       if (settled) return;
       clearTimeout(timer);
       settled = true;
       child.kill();
-      void recordRun('error', undefined, message).finally(() => die(message));
+      void recordRun('error', result, message).finally(() => die(message));
     }
 
     function onFrame(frame) {
@@ -474,7 +477,7 @@ async function runMcp({
           .join('\n');
         const isError = frame.result?.isError;
         if (isError) {
-          fail(`error:\n${text || 'Tool returned an error'}`);
+          fail(`error:\n${text || 'Tool returned an error'}`, frame.result);
           return;
         }
         if (output === 'mcp') {

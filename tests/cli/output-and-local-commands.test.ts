@@ -76,6 +76,32 @@ describe('outlook CLI agent output and local commands', () => {
     );
   });
 
+  it('journals search evidence even when the tool returns an error result', async () => {
+    const stateDir = await tempStateDir();
+    const result = await runCli(
+      ['fake_tool', '--query=Secret Client', '--sender=private@example.com', '--session=test-session'],
+      stateDir,
+      'structured-error'
+    );
+
+    // The CLI reports the failure (non-zero exit) but the run must still be journaled with
+    // its structured evidence so harvest can observe recurring reliability failures.
+    expect(result.code).not.toBe(0);
+    const journal = await readFile(join(stateDir, 'runs.jsonl'), 'utf8');
+    expect(journal).not.toContain('Secret Client');
+    expect(journal).not.toContain('private@example.com');
+    expect(JSON.parse(journal)).toEqual(
+      expect.objectContaining({
+        exitStatus: 'error',
+        searchEvidence: expect.objectContaining({
+          status: 'SEARCH_UNTRUSTED',
+          strategy: 'local_scan',
+          truncated: true,
+        }),
+      })
+    );
+  });
+
   it('--output=mcp preserves the raw MCP result envelope', async () => {
     const stateDir = await tempStateDir();
     const result = await runCli(['fake_tool', '--output=mcp', '--no-journal'], stateDir);
