@@ -15,6 +15,8 @@ export class SearchHandler extends BaseHandler {
       isRead,
       folder = 'inbox',
       maxResults = 20,
+      maxPages = 10,
+      scanLimit = 500,
       sortBy = 'receivedDateTime',
       sortOrder = 'desc',
     } = args;
@@ -33,7 +35,7 @@ export class SearchHandler extends BaseHandler {
     }
 
     try {
-      const results = await this.emailService.advancedSearchEmails({
+      const searchResult = await this.emailService.advancedSearchEmailsDetailed({
         query,
         sender,
         subject,
@@ -43,12 +45,40 @@ export class SearchHandler extends BaseHandler {
         isRead,
         folder,
         maxResults,
+        maxPages,
+        scanLimit,
         sortBy,
         sortOrder,
       });
+      const results = searchResult.messages;
+
+      if (searchResult.status === 'SEARCH_FAILED') {
+        return this.formatStructuredError(
+          '❌ A busca falhou antes de produzir um resultado confiável.',
+          searchResult
+        );
+      }
+
+      if (searchResult.status === 'SEARCH_UNTRUSTED') {
+        return this.formatStructuredError(
+          '❌ O Microsoft Graph aparentou ignorar o termo e a verificação alternativa falhou.',
+          searchResult
+        );
+      }
+
+      if (searchResult.status === 'SEARCH_INCOMPLETE') {
+        return this.formatStructuredSuccess(
+          `⚠️ Busca inconclusiva: ${searchResult.candidatesScanned} candidato(s) examinados em ` +
+            `${searchResult.pagesScanned} página(s), mas ainda havia resultados por paginar.`,
+          searchResult
+        );
+      }
 
       if (!results || results.length === 0) {
-        return this.formatSuccess('🔍 Nenhum email encontrado com os critérios especificados');
+        return this.formatStructuredSuccess(
+          '🔍 Nenhum email encontrado após varredura completa dos critérios especificados',
+          searchResult
+        );
       }
 
       let result = `🔍 **Busca Avançada** - ${results.length} email(s) encontrado(s)\n\n`;
@@ -83,7 +113,13 @@ export class SearchHandler extends BaseHandler {
         result += `   ID: ${email.id}\n\n`;
       });
 
-      return this.formatSuccess(result);
+      result +=
+        `**Evidência da busca:** ${searchResult.strategy}, ` +
+        `${searchResult.pagesScanned} página(s), ` +
+        `${searchResult.candidatesScanned} candidato(s), ` +
+        `confiança ${searchResult.confidence}.\n`;
+
+      return this.formatStructuredSuccess(result, searchResult);
     } catch (error) {
       return this.formatError('Erro na busca avançada', error);
     }
@@ -104,7 +140,17 @@ export class SearchHandler extends BaseHandler {
       });
 
       if (!results || results.length === 0) {
-        return this.formatSuccess(`🔍 Nenhum email encontrado do domínio: ${domain}`);
+        return this.formatStructuredSuccess(
+          `🔍 Nenhum email do domínio ${domain} encontrado dentro do limite examinado.`,
+          {
+            status: 'SEARCH_INCOMPLETE',
+            confidence: 'low',
+            warnings: ['bounded_scan_no_match'],
+            resultCount: 0,
+            results: [],
+            domain,
+          }
+        );
       }
 
       // Group by sender
@@ -149,7 +195,13 @@ export class SearchHandler extends BaseHandler {
         result += '\n';
       });
 
-      return this.formatSuccess(result);
+      return this.formatStructuredSuccess(result, {
+        status: 'FOUND',
+        resultCount: results.length,
+        results,
+        domain,
+        includeSubdomains,
+      });
     } catch (error) {
       return this.formatError('Erro na busca por domínio', error);
     }
@@ -172,8 +224,16 @@ export class SearchHandler extends BaseHandler {
       });
 
       if (!results || results.length === 0) {
-        return this.formatSuccess(
-          `📎 Nenhum email encontrado com anexos do tipo: ${typesArray.join(', ')}`
+        return this.formatStructuredSuccess(
+          `📎 Nenhum email com anexos do tipo ${typesArray.join(', ')} encontrado dentro do limite examinado.`,
+          {
+            status: 'SEARCH_INCOMPLETE',
+            confidence: 'low',
+            warnings: ['bounded_scan_no_match'],
+            resultCount: 0,
+            results: [],
+            fileTypes: typesArray,
+          }
         );
       }
 
@@ -239,7 +299,14 @@ export class SearchHandler extends BaseHandler {
         result += `... e mais ${results.length - 10} email(s)\n`;
       }
 
-      return this.formatSuccess(result);
+      return this.formatStructuredSuccess(result, {
+        status: 'FOUND',
+        resultCount: results.length,
+        results,
+        fileTypes: typesArray,
+        totalAttachments,
+        attachmentTypes: Object.fromEntries(attachmentStats),
+      });
     } catch (error) {
       return this.formatError('Erro na busca por tipo de anexo', error);
     }
@@ -267,7 +334,17 @@ export class SearchHandler extends BaseHandler {
       });
 
       if (!duplicates || duplicates.length === 0) {
-        return this.formatSuccess('🔍 Nenhum email duplicado encontrado');
+        return this.formatStructuredSuccess(
+          '🔍 Nenhum email duplicado encontrado dentro do limite examinado.',
+          {
+            status: 'SEARCH_INCOMPLETE',
+            confidence: 'low',
+            warnings: ['bounded_scan_no_match'],
+            groupCount: 0,
+            groups: [],
+            criteria,
+          }
+        );
       }
 
       let result = `🔄 **Emails Duplicados** - ${duplicates.length} grupo(s) encontrado(s)\n\n`;
@@ -300,7 +377,13 @@ export class SearchHandler extends BaseHandler {
       result += `• Potencial economia de espaço: ~${(totalDuplicateEmails * 0.1).toFixed(1)}MB\n`;
       result += `\n💡 Use 'delete_email' ou 'move_emails_to_folder' para organizar os duplicados`;
 
-      return this.formatSuccess(result);
+      return this.formatStructuredSuccess(result, {
+        status: 'FOUND',
+        groupCount: duplicates.length,
+        groups: duplicates,
+        criteria,
+        totalDuplicateEmails,
+      });
     } catch (error) {
       return this.formatError('Erro na busca por duplicados', error);
     }
@@ -333,8 +416,17 @@ export class SearchHandler extends BaseHandler {
 
       if (!results || results.length === 0) {
         const sizeRange = `${minSizeMB || 0}MB - ${maxSizeMB || '∞'}MB`;
-        return this.formatSuccess(
-          `📏 Nenhum email encontrado no intervalo de tamanho: ${sizeRange}`
+        return this.formatStructuredSuccess(
+          `📏 Nenhum email no intervalo de tamanho ${sizeRange} encontrado dentro do limite examinado.`,
+          {
+            status: 'SEARCH_INCOMPLETE',
+            confidence: 'low',
+            warnings: ['bounded_scan_no_match'],
+            resultCount: 0,
+            results: [],
+            minSizeMB: minSizeMB ?? 0,
+            maxSizeMB: maxSizeMB ?? null,
+          }
         );
       }
 
@@ -373,7 +465,13 @@ export class SearchHandler extends BaseHandler {
         result += `   ID: ${email.id}\n\n`;
       });
 
-      return this.formatSuccess(result);
+      return this.formatStructuredSuccess(result, {
+        status: 'FOUND',
+        resultCount: results.length,
+        results,
+        minSizeMB: minSizeMB ?? 0,
+        maxSizeMB: maxSizeMB ?? null,
+      });
     } catch (error) {
       return this.formatError('Erro na busca por tamanho', error);
     }
@@ -393,15 +491,25 @@ export class SearchHandler extends BaseHandler {
           }
 
           await this.emailService.saveSearchCriteria(name, searchCriteria);
-          return this.formatSuccess(
-            `💾 Busca salva: "${name}"\n\nCritérios salvos:\n${JSON.stringify(searchCriteria, null, 2)}`
+          return this.formatStructuredSuccess(
+            `💾 Busca salva: "${name}"\n\nCritérios salvos:\n${JSON.stringify(searchCriteria, null, 2)}`,
+            {
+              action: 'save',
+              status: 'SAVED',
+              name,
+              criteria: searchCriteria,
+            }
           );
 
         case 'list':
           const savedSearches = await this.emailService.listSavedSearches();
 
           if (savedSearches.length === 0) {
-            return this.formatSuccess('📂 Nenhuma busca salva encontrada');
+            return this.formatStructuredSuccess('📂 Nenhuma busca salva encontrada', {
+              action: 'list',
+              status: 'NOT_FOUND',
+              savedSearches: [],
+            });
           }
 
           let result = `📂 **Buscas Salvas** (${savedSearches.length}):\n\n`;
@@ -411,7 +519,11 @@ export class SearchHandler extends BaseHandler {
             result += `   Critérios: ${Object.keys(search.criteria).join(', ')}\n\n`;
           });
 
-          return this.formatSuccess(result);
+          return this.formatStructuredSuccess(result, {
+            action: 'list',
+            status: 'FOUND',
+            savedSearches,
+          });
 
         case 'execute':
           if (!name) {
@@ -422,6 +534,39 @@ export class SearchHandler extends BaseHandler {
 
           if (!searchResult) {
             return this.formatError(`Busca salva "${name}" não encontrada`);
+          }
+
+          if (searchResult.evidence.status === 'SEARCH_INCOMPLETE') {
+            return this.formatStructuredSuccess(
+              `⚠️ Busca salva "${name}" inconclusiva dentro dos limites examinados.`,
+              {
+                action: 'execute',
+                status: searchResult.evidence.status,
+                name,
+                criteria: searchResult.criteria,
+                resultCount: 0,
+                results: [],
+                evidence: searchResult.evidence,
+              }
+            );
+          }
+
+          if (
+            searchResult.evidence.status === 'SEARCH_FAILED' ||
+            searchResult.evidence.status === 'SEARCH_UNTRUSTED'
+          ) {
+            return this.formatStructuredError(
+              `❌ Busca salva "${name}" não produziu resultado confiável.`,
+              {
+                action: 'execute',
+                status: searchResult.evidence.status,
+                name,
+                criteria: searchResult.criteria,
+                resultCount: 0,
+                results: [],
+                evidence: searchResult.evidence,
+              }
+            );
           }
 
           let execResult = `🔍 **Executando busca salva: "${name}"**\n\n`;
@@ -437,15 +582,32 @@ export class SearchHandler extends BaseHandler {
             execResult += `... e mais ${searchResult.emails.length - 10} email(s)\n`;
           }
 
-          return this.formatSuccess(execResult);
+          return this.formatStructuredSuccess(execResult, {
+            action: 'execute',
+            status: searchResult.emails.length > 0 ? 'FOUND' : 'NOT_FOUND',
+            name,
+            criteria: searchResult.criteria,
+            resultCount: searchResult.emails.length,
+            results: searchResult.emails,
+            evidence: searchResult.evidence,
+          });
 
         case 'delete':
           if (!name) {
             return this.formatError('Nome da busca é obrigatório para deletar');
           }
 
-          await this.emailService.deleteSavedSearch(name);
-          return this.formatSuccess(`🗑️ Busca salva "${name}" deletada com sucesso`);
+          const deleted = await this.emailService.deleteSavedSearch(name);
+          return this.formatStructuredSuccess(
+            deleted
+              ? `🗑️ Busca salva "${name}" deletada com sucesso`
+              : `📂 Busca salva "${name}" não encontrada`,
+            {
+              action: 'delete',
+              status: deleted ? 'DELETED' : 'NOT_FOUND',
+              name,
+            }
+          );
 
         default:
           return this.formatError('Ação inválida. Use: save, list, execute, delete');

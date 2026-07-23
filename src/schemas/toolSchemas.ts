@@ -317,6 +317,8 @@ const advancedSearchSchema = z.object({
   isRead: z.boolean().optional(),
   folder: optionalFolderRef,
   maxResults: positiveInt.optional(),
+  maxPages: positiveInt.optional(),
+  scanLimit: positiveInt.optional(),
   sortBy: z.enum(['receivedDateTime', 'subject', 'from']).optional(),
   sortOrder: z.enum(['asc', 'desc']).optional(),
 });
@@ -355,7 +357,12 @@ const searchBySizeSchema = z.object({
 
 const savedSearchesSchema = z.object({
   action: z.enum(['save', 'list', 'execute', 'delete']),
-  name: z.string().optional(),
+  name: z
+    .string()
+    .refine((name) => !['__proto__', 'prototype', 'constructor'].includes(name), {
+      message: 'reserved saved-search name',
+    })
+    .optional(),
   searchCriteria,
 });
 

@@ -97,3 +97,44 @@ describe('getOptimizedEmails - path-segment encoding (no route injection)', () =
     expect(url).not.toContain('mailFolders/inbox/messages?');
   });
 });
+
+describe('getOptimizedEmailsDetailed - pagination evidence', () => {
+  it('follows Graph next links until maxResults is satisfied', async () => {
+    const pages = new Map<string, any>([
+      [
+        '/users/user@example.com/mailFolders/inbox/messages',
+        {
+          value: [{ id: 'first' }],
+          '@odata.nextLink': 'https://graph.test/page-2',
+        },
+      ],
+      ['https://graph.test/page-2', { value: [{ id: 'second' }] }],
+    ]);
+    const client = {
+      api(url: string) {
+        const chain: any = {
+          select: () => chain,
+          filter: () => chain,
+          orderby: () => chain,
+          top: () => chain,
+          get: async () => pages.get(url),
+        };
+        return chain;
+      },
+    } as never;
+    const cache = new CacheManager();
+    const opt = new GraphOptimizer(client, cache, {});
+    process.env.TARGET_USER_EMAIL = 'user@example.com';
+
+    const result = await opt.getOptimizedEmailsDetailed({
+      folder: 'inbox',
+      maxResults: 2,
+      maxPages: 5,
+      enableCache: false,
+    });
+
+    expect(result.items.map((item) => item.id)).toEqual(['first', 'second']);
+    expect(result.pagesScanned).toBe(2);
+    expect(result.truncated).toBe(false);
+  });
+});

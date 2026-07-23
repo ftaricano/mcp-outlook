@@ -7,6 +7,7 @@
   "files": [
     "dist",
     "scripts/outlook.js",
+    "scripts/lib",
     "README.md",
     "LICENSE",
     "SECURITY.md"

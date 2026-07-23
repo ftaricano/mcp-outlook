@@ -8,6 +8,7 @@ export interface HandlerResult {
     text: string;
   }>;
   isError?: boolean;
+  structuredContent?: object;
 }
 
 /**
@@ -56,6 +57,21 @@ export abstract class BaseHandler {
   protected formatSuccess(message: string): HandlerResult {
     return {
       content: [{ type: 'text', text: message }],
+    };
+  }
+
+  protected formatStructuredSuccess(message: string, structuredContent: object): HandlerResult {
+    return {
+      content: [{ type: 'text', text: message }],
+      structuredContent,
+    };
+  }
+
+  protected formatStructuredError(message: string, structuredContent: object): HandlerResult {
+    return {
+      content: [{ type: 'text', text: message }],
+      structuredContent,
+      isError: true,
     };
   }
 }
