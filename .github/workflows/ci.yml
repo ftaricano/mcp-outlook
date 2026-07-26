@@ -49,6 +49,15 @@ jobs:
       - name: Smoke test (MCP protocol)
         run: npm run smoke
 
+      - name: Smoke test (read-only plugin stdio)
+        run: npm run smoke:plugin
+
+      - name: Smoke test (read-only plugin HTTP)
+        run: npm run smoke:http
+
+      - name: Validate published package contents
+        run: npm pack --dry-run
+
       - name: Coverage
         if: matrix.node == '20'
         run: npm run test:coverage

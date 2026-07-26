@@ -31,3 +31,5 @@ Thumbs.db
 # Runtime artifacts
 mcp-server.lock
 coverage/
+.app.json
+outlook-plugin-config.json

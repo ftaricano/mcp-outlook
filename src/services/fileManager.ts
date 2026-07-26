@@ -15,10 +15,12 @@ export class FileManager {
   private readonly downloadDir: string;
   private readonly pathGuard: PathGuard;
 
-  constructor(pathGuard: PathGuard) {
+  constructor(pathGuard: PathGuard, options: { ensureDownloadDirectory?: boolean } = {}) {
     this.pathGuard = pathGuard;
     this.downloadDir = pathGuard.getDownloadRoot();
-    this.ensureDownloadDirectory();
+    if (options.ensureDownloadDirectory !== false) {
+      this.ensureDownloadDirectory();
+    }
   }
 
   /**

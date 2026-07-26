@@ -18,6 +18,28 @@ interface CollectGraphPagesOptions<T> {
   maxPages: number;
 }
 
+export function validateGraphNextLink(nextLink: string): string {
+  let url: URL;
+  try {
+    url = new URL(nextLink);
+  } catch {
+    throw new Error('Graph pagination returned an invalid nextLink URL');
+  }
+
+  if (url.protocol !== 'https:' || url.hostname !== 'graph.microsoft.com') {
+    throw new Error('Graph pagination nextLink must use https://graph.microsoft.com');
+  }
+
+  if (!url.pathname.startsWith('/v1.0/') && !url.pathname.startsWith('/beta/')) {
+    throw new Error('Graph pagination nextLink has an unsupported API path');
+  }
+
+  url.username = '';
+  url.password = '';
+  url.hash = '';
+  return url.toString();
+}
+
 export async function collectGraphPages<T>({
   firstPage,
   fetchNext,

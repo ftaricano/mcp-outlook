@@ -17,7 +17,11 @@ import {
   escapeODataString,
   encodeGraphSegment,
 } from './odataFilters.js';
-import { collectGraphPages, GraphPaginationResult } from './graphPagination.js';
+import {
+  collectGraphPages,
+  GraphPaginationResult,
+  validateGraphNextLink,
+} from './graphPagination.js';
 import { ReliableSearchResult, runReliableTextSearch, SearchStatus } from './reliableSearch.js';
 import { SavedSearchStore } from './savedSearchStore.js';
 
@@ -40,6 +44,7 @@ export interface AdvancedSearchOptions {
   maxResults?: number;
   maxPages?: number;
   scanLimit?: number;
+  includeFullContent?: boolean;
   sortBy?: string;
   sortOrder?: string;
 }
@@ -60,6 +65,12 @@ export interface EnhancedEmailOptions {
   };
 }
 
+export interface EmailServiceOptions {
+  targetUserEmail?: string;
+  preloadCache?: boolean;
+  ensureDownloadDirectory?: boolean;
+}
+
 export interface EmailSummaryData {
   id: string;
   subject: string;
@@ -76,13 +87,18 @@ export class EmailService {
   private graphOptimizer: GraphOptimizer;
   private parallelProcessor: ParallelProcessor<any, any>;
   private savedSearchStore: SavedSearchStore;
+  private readonly targetUserEmail?: string;
 
   constructor(
     private authProvider: GraphAuthProvider,
-    pathGuard: PathGuard
+    pathGuard: PathGuard,
+    options: EmailServiceOptions = {}
   ) {
     this.client = authProvider.getGraphClient();
-    this.fileManager = new FileManager(pathGuard);
+    this.fileManager = new FileManager(pathGuard, {
+      ensureDownloadDirectory: options.ensureDownloadDirectory,
+    });
+    this.targetUserEmail = options.targetUserEmail ?? process.env.TARGET_USER_EMAIL;
 
     // Initialize performance optimization systems
     this.cacheManager = new CacheManager({
@@ -91,12 +107,17 @@ export class EmailService {
       enableStats: true,
     });
 
-    this.graphOptimizer = new GraphOptimizer(this.client, this.cacheManager, {
-      enableBatching: true,
-      batchSize: 20,
-      enableSelectiveFields: true,
-      enableCompression: true,
-    });
+    this.graphOptimizer = new GraphOptimizer(
+      this.client,
+      this.cacheManager,
+      {
+        enableBatching: true,
+        batchSize: 20,
+        enableSelectiveFields: true,
+        enableCompression: true,
+      },
+      this.targetUserEmail
+    );
     this.savedSearchStore = new SavedSearchStore();
 
     this.parallelProcessor = new ParallelProcessor(
@@ -108,8 +129,9 @@ export class EmailService {
       }
     );
 
-    // Preload common patterns
-    this.initializeOptimizations();
+    if (options.preloadCache !== false) {
+      this.initializeOptimizations();
+    }
   }
 
   /**
@@ -160,7 +182,7 @@ export class EmailService {
       console.error('🔄 Fallback para implementação original...');
 
       try {
-        const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+        const userEmail = this.targetUserEmail || 'me';
         const apiEndpoint =
           userEmail === 'me'
             ? `/me/mailFolders/${encodeGraphSegment(folder)}/messages`
@@ -237,7 +259,7 @@ export class EmailService {
 
   async getEmailById(emailId: string): Promise<Message> {
     try {
-      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+      const userEmail = this.targetUserEmail || 'me';
       const apiPath =
         userEmail === 'me'
           ? `/me/messages/${encodeGraphSegment(emailId)}`
@@ -321,7 +343,7 @@ export class EmailService {
 
   async validateConnection(): Promise<boolean> {
     try {
-      const userEmail = process.env.TARGET_USER_EMAIL;
+      const userEmail = this.targetUserEmail;
 
       if (!userEmail) {
         console.error('TARGET_USER_EMAIL não configurado no .env');
@@ -349,7 +371,7 @@ export class EmailService {
     enhancedOptions?: EnhancedEmailOptions
   ): Promise<any> {
     try {
-      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+      const userEmail = this.targetUserEmail || 'me';
       const apiPath = userEmail === 'me' ? '/me/sendMail' : `/users/${userEmail}/sendMail`;
 
       // Preparar conteúdo do email com template se solicitado
@@ -514,7 +536,7 @@ export class EmailService {
     attachmentsCount: number;
   }> {
     try {
-      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+      const userEmail = this.targetUserEmail || 'me';
       const apiPath = userEmail === 'me' ? '/me/messages' : `/users/${userEmail}/messages`;
 
       let emailBody = body;
@@ -590,7 +612,7 @@ export class EmailService {
     enhancedOptions?: EnhancedEmailOptions
   ): Promise<any> {
     try {
-      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+      const userEmail = this.targetUserEmail || 'me';
       const action = replyAll ? 'replyAll' : 'reply';
       const apiPath =
         userEmail === 'me'
@@ -658,7 +680,7 @@ export class EmailService {
   // Funcionalidades de Gestão de Status
   async markAsRead(emailId: string): Promise<boolean> {
     try {
-      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+      const userEmail = this.targetUserEmail || 'me';
       const apiPath =
         userEmail === 'me'
           ? `/me/messages/${encodeGraphSegment(emailId)}`
@@ -676,7 +698,7 @@ export class EmailService {
 
   async markAsUnread(emailId: string): Promise<boolean> {
     try {
-      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+      const userEmail = this.targetUserEmail || 'me';
       const apiPath =
         userEmail === 'me'
           ? `/me/messages/${encodeGraphSegment(emailId)}`
@@ -694,7 +716,7 @@ export class EmailService {
 
   async deleteEmail(emailId: string): Promise<boolean> {
     try {
-      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+      const userEmail = this.targetUserEmail || 'me';
       const apiPath =
         userEmail === 'me'
           ? `/me/messages/${encodeGraphSegment(emailId)}`
@@ -713,7 +735,7 @@ export class EmailService {
   // Funcionalidades de Anexos
   async listAttachments(emailId: string): Promise<any[]> {
     try {
-      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+      const userEmail = this.targetUserEmail || 'me';
       const apiPath =
         userEmail === 'me'
           ? `/me/messages/${encodeGraphSegment(emailId)}/attachments`
@@ -748,7 +770,7 @@ export class EmailService {
     size?: number;
   }> {
     try {
-      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+      const userEmail = this.targetUserEmail || 'me';
       const apiPath =
         userEmail === 'me'
           ? `/me/messages/${encodeGraphSegment(emailId)}/attachments/${encodeGraphSegment(attachmentId)}`
@@ -1192,7 +1214,7 @@ export class EmailService {
       console.error(`📧 Exportando email ${emailId.substring(0, 30)}... como anexo EML`);
 
       // 1. Buscar dados básicos do email
-      const userEmail = process.env.TARGET_USER_EMAIL;
+      const userEmail = this.targetUserEmail;
       const baseUrl = userEmail
         ? `/users/${userEmail}/messages/${encodeGraphSegment(emailId)}`
         : `/me/messages/${encodeGraphSegment(emailId)}`;
@@ -1512,7 +1534,7 @@ export class EmailService {
       console.error('🔄 Fallback para implementação original de pastas...');
 
       try {
-        const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+        const userEmail = this.targetUserEmail || 'me';
         const apiEndpoint =
           userEmail === 'me' ? '/me/mailFolders' : `/users/${userEmail}/mailFolders`;
 
@@ -1547,7 +1569,7 @@ export class EmailService {
     if (maxDepth <= 0) return [];
 
     try {
-      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+      const userEmail = this.targetUserEmail || 'me';
       const apiEndpoint =
         userEmail === 'me'
           ? `/me/mailFolders/${encodeGraphSegment(parentFolderId)}/childFolders`
@@ -1579,7 +1601,7 @@ export class EmailService {
    */
   async createFolder(folderName: string, parentFolderId?: string): Promise<any> {
     try {
-      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+      const userEmail = this.targetUserEmail || 'me';
       const apiEndpoint = parentFolderId
         ? userEmail === 'me'
           ? `/me/mailFolders/${encodeGraphSegment(parentFolderId)}/childFolders`
@@ -1612,7 +1634,7 @@ export class EmailService {
 
     for (const emailId of emailIds) {
       try {
-        const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+        const userEmail = this.targetUserEmail || 'me';
         const apiEndpoint =
           userEmail === 'me'
             ? `/me/messages/${encodeGraphSegment(emailId)}/move`
@@ -1655,7 +1677,7 @@ export class EmailService {
 
     for (const emailId of emailIds) {
       try {
-        const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+        const userEmail = this.targetUserEmail || 'me';
         const apiEndpoint =
           userEmail === 'me'
             ? `/me/messages/${encodeGraphSegment(emailId)}/copy`
@@ -1694,7 +1716,7 @@ export class EmailService {
    */
   async deleteFolder(folderId: string, permanent: boolean = false): Promise<any> {
     try {
-      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+      const userEmail = this.targetUserEmail || 'me';
 
       // First get folder info
       const folderEndpoint =
@@ -1733,7 +1755,7 @@ export class EmailService {
    */
   async getFolderStatistics(folderId: string, includeSubfolders: boolean = false): Promise<any> {
     try {
-      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+      const userEmail = this.targetUserEmail || 'me';
       const folderEndpoint =
         userEmail === 'me'
           ? `/me/mailFolders/${encodeGraphSegment(folderId)}`
@@ -1817,7 +1839,7 @@ export class EmailService {
     try {
       console.error(`🗂️ Organizando emails por regras (${dryRun ? 'simulação' : 'execução'})`);
 
-      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+      const userEmail = this.targetUserEmail || 'me';
       const messagesEndpoint =
         userEmail === 'me'
           ? `/me/mailFolders/${encodeGraphSegment(sourceFolderId)}/messages`
@@ -1921,12 +1943,16 @@ export class EmailService {
       maxResults = 20,
       maxPages = 10,
       scanLimit = 500,
+      includeFullContent = true,
       sortBy = 'receivedDateTime',
       sortOrder = 'desc',
     } = options;
 
     const apiEndpoint = this.messagesEndpoint(folder);
     const effectiveFrom = dateFrom;
+    const searchFields =
+      'id,subject,from,receivedDateTime,isRead,hasAttachments,bodyPreview' +
+      (includeFullContent ? ',body' : '');
 
     if (query) {
       const searchResult = await runReliableTextSearch({
@@ -1937,7 +1963,7 @@ export class EmailService {
           const endpoint =
             `${apiEndpoint}?$search="${encodeURIComponent(cleanTerm)}"` +
             `&$top=${Math.min(scanLimit, Math.max(maxResults * 3, 50), 100)}` +
-            '&$select=id,subject,from,receivedDateTime,isRead,hasAttachments,bodyPreview,body';
+            `&$select=${searchFields}`;
           const page = await this.collectMessagePages(endpoint, scanLimit, maxPages);
           return {
             ...page,
@@ -1960,11 +1986,10 @@ export class EmailService {
             hasAttachments,
             isRead,
           });
-          const params = [
-            `$top=${Math.min(scanLimit, 100)}`,
-            '$select=id,subject,from,receivedDateTime,isRead,hasAttachments,bodyPreview,body',
-            '$expand=attachments($select=name,contentType,size)',
-          ];
+          const params = [`$top=${Math.min(scanLimit, 100)}`, `$select=${searchFields}`];
+          if (includeFullContent) {
+            params.push('$expand=attachments($select=name,contentType,size)');
+          }
           if (filter) params.push(`$filter=${encodeURIComponent(filter)}`);
           return this.collectMessagePages(
             `${apiEndpoint}?${params.join('&')}`,
@@ -2054,7 +2079,7 @@ export class EmailService {
   }
 
   private messagesEndpoint(folder: string): string {
-    const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+    const userEmail = this.targetUserEmail || 'me';
     return userEmail === 'me'
       ? `/me/mailFolders/${encodeGraphSegment(folder)}/messages`
       : `/users/${userEmail}/mailFolders/${encodeGraphSegment(folder)}/messages`;
@@ -2068,7 +2093,7 @@ export class EmailService {
     const firstPage = await this.client.api(endpoint).get();
     return collectGraphPages({
       firstPage,
-      fetchNext: (nextLink) => this.client.api(nextLink).get(),
+      fetchNext: (nextLink) => this.client.api(validateGraphNextLink(nextLink)).get(),
       maxItems,
       maxPages,
     });
@@ -2200,7 +2225,7 @@ export class EmailService {
         to: new Date().toISOString(),
       };
 
-      const userEmail = process.env.TARGET_USER_EMAIL || 'me';
+      const userEmail = this.targetUserEmail || 'me';
       const apiEndpoint =
         userEmail === 'me'
           ? `/me/mailFolders/${encodeGraphSegment(folder)}/messages`
