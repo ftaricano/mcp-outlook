@@ -4,13 +4,19 @@ Guidance for agents working **on this repo**. End-user docs (tool catalog, setup
 
 ## What this is
 
-MCP server exposing Microsoft Graph email operations as 40 tools over stdio, plus a standalone `outlook` CLI wrapper. Auth is Azure AD client-credentials (no user login). Single-mailbox per process — `TARGET_USER_EMAIL` pins it.
+MCP server exposing Microsoft Graph email operations as 40 tools over stdio, plus a standalone
+`outlook` CLI wrapper. A separate four-tool read-only plugin supports allowlisted multi-mailbox
+search over stdio and loopback Streamable HTTP. Auth is Azure AD client-credentials (no user
+login). The original server remains single-mailbox per process; plugin services pin mailbox
+identity per instance.
 
 ## Hard invariants
 
 These are enforced by CI or by design. Don't regress them.
 
-1. **40 tools exactly.** `scripts/smoke-test.js:21` hardcodes `EXPECTED_TOOL_COUNT`. When adding/removing a tool, bump this constant and the tool table in [README.md](README.md).
+1. **Two fixed catalogs.** The original server exposes exactly 40 tools and
+   `scripts/smoke-test.js` enforces that count. The plugin exposes exactly four physically
+   read-only tools and `scripts/plugin-smoke-test.js` enforces that count.
 2. **Every tool has a zod schema.** `src/schemas/toolSchemas.ts` is the gate — `HandlerRegistry.handleTool` runs `validateToolInput` before dispatching. No handler method runs on unvalidated args.
 3. **Filesystem access goes through `pathGuard`.** Handlers never call `fs.readFile` / `fs.writeFile` on caller-supplied paths directly; `src/services/fileManager.ts` and `src/services/emailService.ts` already route through `pathGuard.resolveSafe()`. Any new file-touching code must go through the same door.
 4. **Graph calls go through `EmailService`.** No direct `Client.api()` in handlers — that bypasses response caching (`CacheManager`) and the batch helpers. Retry/throttling (429 + `Retry-After`) is **not** custom: it comes from the Graph SDK's default middleware chain (`Client.initWithMiddleware` in `src/auth/graphAuth.ts`), which includes the SDK `RetryHandler`. There is no in-house rate limiter.
@@ -19,6 +25,11 @@ These are enforced by CI or by design. Don't regress them.
 7. **Run telemetry is metadata-only.** `scripts/lib/run-journal.js` may store argument names/types, counters, durations, statuses, and normalized error classes. It must never persist argument values, message content/metadata, attachment names, credentials, or raw errors.
 8. **Self-improvement emits proposals only.** `outlook harvest` is observational. It must not edit source, enqueue proposals, mutate skills, or bypass the external autonomy/session-harvest gates.
 9. **This is a public repo — no deployment-specific data.** The code, tests, docs, and fixtures must stay free of any specific tenant's operational data: real mailbox addresses, client / company / person names, sender identities, folder maps, or attachment passwords. Anything deployment-specific is **caller-supplied at runtime** — env vars, or an external config / search-memory file passed by path — never committed here. Tests and examples use fictional data only. Rationale: committed content is world-readable and effectively permanent; a leak of an operator's business data cannot be undone. Capabilities that consume such data (e.g. multi-mailbox search, document confirmation, an index-backed cache) belong here as generic mechanisms; the data they read stays in the caller's private config.
+10. **Mailbox identity is immutable per service.** Never switch `TARGET_USER_EMAIL` or another
+    process-global value around an operation. Plugin allowlists resolve opaque aliases to
+    constructor-pinned mailbox services, and cache keys include mailbox identity.
+11. **HTTP is loopback-only in this repo.** Remote ChatGPT use requires a separately reviewed
+    HTTPS OAuth 2.1 resource-server layer and a separate Graph `Mail.Read` app registration.
 
 ## Architecture at a glance
 
@@ -50,7 +61,7 @@ Handler domains: `Email`, `Attachment`, `Hybrid` (large-file), `Folder`, `Search
 
 | Command | Gate |
 |---|---|
-| `npm run build && npm test && npm run smoke` | pre-PR — must all pass |
+| `npm run verify` | pre-PR — lint, typecheck, tests, build and all three smokes |
 | `npm run test:coverage` | enforces coverage thresholds |
 | `node scripts/live-readonly-smoke.js` | live Graph read smoke — requires real creds, not in CI |
 | `node scripts/live-writes-smoke.js` | live Graph write smoke — same |

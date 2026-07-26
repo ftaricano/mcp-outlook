@@ -105,10 +105,10 @@ describe('getOptimizedEmailsDetailed - pagination evidence', () => {
         '/users/user@example.com/mailFolders/inbox/messages',
         {
           value: [{ id: 'first' }],
-          '@odata.nextLink': 'https://graph.test/page-2',
+          '@odata.nextLink': 'https://graph.microsoft.com/v1.0/page-2',
         },
       ],
-      ['https://graph.test/page-2', { value: [{ id: 'second' }] }],
+      ['https://graph.microsoft.com/v1.0/page-2', { value: [{ id: 'second' }] }],
     ]);
     const client = {
       api(url: string) {
@@ -123,8 +123,7 @@ describe('getOptimizedEmailsDetailed - pagination evidence', () => {
       },
     } as never;
     const cache = new CacheManager();
-    const opt = new GraphOptimizer(client, cache, {});
-    process.env.TARGET_USER_EMAIL = 'user@example.com';
+    const opt = new GraphOptimizer(client, cache, {}, 'user@example.com');
 
     const result = await opt.getOptimizedEmailsDetailed({
       folder: 'inbox',

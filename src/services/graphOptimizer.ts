@@ -1,7 +1,11 @@
 import { Client } from '@microsoft/microsoft-graph-client';
 import { CacheManager } from './cacheManager.js';
 import { escapeODataString, encodeGraphSegment } from './odataFilters.js';
-import { collectGraphPages, GraphPaginationResult } from './graphPagination.js';
+import {
+  collectGraphPages,
+  GraphPaginationResult,
+  validateGraphNextLink,
+} from './graphPagination.js';
 
 export interface GraphOptimizationConfig {
   enableBatching: boolean;
@@ -36,6 +40,7 @@ export class GraphOptimizer {
   private client: Client;
   private cacheManager: CacheManager;
   private config: GraphOptimizationConfig;
+  private readonly targetUserEmail?: string;
   private pendingBatch: BatchRequest[];
   private batchTimeout?: NodeJS.Timeout;
   private requestQueue: Map<string, Promise<any>>;
@@ -43,10 +48,12 @@ export class GraphOptimizer {
   constructor(
     client: Client,
     cacheManager: CacheManager,
-    config: Partial<GraphOptimizationConfig> = {}
+    config: Partial<GraphOptimizationConfig> = {},
+    targetUserEmail: string | undefined = process.env.TARGET_USER_EMAIL
   ) {
     this.client = client;
     this.cacheManager = cacheManager;
+    this.targetUserEmail = targetUserEmail;
     this.config = {
       enableBatching: true,
       batchSize: 20,
@@ -67,7 +74,7 @@ export class GraphOptimizer {
    * Helper to get the base endpoint (uses /users/{id} for app permissions or /me for delegated)
    */
   private getBaseEndpoint(): string {
-    const targetUser = process.env.TARGET_USER_EMAIL;
+    const targetUser = this.targetUserEmail;
     if (targetUser && targetUser !== 'me') {
       return `/users/${targetUser}`;
     }
@@ -122,6 +129,7 @@ export class GraphOptimizer {
     // all resolve to the same folder/maxResults and would otherwise collide on a
     // single cache entry and serve each other's results for the TTL.
     const cacheKey = this.cacheManager.generateEmailKey('list', {
+      mailbox: this.targetUserEmail || 'me',
       folder,
       maxResults,
       search,
@@ -175,7 +183,7 @@ export class GraphOptimizer {
       const firstPage = await query.get();
       const pagination = await collectGraphPages({
         firstPage,
-        fetchNext: (nextLink) => this.client.api(nextLink).get(),
+        fetchNext: (nextLink) => this.client.api(validateGraphNextLink(nextLink)).get(),
         maxItems: maxResults,
         maxPages,
       });
@@ -213,7 +221,8 @@ export class GraphOptimizer {
       ...queryOptions
     } = options;
 
-    const cacheKey = `folders:optimized:${includeSubfolders}:${maxDepth}`;
+    const cacheKey =
+      `folders:${this.targetUserEmail || 'me'}:optimized:` + `${includeSubfolders}:${maxDepth}`;
 
     // Try cache first
     if (enableCache) {

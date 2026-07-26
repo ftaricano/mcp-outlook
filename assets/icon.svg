@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Outlook Multi-Mailbox">
+  <rect width="512" height="512" rx="72" fill="#12304A"/>
+  <path d="M96 144h320v224H96z" fill="#F7F9FC"/>
+  <path d="M96 160l160 120 160-120" fill="none" stroke="#D6A94D" stroke-width="32" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M96 352l112-96M416 352L304 256" fill="none" stroke="#D6A94D" stroke-width="24" stroke-linecap="round"/>
+  <circle cx="392" cy="120" r="52" fill="#2E7D6E"/>
+  <path d="M368 120h48M392 96v48" stroke="#FFFFFF" stroke-width="16" stroke-linecap="round"/>
+</svg>

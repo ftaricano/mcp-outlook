@@ -1,0 +1,31 @@
+{
+  "name": "outlook-multi-mailbox",
+  "version": "2.2.0",
+  "description": "Read-only Outlook search across explicitly allowed mailboxes",
+  "author": {
+    "name": "Fernando Taricano",
+    "url": "https://github.com/ftaricano"
+  },
+  "homepage": "https://github.com/ftaricano/mcp-outlook",
+  "repository": "https://github.com/ftaricano/mcp-outlook",
+  "license": "MIT",
+  "keywords": ["outlook", "email", "mcp", "read-only", "multi-mailbox"],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Outlook Multi-Mailbox",
+    "shortDescription": "Search allowed Outlook mail",
+    "longDescription": "Search and read messages across an explicitly allowed set of Microsoft Outlook mailboxes through four bounded, read-only MCP tools.",
+    "developerName": "Fernando Taricano",
+    "category": "Productivity",
+    "capabilities": ["Read"],
+    "websiteURL": "https://github.com/ftaricano/mcp-outlook",
+    "privacyPolicyURL": "https://github.com/ftaricano/mcp-outlook/blob/main/PRIVACY.md",
+    "termsOfServiceURL": "https://github.com/ftaricano/mcp-outlook/blob/main/LICENSE",
+    "defaultPrompt": [
+      "Search my allowed Outlook mailboxes",
+      "Find a message across my allowed mailboxes"
+    ],
+    "composerIcon": "./assets/icon.svg",
+    "logo": "./assets/icon.svg"
+  }
+}

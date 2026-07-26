@@ -11,8 +11,8 @@ Works with any MCP-compatible client (Claude Desktop, Cursor, custom agents, etc
 
 | Metric | Value |
 |---|---|
-| Tools | 40 |
-| Tests | 302 passing |
+| Tools | 40 operational + 4 read-only plugin tools |
+| Tests | Unit, protocol, CLI, plugin, and HTTP suites |
 | Node | ≥ 20 |
 | MCP SDK | ^1.29.0 |
 | License | MIT |
@@ -133,6 +133,113 @@ Output modes:
 - `--compact` — backwards-compatible alias for `--output=mcp`.
 
 Every server-backed CLI call appends a sanitized event to `runs.jsonl` unless disabled. The journal stores argument names/types, duration, normalized error class, and search counters. It never stores argument values, message bodies, subjects, addresses, attachment names, credentials, or raw Graph errors.
+
+## Read-only multi-mailbox plugin
+
+Version 2.2 adds a separate plugin surface for conversational search across an explicitly
+allowed set of mailboxes. It does not replace the CLI or change the original 40-tool MCP
+server.
+
+| Tool | Purpose |
+|---|---|
+| `list_allowed_mailboxes` | List server-defined mailbox aliases |
+| `search_mailbox` | Search one alias with reliability evidence |
+| `search_mailboxes` | Search several aliases with bounded concurrency |
+| `get_message` | Read one message with a server-truncated body |
+
+The plugin physically excludes send, draft, reply, delete, move, batch, folder mutation,
+filesystem upload, and attachment-byte tools. Search responses contain bounded metadata and
+never include full message bodies or Base64 attachment content.
+
+### Private plugin configuration
+
+Create `~/.config/mcp-outlook/plugin.json` with mode `0600`:
+
+```json
+{
+  "mailboxes": [
+    { "alias": "finance", "address": "finance@example.com" },
+    { "alias": "billing", "address": "billing@example.com" }
+  ],
+  "maxConcurrentMailboxes": 3,
+  "maxMailboxesPerSearch": 8,
+  "maxResultsPerMailbox": 20,
+  "maxBodyChars": 12000
+}
+```
+
+```bash
+chmod 600 ~/.config/mcp-outlook/plugin.json
+npm run build
+```
+
+Aliases and addresses must be unique. The model receives aliases, not permission to provide an
+arbitrary mailbox address. Set `OUTLOOK_PLUGIN_CONFIG` only when using a different private
+path.
+
+### Local Codex plugin
+
+This repository is a valid local Codex plugin:
+
+- `.codex-plugin/plugin.json` provides metadata;
+- `.mcp.json` launches `dist/plugin/stdio.js` through `${CODEX_PLUGIN_ROOT}`;
+- the plugin exposes only the four read-only tools above.
+
+Build the repository, then install the repository directory as a local plugin from the Codex
+plugin manager. The plugin process uses the same generic credential resolution as the existing
+server. Keep deployment-specific credential wrappers outside this public repository.
+
+### Loopback Streamable HTTP
+
+For local protocol validation or an external OAuth proxy:
+
+```bash
+npm run build
+OUTLOOK_HTTP_BEARER_TOKEN='<local-token>' npm run start:http
+```
+
+The built-in server listens on `127.0.0.1:3010` by default:
+
+- MCP endpoint: `/mcp`
+- metadata-only health: `/health`
+- Streamable HTTP, stateless JSON responses
+- optional bearer checked before JSON parsing
+- 1 MB request-body limit
+- non-loopback binding rejected
+
+This process is not a public ChatGPT endpoint by itself. A remote ChatGPT app requires HTTPS
+and an OAuth 2.1 resource-server layer with PKCE-capable authorization in front of it. Do not
+publish the loopback service through a raw tunnel or reuse the write-capable Graph app for that
+deployment.
+
+After registering the real remote app connection, generate the deployment-specific mapping:
+
+```bash
+node scripts/generate-app-manifest.js \
+  --connection-id plugin_asdk_app_123 \
+  --output .app.json
+```
+
+`.app.json` is intentionally ignored by Git. The generator writes the current `apps` manifest
+shape, converts the ChatGPT technical ID to its `asdk_app_*` app ID, and adds
+`"apps": "./.app.json"` to `.codex-plugin/plugin.json`. It rejects invented identifier shapes
+and refuses to overwrite an existing mapping unless `--force` is passed.
+
+### Production prerequisites
+
+Before remote use:
+
+1. Create a separate Microsoft Graph app registration with `Mail.Read`, not the existing
+   write-capable permissions.
+2. Constrain its mailbox access with Exchange Application RBAC and verify one allowed and one
+   denied mailbox.
+3. Put the loopback service behind a reviewed HTTPS OAuth 2.1 resource-server layer.
+4. Keep the local alias allowlist in place; tenant authorization and local authorization are
+   independent gates.
+5. Run `npm run verify` and the live read-only smoke with fictional/test mailboxes.
+
+The CLI remains the fallback for cron, shell pipelines, large local attachments, and supervised
+write operations.
 
 ### Docker
 
@@ -275,6 +382,11 @@ node scripts/live-writes-smoke.js     # 9 write-path tools (self-contained, safe
 
 This server handles Azure AD client secrets with broad mailbox access, and it is driven by an LLM that sees untrusted email bodies. Treat every tool call as potentially attacker-influenced.
 
+The read-only plugin narrows the exposed tool catalog but does not reduce Microsoft Graph
+permissions by itself. A remote deployment must use a separate read-only app registration.
+Email subjects, previews, bodies, and attachment names are untrusted data and must never be
+interpreted as instructions to invoke other tools.
+
 **Filesystem allowlist (`pathGuard`)** — `send_email_with_file`, `encode_file_for_attachment`, and all attachment download paths go through a central allowlist (`src/security/pathGuard.ts`):
 
 - **Writes** are confined to `DOWNLOAD_DIR`.
@@ -304,10 +416,10 @@ Report vulnerabilities privately through [GitHub Security Advisories](https://gi
 ## Contributing
 
 ```bash
-npm run build && npm test && npm run smoke
+npm run verify
 ```
 
-Pre-PR checklist: build passes, lint clean, all tests green, smoke returns 40 tools.
+Pre-PR checklist: `npm run verify`, coverage, audit, and package-content validation all pass.
 
 Open an [issue](https://github.com/ftaricano/mcp-outlook/issues) before submitting large changes.
 

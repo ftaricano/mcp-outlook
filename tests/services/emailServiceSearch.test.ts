@@ -42,6 +42,36 @@ describe('EmailService.advancedSearchEmailsDetailed', () => {
     expect(api.mock.calls.some(([url]) => url.includes('$expand=attachments'))).toBe(true);
   });
 
+  it('uses metadata-only Graph projections when full content is disabled', async () => {
+    const api = vi.fn((url: string) => ({
+      get: async () => {
+        if (url.includes('$search=')) {
+          return {
+            value: [{ id: 'same', subject: 'Recent message unrelated to the term' }],
+          };
+        }
+        return {
+          value: [{ id: 'match', subject: 'Invoice', bodyPreview: 'monthly invoice' }],
+        };
+      },
+    }));
+    const service = Object.create(EmailService.prototype) as any;
+    service.client = { api };
+    service.targetUserEmail = 'user@example.com';
+
+    const result = await service.advancedSearchEmailsDetailed({
+      query: 'invoice',
+      maxResults: 5,
+      maxPages: 2,
+      scanLimit: 15,
+      includeFullContent: false,
+    });
+
+    expect(result.status).toBe('FOUND');
+    expect(api.mock.calls.every(([url]) => !url.includes('bodyPreview,body'))).toBe(true);
+    expect(api.mock.calls.every(([url]) => !url.includes('$expand=attachments'))).toBe(true);
+  });
+
   it('pushes a subject filter to Graph before applying the result limit', async () => {
     const getOptimizedEmailsDetailed = vi.fn().mockResolvedValue({
       items: [],
@@ -190,7 +220,7 @@ describe('EmailService.advancedSearchEmailsDetailed', () => {
     let searchCall = 0;
     const api = vi.fn((url: string) => ({
       get: async () => {
-        if (url === 'https://graph.test/query-page-2') {
+        if (url === 'https://graph.microsoft.com/v1.0/query-page-2') {
           return { value: [{ id: 'a', subject: 'Alpha invoice' }] };
         }
         if (url.includes('$search=')) {
@@ -201,7 +231,7 @@ describe('EmailService.advancedSearchEmailsDetailed', () => {
                   id: `z-${index}`,
                   subject: `Zulu invoice ${index}`,
                 })),
-                '@odata.nextLink': 'https://graph.test/query-page-2',
+                '@odata.nextLink': 'https://graph.microsoft.com/v1.0/query-page-2',
               }
             : { value: [] };
         }
@@ -222,7 +252,7 @@ describe('EmailService.advancedSearchEmailsDetailed', () => {
 
     expect(result.messages.map((message: any) => message.id)).toEqual(['a']);
     expect(result.truncated).toBe(true);
-    expect(api).toHaveBeenCalledWith('https://graph.test/query-page-2');
+    expect(api).toHaveBeenCalledWith('https://graph.microsoft.com/v1.0/query-page-2');
   });
 });
 
@@ -230,7 +260,7 @@ describe('EmailService.searchEmailsBySenderDomain pagination', () => {
   it('finds a matching sender on a later Graph page', async () => {
     const api = vi.fn((url: string) => ({
       get: async () => {
-        if (url === 'https://graph.test/page-2') {
+        if (url === 'https://graph.microsoft.com/v1.0/page-2') {
           return {
             value: [
               {
@@ -249,7 +279,7 @@ describe('EmailService.searchEmailsBySenderDomain pagination', () => {
               receivedDateTime: '2026-07-23T12:00:00Z',
             },
           ],
-          '@odata.nextLink': 'https://graph.test/page-2',
+          '@odata.nextLink': 'https://graph.microsoft.com/v1.0/page-2',
         };
       },
     }));
@@ -267,6 +297,6 @@ describe('EmailService.searchEmailsBySenderDomain pagination', () => {
     });
 
     expect(result.map((message: any) => message.id)).toEqual(['match']);
-    expect(api).toHaveBeenCalledWith('https://graph.test/page-2');
+    expect(api).toHaveBeenCalledWith('https://graph.microsoft.com/v1.0/page-2');
   });
 });

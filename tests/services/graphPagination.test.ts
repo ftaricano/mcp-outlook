@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { collectGraphPages } from '../../src/services/graphPagination.js';
+import { collectGraphPages, validateGraphNextLink } from '../../src/services/graphPagination.js';
 
 describe('collectGraphPages', () => {
   it('follows @odata.nextLink and returns items from later pages', async () => {
@@ -80,5 +80,25 @@ describe('collectGraphPages', () => {
         maxPages: 5,
       })
     ).rejects.toThrow('throttled');
+  });
+});
+
+describe('validateGraphNextLink', () => {
+  it('accepts an HTTPS Microsoft Graph v1.0 URL', () => {
+    expect(
+      validateGraphNextLink('https://graph.microsoft.com/v1.0/users/example/messages?$skip=10')
+    ).toBe('https://graph.microsoft.com/v1.0/users/example/messages?$skip=10');
+  });
+
+  it('rejects non-Graph hosts before the SDK receives the URL', () => {
+    expect(() =>
+      validateGraphNextLink('https://attacker.example/v1.0/users/example/messages')
+    ).toThrow(/graph\.microsoft\.com/i);
+  });
+
+  it('rejects non-HTTPS URLs', () => {
+    expect(() =>
+      validateGraphNextLink('http://graph.microsoft.com/v1.0/users/example/messages')
+    ).toThrow(/graph\.microsoft\.com/i);
   });
 });
