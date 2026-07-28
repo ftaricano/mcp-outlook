@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { MultiMailboxService } from '../../src/plugin/MultiMailboxService.js';
 import { buildZip, config, MINIMAL_PDF, stubEmailService } from './helpers.js';
@@ -74,5 +75,30 @@ describe('getAttachmentContent', () => {
     expect(result.kind).toBe('text');
     expect(result.text).toContain('conteudo da nota');
     expect(result.entry).toBe('nota.txt');
+  });
+
+  it('rejects a hostile zip entry whose real content exceeds the cap without materializing it', async () => {
+    const zip = await buildZip({ 'bomba.txt': 'z'.repeat(1024 * 1024) });
+    const service = new MultiMailboxService(config({ maxZipUncompressedBytes: 10 }), () =>
+      stubEmailService(attachmentStub(zip, 'pacote.zip', 'application/zip'))
+    );
+    await expect(
+      service.getAttachmentContent('finance', 'm1', 'a1', { mode: 'text', entry: 'bomba.txt' })
+    ).rejects.toMatchObject({ code: 'ZIP_TOO_LARGE' });
+  });
+
+  it('routes zip handling entirely through the isolated worker, never through zipArchive on the main thread', async () => {
+    const source = readFileSync(
+      new URL('../../src/plugin/MultiMailboxService.ts', import.meta.url),
+      'utf8'
+    );
+    expect(source).not.toMatch(/zipArchive\.js/);
+
+    const zip = await buildZip({ 'nota.txt': 'conteudo da nota' });
+    const service = new MultiMailboxService(config(), () =>
+      stubEmailService(attachmentStub(zip, 'pacote.zip', 'application/zip'))
+    );
+    const result = await service.getAttachmentContent('finance', 'm1', 'a1', { mode: 'text' });
+    expect(result.kind).toBe('zip_listing');
   });
 });

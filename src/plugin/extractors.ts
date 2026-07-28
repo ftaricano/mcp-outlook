@@ -1,8 +1,9 @@
 import { Worker } from 'node:worker_threads';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { isDocxName, isXlsxName, isZipContainer } from './extractionFormat.js';
-import { listZipEntries, ZipError } from './zipArchive.js';
+import { ZipError, type ZipEntryInfo, type ZipErrorCode } from './zipArchive.js';
+
+export { ZipError, type ZipEntryInfo, type ZipErrorCode } from './zipArchive.js';
 
 const EXTRACTION_TIMEOUT_MS = 30_000;
 const WORKER_MAX_OLD_GENERATION_MB = 512;
@@ -30,12 +31,47 @@ export interface ExtractedText {
   readonly extractor: 'pdf' | 'xlsx' | 'docx' | 'text';
 }
 
+export interface AttachmentPipelineRequest {
+  readonly buffer: Buffer;
+  readonly name: string;
+  readonly contentType: string;
+  readonly maxChars: number;
+  readonly mode: 'text' | 'raw';
+  readonly entry?: string;
+  readonly password?: string;
+  readonly zipLimits: ContainerLimits;
+  readonly containerLimits?: ContainerLimits;
+}
+
+export type AttachmentPipelineResult =
+  | { readonly kind: 'zip_listing'; readonly zipEntries: readonly ZipEntryInfo[] }
+  | {
+      readonly kind: 'text';
+      readonly text: string;
+      readonly truncated: boolean;
+      readonly extractor: ExtractedText['extractor'];
+    }
+  | { readonly kind: 'raw'; readonly bytes: Buffer; readonly sizeBytes: number };
+
 interface WorkerFailure {
-  readonly error: ExtractionErrorCode;
+  readonly error: string;
 }
 
 function isWorkerFailure(message: unknown): message is WorkerFailure {
   return typeof message === 'object' && message !== null && 'error' in message;
+}
+
+const ZIP_ERROR_CODES: ReadonlySet<ZipErrorCode> = new Set([
+  'ZIP_INVALID',
+  'ZIP_TOO_MANY_ENTRIES',
+  'ZIP_TOO_LARGE',
+  'ZIP_ENTRY_NOT_FOUND',
+  'ZIP_ENCRYPTED',
+  'ZIP_UNSUPPORTED_ENCRYPTION',
+] satisfies ZipErrorCode[]);
+
+function isZipErrorCode(code: string): code is ZipErrorCode {
+  return ZIP_ERROR_CODES.has(code as ZipErrorCode);
 }
 
 /**
@@ -70,7 +106,7 @@ export async function runIsolatedWorker<TSuccess>(
 
       worker.once('message', (message: TSuccess | WorkerFailure) => {
         if (isWorkerFailure(message)) {
-          reject(new ExtractionError(message.error));
+          reject(new ExtractionError(message.error as ExtractionErrorCode));
           return;
         }
         resolve(message);
@@ -107,6 +143,61 @@ function extractionWorkerUrl(): URL {
   return pathToFileURL(join(repoRoot, 'dist', 'plugin', 'extractionWorker.js'));
 }
 
+function normalizeWorkerError(error: unknown): ZipError | ExtractionError {
+  if (error instanceof ExtractionError && isZipErrorCode(error.code)) {
+    return new ZipError(error.code);
+  }
+  if (error instanceof ExtractionError) return error;
+  return new ExtractionError('EXTRACTION_FAILED');
+}
+
+interface RawWorkerResult {
+  readonly kind: 'raw';
+  readonly bytes: Uint8Array;
+  readonly sizeBytes: number;
+}
+
+type WorkerSuccessResult = Exclude<AttachmentPipelineResult, { kind: 'raw' }> | RawWorkerResult;
+
+/**
+ * The single entry point into the isolated worker for attachment content.
+ * Everything that touches hostile bytes — ZIP listing, decryption, inflate,
+ * and document parsing — happens inside the worker; this function only
+ * ships the request in and normalizes the response/error on the way out.
+ * Never call zipArchive.ts or the pdf/xlsx/docx parsers from the main
+ * thread — route through here instead.
+ */
+export async function runAttachmentPipeline(
+  request: AttachmentPipelineRequest
+): Promise<AttachmentPipelineResult> {
+  const containerLimits = request.containerLimits ?? {
+    maxEntries: DEFAULT_CONTAINER_MAX_ENTRIES,
+    maxUncompressedBytes: DEFAULT_CONTAINER_MAX_UNCOMPRESSED_BYTES,
+  };
+
+  let response: WorkerSuccessResult;
+  try {
+    response = await runIsolatedWorker<WorkerSuccessResult>(extractionWorkerUrl(), {
+      buffer: request.buffer,
+      name: request.name,
+      contentType: request.contentType,
+      maxChars: request.maxChars,
+      mode: request.mode,
+      entry: request.entry,
+      password: request.password,
+      zipLimits: request.zipLimits,
+      containerLimits,
+    });
+  } catch (error) {
+    throw normalizeWorkerError(error);
+  }
+
+  if (response.kind === 'raw') {
+    return { kind: 'raw', bytes: Buffer.from(response.bytes), sizeBytes: response.sizeBytes };
+  }
+  return response;
+}
+
 export async function extractAttachmentText(
   buffer: Buffer,
   name: string,
@@ -118,36 +209,17 @@ export async function extractAttachmentText(
     maxEntries: DEFAULT_CONTAINER_MAX_ENTRIES,
     maxUncompressedBytes: DEFAULT_CONTAINER_MAX_UNCOMPRESSED_BYTES,
   };
-  try {
-    if (isZipContainer(buffer)) {
-      const isXlsx = isXlsxName(name, contentType);
-      const isDocx = isDocxName(name, contentType);
-      if (!isXlsx && !isDocx) throw new ExtractionError('UNSUPPORTED_FORMAT');
-
-      // Fast-path, defense-in-depth only: the ZIP central directory declares an
-      // uncompressed size per entry, but that field is attacker-controlled
-      // metadata (zip bombs falsify it) — this cap does NOT bound real bytes
-      // read. It exists purely to reject obviously-bad declared sizes before
-      // paying for a worker thread. The actual guarantee against unbounded
-      // CPU/memory from a hostile xlsx/docx payload is the worker's
-      // resourceLimits below, which caps real heap usage independent of
-      // anything the file itself claims.
-      try {
-        await listZipEntries(buffer, limits);
-      } catch (error) {
-        if (error instanceof ZipError) throw new ExtractionError('EXTRACTION_FAILED');
-        throw error;
-      }
-    }
-
-    return await runIsolatedWorker<ExtractedText>(extractionWorkerUrl(), {
-      buffer,
-      name,
-      contentType,
-      maxChars,
-    });
-  } catch (error) {
-    if (error instanceof ExtractionError) throw error;
+  const result = await runAttachmentPipeline({
+    buffer,
+    name,
+    contentType,
+    maxChars,
+    mode: 'text',
+    zipLimits: limits,
+    containerLimits: limits,
+  });
+  if (result.kind !== 'text') {
     throw new ExtractionError('EXTRACTION_FAILED');
   }
+  return { text: result.text, truncated: result.truncated, extractor: result.extractor };
 }

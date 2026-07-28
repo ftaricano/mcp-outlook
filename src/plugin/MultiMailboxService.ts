@@ -3,9 +3,13 @@ import type { AdvancedSearchOptions, EmailService } from '../services/emailServi
 import type { ReliableSearchResult, SearchStatus } from '../services/reliableSearch.js';
 import type { PluginConfig, MailboxConfig } from './config.js';
 import type { MailboxSearchResult, MultiMailboxSearchResult } from './schemas.js';
-import { extractAttachmentText, ExtractionError } from './extractors.js';
+import {
+  ExtractionError,
+  runAttachmentPipeline,
+  ZipError,
+  type ZipEntryInfo,
+} from './extractors.js';
 import { expandTerm, type SearchMemory } from './searchMemory.js';
-import { extractZipEntry, listZipEntries, ZipError, type ZipEntryInfo } from './zipArchive.js';
 
 export type MailboxEmailService = Pick<
   EmailService,
@@ -89,12 +93,6 @@ export interface AttachmentContentResult {
   readonly base64?: string;
   readonly sizeBytes?: number;
   readonly zipEntries?: readonly ZipEntryInfo[];
-}
-
-function isZipAttachment(buffer: Buffer, name: string, contentType: string): boolean {
-  const zipMagic = buffer.length >= 2 && buffer[0] === 0x50 && buffer[1] === 0x4b;
-  const zipNamed = /\.zip$/i.test(name) || contentType.toLowerCase().includes('zip');
-  return zipMagic && zipNamed;
 }
 
 export class MultiMailboxService {
@@ -218,63 +216,55 @@ export class MultiMailboxService {
     const zipLimits = {
       maxEntries: this.config.maxZipEntries,
       maxUncompressedBytes: this.config.maxZipUncompressedBytes,
-      password: options.password,
     };
 
+    // The isolated worker (extractionWorker.ts) is the sole place that
+    // decrypts, inflates, or parses attachment bytes — nothing here touches
+    // zipArchive.ts or a document parser directly, so hostile content can
+    // only exhaust that worker's own resourceLimits budget, never the main
+    // MCP process.
+    let result;
     try {
-      if (isZipAttachment(buffer, downloaded.name, downloaded.contentType)) {
-        if (!options.entry) {
-          const zipEntries = await listZipEntries(buffer, zipLimits);
-          return { ...base, kind: 'zip_listing', zipEntries };
-        }
-        const inner = await extractZipEntry(buffer, options.entry, zipLimits);
-        return this.deliverContent(base, inner, options.entry, options.mode, options.entry);
-      }
-      return this.deliverContent(base, buffer, downloaded.name, options.mode, undefined);
+      result = await runAttachmentPipeline({
+        buffer,
+        name: downloaded.name,
+        contentType: downloaded.contentType,
+        maxChars: this.config.maxExtractedChars,
+        mode: options.mode,
+        entry: options.entry,
+        password: options.password,
+        zipLimits,
+        containerLimits: zipLimits,
+      });
     } catch (error) {
       if (error instanceof ZipError || error instanceof ExtractionError) {
         throw new AttachmentContentError(error.code);
       }
       throw error;
     }
-  }
 
-  private async deliverContent(
-    base: Omit<AttachmentContentResult, 'kind'>,
-    buffer: Buffer,
-    effectiveName: string,
-    mode: 'text' | 'raw',
-    entry: string | undefined
-  ): Promise<AttachmentContentResult> {
-    if (mode === 'raw') {
-      if (buffer.length > this.config.maxRawAttachmentBytes) {
+    if (result.kind === 'zip_listing') {
+      return { ...base, kind: 'zip_listing', zipEntries: result.zipEntries };
+    }
+    if (result.kind === 'raw') {
+      if (result.sizeBytes > this.config.maxRawAttachmentBytes) {
         throw new AttachmentContentError('RAW_TOO_LARGE');
       }
       return {
         ...base,
         kind: 'raw',
-        entry,
-        base64: buffer.toString('base64'),
-        sizeBytes: buffer.length,
+        entry: options.entry,
+        base64: result.bytes.toString('base64'),
+        sizeBytes: result.sizeBytes,
       };
     }
-    const extracted = await extractAttachmentText(
-      buffer,
-      effectiveName,
-      base.contentType,
-      this.config.maxExtractedChars,
-      {
-        maxEntries: this.config.maxZipEntries,
-        maxUncompressedBytes: this.config.maxZipUncompressedBytes,
-      }
-    );
     return {
       ...base,
       kind: 'text',
-      entry,
-      text: extracted.text,
-      truncated: extracted.truncated,
-      extractor: extracted.extractor,
+      entry: options.entry,
+      text: result.text,
+      truncated: result.truncated,
+      extractor: result.extractor,
     };
   }
 

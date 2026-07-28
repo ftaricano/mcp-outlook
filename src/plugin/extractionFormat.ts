@@ -34,3 +34,11 @@ export function isXlsxName(name: string, contentType: string): boolean {
 export function isDocxName(name: string, contentType: string): boolean {
   return /\.docx$/i.test(name) || contentType.includes('wordprocessingml');
 }
+
+// Distinguishes a user-facing .zip archive attachment (browsable by entry,
+// optionally password-protected) from an OOXML container such as .xlsx/.docx,
+// which is also a PK-prefixed zip but is parsed whole, never entry-by-entry.
+export function isZipArchiveAttachment(buffer: Buffer, name: string, contentType: string): boolean {
+  const zipNamed = /\.zip$/i.test(name) || contentType.toLowerCase().includes('zip');
+  return isZipContainer(buffer) && zipNamed;
+}
