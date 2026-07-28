@@ -163,10 +163,18 @@ function readPrivateConfigFile(configPath: string): string {
   }
 }
 
+const TRUTHY_ALLOW_WRITES_VALUES = new Set(['true', '1', 'yes', 'on']);
+const FALSY_ALLOW_WRITES_VALUES = new Set(['false', '0', 'no', 'off']);
+
 function resolveAllowWrites(envValue: string | undefined, fileValue: boolean): boolean {
-  if (envValue === 'true') return true;
-  if (envValue === 'false') return false;
-  return fileValue;
+  const normalized = envValue?.trim().toLowerCase();
+  if (!normalized) return fileValue;
+  if (TRUTHY_ALLOW_WRITES_VALUES.has(normalized)) return true;
+  if (FALSY_ALLOW_WRITES_VALUES.has(normalized)) return false;
+  // A kill-switch that fails silently to a default is worse than one that
+  // refuses to start: an operator setting PLUGIN_ALLOW_WRITES=False (or any
+  // other unrecognized spelling) must be told, not have it quietly ignored.
+  throw new PluginConfigError('PLUGIN_ALLOW_WRITES must be a boolean value');
 }
 
 export function loadPluginConfig(configPath?: string): PluginConfig {

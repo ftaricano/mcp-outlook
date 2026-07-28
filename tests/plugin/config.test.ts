@@ -76,9 +76,9 @@ describe('loadPluginConfig', () => {
   });
 
   it('rejects maxResultsPerMailbox above the schema ceiling of 100', () => {
-    expect(() =>
-      loadPluginConfig(writeConfig(validConfig({ maxResultsPerMailbox: 101 })))
-    ).toThrow(/Invalid Outlook plugin configuration/);
+    expect(() => loadPluginConfig(writeConfig(validConfig({ maxResultsPerMailbox: 101 })))).toThrow(
+      /Invalid Outlook plugin configuration/
+    );
   });
 
   it('rejects a symbolic link before resolving the real path', () => {
@@ -190,6 +190,56 @@ describe('expansion config fields', () => {
     const config = loadPluginConfig(writeConfig(validConfig({ allowWrites: true })));
     expect(config.allowWrites).toBe(true);
   });
+
+  it('falls back to the file value when the env override is an empty/whitespace string', () => {
+    process.env.PLUGIN_ALLOW_WRITES = '   ';
+    try {
+      const config = loadPluginConfig(writeConfig(validConfig({ allowWrites: true })));
+      expect(config.allowWrites).toBe(true);
+    } finally {
+      delete process.env.PLUGIN_ALLOW_WRITES;
+    }
+  });
+
+  it.each(['TRUE', ' True ', '1', 'yes', 'on', 'ON'])(
+    'normalizes truthy spelling %j for PLUGIN_ALLOW_WRITES',
+    (value) => {
+      process.env.PLUGIN_ALLOW_WRITES = value;
+      try {
+        const config = loadPluginConfig(writeConfig(validConfig({ allowWrites: false })));
+        expect(config.allowWrites).toBe(true);
+      } finally {
+        delete process.env.PLUGIN_ALLOW_WRITES;
+      }
+    }
+  );
+
+  it.each(['FALSE', ' False ', '0', 'no', 'off', 'OFF'])(
+    'normalizes falsy spelling %j for PLUGIN_ALLOW_WRITES',
+    (value) => {
+      process.env.PLUGIN_ALLOW_WRITES = value;
+      try {
+        const config = loadPluginConfig(writeConfig(validConfig({ allowWrites: true })));
+        expect(config.allowWrites).toBe(false);
+      } finally {
+        delete process.env.PLUGIN_ALLOW_WRITES;
+      }
+    }
+  );
+
+  it.each(['yesplease', '2', 'truthy', 'enabled'])(
+    'fails closed on an unrecognized PLUGIN_ALLOW_WRITES spelling %j instead of silently defaulting',
+    (value) => {
+      process.env.PLUGIN_ALLOW_WRITES = value;
+      try {
+        expect(() => loadPluginConfig(writeConfig(validConfig({ allowWrites: false })))).toThrow(
+          /PLUGIN_ALLOW_WRITES must be a boolean value/
+        );
+      } finally {
+        delete process.env.PLUGIN_ALLOW_WRITES;
+      }
+    }
+  );
 
   it('lets PLUGIN_SEARCH_MEMORY_PATH override the file value', () => {
     process.env.PLUGIN_SEARCH_MEMORY_PATH = '/tmp/memory.yaml';
