@@ -181,8 +181,19 @@ If the attachment is a ZIP: calling without `entry` returns a bounded listing of
 size, `encrypted` flag) instead of content; calling with `entry` (and optional `password`)
 extracts that one entry and pipes it through the same mode/ceiling logic as a regular
 attachment. ZIP guards: entry-count cap (`maxZipEntries`, default 200), uncompressed-size cap
-(`maxZipUncompressedBytes`, default 50 MB, anti zip-bomb), and rejection of path-traversal entry
-names.
+(`maxZipUncompressedBytes`, default 50 MB, anti zip-bomb), and rejection of entry names that are
+not addressable — a `..` path segment, a leading `/`, a backslash (ambiguous between a legacy
+Windows separator and a literal character), or a name over 512 chars. Those entries are **counted
+in `hiddenEntries`** on the listing, never dropped silently: a non-zero `hiddenEntries` means the
+listing is incomplete and "no such document in this archive" is not a supported conclusion.
+Entry names are sender-controlled, so the listing carries the same untrusted-data framing as
+attachment content.
+
+These caps apply to an attached `.zip`. The internal structure of an OOXML document
+(xlsx/docx) is bounded separately by `maxContainerEntries` (default 1,000) and
+`maxContainerUncompressedBytes` (default 100 MB) — a legitimate workbook has one internal part
+per sheet plus styles, shared strings and drawings, so the archive caps are the wrong ruler for
+it.
 
 **ZIP encryption support:** the underlying `unzipper` library decrypts **ZipCrypto**
 (the classic `zip -P` format used by most corporate senders) when `password` is supplied. **AES-256
@@ -297,7 +308,9 @@ Create `~/.config/mcp-outlook/plugin.json` with mode `0600`:
   "maxBatchSize": 25,
   "maxQueriesPerBatch": 10,
   "maxZipEntries": 200,
-  "maxZipUncompressedBytes": 52428800
+  "maxZipUncompressedBytes": 52428800,
+  "maxContainerEntries": 1000,
+  "maxContainerUncompressedBytes": 104857600
 }
 ```
 
@@ -312,6 +325,8 @@ Create `~/.config/mcp-outlook/plugin.json` with mode `0600`:
 | `maxQueriesPerBatch` | 10 | Cap on `queries[]` in `search_mailboxes_batch` |
 | `maxZipEntries` | 200 | Cap on entries listed/considered in a ZIP |
 | `maxZipUncompressedBytes` | 50 MB | Cap on ZIP uncompressed size (anti zip-bomb) |
+| `maxContainerEntries` | 1,000 | Cap on internal parts of an OOXML document (xlsx/docx) |
+| `maxContainerUncompressedBytes` | 100 MB | Cap on declared uncompressed size of an OOXML document |
 | `searchMemoryPath` | — | Path to the external search-memory YAML (see above) |
 
 Environment overrides (useful for deploy-time toggles without editing the private config file):

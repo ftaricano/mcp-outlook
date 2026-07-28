@@ -30,6 +30,8 @@ export function config(overrides: Partial<PluginConfig> = {}): PluginConfig {
     maxQueriesPerBatch: 10,
     maxZipEntries: 200,
     maxZipUncompressedBytes: 50 * 1024 * 1024,
+    maxContainerEntries: 1_000,
+    maxContainerUncompressedBytes: 100 * 1024 * 1024,
     searchMemoryPath: undefined,
     ...overrides,
   };
@@ -93,6 +95,18 @@ stopwords: ["LTDA", "GRUPO", "SA"]
 outros_campos_privados:
   ignorado: true
 `;
+
+// A real workbook is a zip container whose internal part count grows with the
+// number of sheets — the shape that made the OOXML pre-check trip over the
+// user-facing .zip entry cap.
+export async function buildXlsx(sheetCount: number): Promise<Buffer> {
+  const ExcelJS = (await import('exceljs')).default;
+  const workbook = new ExcelJS.Workbook();
+  for (let index = 1; index <= sheetCount; index += 1) {
+    workbook.addWorksheet(`Aba ${index}`).addRow([`valor-${index}`]);
+  }
+  return Buffer.from(await workbook.xlsx.writeBuffer());
+}
 
 export function buildZip(entries: Record<string, string>): Promise<Buffer> {
   return new Promise((resolve, reject) => {

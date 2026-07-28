@@ -21,6 +21,8 @@ import {
   searchMailboxesBatchSchema,
   type MailboxSearchResult,
 } from './schemas.js';
+import { MAX_ZIP_ENTRY_NAME_CHARS } from './zipEntryName.js';
+import type { ZipEntryInfo } from './zipArchive.js';
 
 const READ_ONLY_ANNOTATIONS = {
   readOnlyHint: true,
@@ -134,6 +136,21 @@ function folderProjection(folder: FolderRecord) {
     unreadItemCount: folder.unreadItemCount ?? undefined,
     childFolderCount: folder.childFolderCount ?? undefined,
   };
+}
+
+// A zip entry name is sender-controlled and may be up to 64 KB, so it must be
+// bounded like everything else the server projects. It is also the key used to
+// extract that entry, so truncating or whitespace-normalizing it (what
+// `bounded` does) would hand back a name that no longer resolves — drop the
+// over-long ones and count them instead, so the caller sees the listing is
+// incomplete rather than a name that silently fails.
+function boundedZipEntries(zipEntries: readonly ZipEntryInfo[] | undefined): {
+  entries: readonly ZipEntryInfo[];
+  oversizedNames: number;
+} {
+  const all = zipEntries ?? [];
+  const entries = all.filter((entry) => entry.name.length <= MAX_ZIP_ENTRY_NAME_CHARS);
+  return { entries, oversizedNames: all.length - entries.length };
 }
 
 function attachmentProjection(attachment: AttachmentRecord) {
@@ -410,14 +427,20 @@ export function createOutlookPluginServer(
         });
 
         if (result.kind === 'zip_listing') {
+          const { entries, oversizedNames } = boundedZipEntries(result.zipEntries);
+          const hiddenEntries = (result.hiddenEntries ?? 0) + oversizedNames;
+          const hiddenNote =
+            hiddenEntries > 0
+              ? ` ${hiddenEntries} further entrie(s) exist but are not addressable by name (backslash separators or over-long names) and cannot be extracted — this listing is incomplete.`
+              : '';
           return {
             content: [
               {
                 type: 'text',
-                text: `Attachment ${result.name} from mailbox ${mailbox} is a zip container with ${result.zipEntries?.length ?? 0} entrie(s).`,
+                text: `Attachment ${result.name} from mailbox ${mailbox} is a zip container with ${entries.length} entrie(s).${hiddenNote} ${UNTRUSTED_ATTACHMENT_FRAMING}`,
               },
             ],
-            structuredContent: { ...result },
+            structuredContent: { ...result, zipEntries: entries, hiddenEntries },
           };
         }
 

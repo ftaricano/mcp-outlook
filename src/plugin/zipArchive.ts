@@ -1,4 +1,5 @@
 import { Open } from 'unzipper';
+import { isAddressableZipEntryName } from './zipEntryName.js';
 
 export type ZipErrorCode =
   | 'ZIP_INVALID'
@@ -27,8 +28,13 @@ export interface ZipLimits {
   readonly password?: string;
 }
 
-function isSafeEntryName(name: string): boolean {
-  return !name.includes('..') && !name.startsWith('/') && !name.includes('\\');
+export interface ZipListing {
+  readonly entries: readonly ZipEntryInfo[];
+  // Entries present in the archive but not addressable by name (see
+  // isAddressableZipEntryName). Reported rather than dropped silently: a
+  // listing that quietly loses every entry of a legacy backslash-separated
+  // archive reads as "the attachment has no document" — a false negative.
+  readonly hiddenEntries: number;
 }
 
 interface RawEntry {
@@ -54,7 +60,7 @@ function isEncrypted(entry: RawEntry): boolean {
   return ((entry.flags ?? 0) & 0x1) === 0x1;
 }
 
-export async function listZipEntries(buffer: Buffer, limits: ZipLimits): Promise<ZipEntryInfo[]> {
+export async function listZipEntries(buffer: Buffer, limits: ZipLimits): Promise<ZipListing> {
   const files = (await openArchive(buffer)).filter((entry) => entry.type === 'File');
   if (files.length > limits.maxEntries) throw new ZipError('ZIP_TOO_MANY_ENTRIES');
 
@@ -68,13 +74,16 @@ export async function listZipEntries(buffer: Buffer, limits: ZipLimits): Promise
   );
   if (declaredTotalBytes > limits.maxUncompressedBytes) throw new ZipError('ZIP_TOO_LARGE');
 
-  return files
-    .filter((entry) => isSafeEntryName(entry.path))
-    .map((entry) => ({
+  const addressable = files.filter((entry) => isAddressableZipEntryName(entry.path));
+
+  return {
+    entries: addressable.map((entry) => ({
       name: entry.path,
       uncompressedSize: entry.uncompressedSize ?? 0,
       encrypted: isEncrypted(entry),
-    }));
+    })),
+    hiddenEntries: files.length - addressable.length,
+  };
 }
 
 // O uncompressedSize do header central é declarado pelo próprio arquivo e pode mentir
@@ -128,7 +137,7 @@ export async function extractZipEntry(
   if (files.length > limits.maxEntries) throw new ZipError('ZIP_TOO_MANY_ENTRIES');
 
   const entry = files.find(
-    (candidate) => candidate.path === entryName && isSafeEntryName(candidate.path)
+    (candidate) => candidate.path === entryName && isAddressableZipEntryName(candidate.path)
   );
   if (!entry) throw new ZipError('ZIP_ENTRY_NOT_FOUND');
 

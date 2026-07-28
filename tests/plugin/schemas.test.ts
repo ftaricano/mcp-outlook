@@ -106,6 +106,29 @@ describe('expansion tool schemas', () => {
     ).toThrow();
   });
 
+  it('accepts a dotted entry name, which is not traversal', () => {
+    const parsed = getAttachmentContentSchema.parse({
+      mailbox: 'finance',
+      messageId: 'm1',
+      attachmentId: 'a1',
+      entry: 'relatorio..v2.pdf',
+    });
+    expect(parsed.entry).toBe('relatorio..v2.pdf');
+  });
+
+  it('rejects entry names the listing never emits, keeping both validations aligned', () => {
+    for (const entry of ['dir\\arquivo.pdf', '/absoluto.pdf', 'a'.repeat(513)]) {
+      expect(() =>
+        getAttachmentContentSchema.parse({
+          mailbox: 'finance',
+          messageId: 'm1',
+          attachmentId: 'a1',
+          entry,
+        })
+      ).toThrow();
+    }
+  });
+
   it('bounds messageIds arrays at the schema ceiling of 100', () => {
     const ids = Array.from({ length: 101 }, (_, index) => `id-${index}`);
     expect(() =>

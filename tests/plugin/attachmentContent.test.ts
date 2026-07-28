@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { MultiMailboxService } from '../../src/plugin/MultiMailboxService.js';
-import { buildZip, config, MINIMAL_PDF, stubEmailService } from './helpers.js';
+import { buildXlsx, buildZip, config, MINIMAL_PDF, stubEmailService } from './helpers.js';
 
 function attachmentStub(content: Buffer, name: string, contentType: string) {
   return {
@@ -61,6 +61,56 @@ describe('getAttachmentContent', () => {
     const result = await service.getAttachmentContent('finance', 'm1', 'a1', { mode: 'text' });
     expect(result.kind).toBe('zip_listing');
     expect(result.zipEntries?.[0].name).toBe('GRUPO/fatura.pdf');
+  });
+
+  it('extracts a many-sheet workbook whose part count exceeds the user-facing zip entry cap', async () => {
+    const xlsx = await buildXlsx(12);
+    const service = new MultiMailboxService(
+      config({ maxZipEntries: 3, maxContainerEntries: 1_000 }),
+      () =>
+        stubEmailService(
+          attachmentStub(
+            xlsx,
+            'planilha.xlsx',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          )
+        )
+    );
+    const result = await service.getAttachmentContent('finance', 'm1', 'a1', { mode: 'text' });
+    expect(result.kind).toBe('text');
+    expect(result.extractor).toBe('xlsx');
+    expect(result.text).toContain('valor-12');
+  });
+
+  it('reports a tripped container cap with its own code, not a generic extraction failure', async () => {
+    const xlsx = await buildXlsx(12);
+    const service = new MultiMailboxService(config({ maxContainerEntries: 2 }), () =>
+      stubEmailService(
+        attachmentStub(
+          xlsx,
+          'planilha.xlsx',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+      )
+    );
+    await expect(
+      service.getAttachmentContent('finance', 'm1', 'a1', { mode: 'text' })
+    ).rejects.toMatchObject({ code: 'ZIP_TOO_MANY_ENTRIES' });
+  });
+
+  it('reports zip entries withheld from the listing rather than returning a clean short list', async () => {
+    const zip = await buildZip({ 'dir/antigo.txt': 'x', 'ok.txt': 'y' });
+    const legacy = Buffer.from(
+      zip.toString('latin1').split('dir/antigo.txt').join('dir\\antigo.txt'),
+      'latin1'
+    );
+    const service = new MultiMailboxService(config(), () =>
+      stubEmailService(attachmentStub(legacy, 'pacote.zip', 'application/zip'))
+    );
+    const result = await service.getAttachmentContent('finance', 'm1', 'a1', { mode: 'text' });
+    expect(result.kind).toBe('zip_listing');
+    expect(result.zipEntries?.map((entry) => entry.name)).toEqual(['ok.txt']);
+    expect(result.hiddenEntries).toBe(1);
   });
 
   it('extracts a zip entry and pipes it through text extraction', async () => {

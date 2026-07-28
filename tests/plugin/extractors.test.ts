@@ -106,6 +106,9 @@ describe('extractAttachmentText', () => {
     ).rejects.toMatchObject({ code: 'EXTRACTION_FAILED' });
   });
 
+  // The pre-scan reports which cap tripped instead of a generic failure: a
+  // container cap set too low for a legitimate document must not read as
+  // "this file is corrupt".
   it('rejects an xlsx container that fails the pre-scan cap without invoking ExcelJS', async () => {
     const buffer = await xlsxBuffer();
     await expect(
@@ -116,7 +119,7 @@ describe('extractAttachmentText', () => {
         10_000,
         { maxEntries: 1, maxUncompressedBytes: 100 * 1024 * 1024 }
       )
-    ).rejects.toMatchObject({ code: 'EXTRACTION_FAILED' });
+    ).rejects.toMatchObject({ code: 'ZIP_TOO_MANY_ENTRIES' });
   });
 
   it('rejects an xlsx container whose real content exceeds the pre-scan byte cap', async () => {
@@ -129,7 +132,7 @@ describe('extractAttachmentText', () => {
         10_000,
         { maxEntries: 1_000, maxUncompressedBytes: 1 }
       )
-    ).rejects.toMatchObject({ code: 'EXTRACTION_FAILED' });
+    ).rejects.toMatchObject({ code: 'ZIP_TOO_LARGE' });
   });
 });
 

@@ -157,6 +157,8 @@ describe('expansion config fields', () => {
     expect(config.maxQueriesPerBatch).toBe(10);
     expect(config.maxZipEntries).toBe(200);
     expect(config.maxZipUncompressedBytes).toBe(50 * 1024 * 1024);
+    expect(config.maxContainerEntries).toBe(1_000);
+    expect(config.maxContainerUncompressedBytes).toBe(100 * 1024 * 1024);
     expect(config.searchMemoryPath).toBeUndefined();
   });
 

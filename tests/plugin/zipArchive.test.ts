@@ -25,10 +25,37 @@ describe('zipArchive', () => {
       'GRUPO-ALFA/fatura-05-2026.pdf': '%PDF fake',
       'leia-me.txt': 'oi',
     });
-    const entries = await listZipEntries(zip, LIMITS);
-    expect(entries.map((entry) => entry.name)).toEqual(
+    const listing = await listZipEntries(zip, LIMITS);
+    expect(listing.entries.map((entry) => entry.name)).toEqual(
       expect.arrayContaining(['GRUPO-ALFA/fatura-05-2026.pdf', 'leia-me.txt'])
     );
+    expect(listing.hiddenEntries).toBe(0);
+  });
+
+  it('reports entries excluded from the listing instead of dropping them silently', async () => {
+    // Zippers on legacy Windows tooling write '\' as the separator. yazl refuses
+    // to create such a name, so patch the bytes after the fact — the name is not
+    // covered by the CRC and the replacement is the same length, so offsets and
+    // checksums stay valid.
+    const zip = await buildZip({ 'dir/antigo.txt': 'x', 'ok.txt': 'y' });
+    const legacy = Buffer.from(
+      zip.toString('latin1').split('dir/antigo.txt').join('dir\\antigo.txt'),
+      'latin1'
+    );
+
+    const listing = await listZipEntries(legacy, LIMITS);
+    expect(listing.entries.map((entry) => entry.name)).toEqual(['ok.txt']);
+    expect(listing.hiddenEntries).toBe(1);
+  });
+
+  it('keeps a name with a dotted segment addressable, since it is not traversal', async () => {
+    const zip = await buildZip({ 'relatorio..v2.pdf': 'conteudo' });
+    const listing = await listZipEntries(zip, LIMITS);
+    expect(listing.entries.map((entry) => entry.name)).toEqual(['relatorio..v2.pdf']);
+    expect(listing.hiddenEntries).toBe(0);
+
+    const extracted = await extractZipEntry(zip, 'relatorio..v2.pdf', LIMITS);
+    expect(extracted.toString('utf8')).toBe('conteudo');
   });
 
   it('extracts a single entry by exact name', async () => {
@@ -106,8 +133,8 @@ describe('zipArchive', () => {
     // contendo secret.txt="segredo"; conteúdo fictício, sem dado real).
     const { readFileSync } = await import('node:fs');
     const zip = readFileSync('tests/fixtures/plugin/encrypted.zip');
-    const entries = await listZipEntries(zip, LIMITS);
-    expect(entries[0].encrypted).toBe(true);
+    const listing = await listZipEntries(zip, LIMITS);
+    expect(listing.entries[0].encrypted).toBe(true);
     await expect(extractZipEntry(zip, 'secret.txt', LIMITS)).rejects.toMatchObject({
       code: 'ZIP_ENCRYPTED',
     });

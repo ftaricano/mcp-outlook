@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Message } from '@microsoft/microsoft-graph-types';
 import type { ReliableSearchResult, SearchStatus } from '../services/reliableSearch.js';
+import { isAddressableZipEntryName, MAX_ZIP_ENTRY_NAME_CHARS } from './zipEntryName.js';
 
 const mailboxAliasSchema = z
   .string()
@@ -57,12 +58,14 @@ export const getMessageSchema = z
   .strict();
 
 const messageIdSchema = z.string().min(1).max(512);
+// Same predicate the listing uses, so what the caller can see is exactly what
+// the caller can extract.
 const zipEntrySchema = z
   .string()
   .min(1)
-  .max(512)
-  .refine((value) => !value.includes('..') && !value.startsWith('/'), {
-    message: 'entry must be a relative path without traversal',
+  .max(MAX_ZIP_ENTRY_NAME_CHARS)
+  .refine(isAddressableZipEntryName, {
+    message: 'entry must be a relative path without traversal or backslashes',
   });
 
 export const listMessagesSchema = z

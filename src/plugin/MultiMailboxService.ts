@@ -93,6 +93,7 @@ export interface AttachmentContentResult {
   readonly base64?: string;
   readonly sizeBytes?: number;
   readonly zipEntries?: readonly ZipEntryInfo[];
+  readonly hiddenEntries?: number;
 }
 
 export class MultiMailboxService {
@@ -217,6 +218,13 @@ export class MultiMailboxService {
       maxEntries: this.config.maxZipEntries,
       maxUncompressedBytes: this.config.maxZipUncompressedBytes,
     };
+    // Deliberately not zipLimits: those cap a user-facing .zip attachment,
+    // while these cap the internal parts of an xlsx/docx. Reusing the archive
+    // caps here made a legitimate many-sheet workbook fail the pre-check.
+    const containerLimits = {
+      maxEntries: this.config.maxContainerEntries,
+      maxUncompressedBytes: this.config.maxContainerUncompressedBytes,
+    };
 
     // Decryption, inflation and document parsing happen only inside the
     // isolated worker (extractionWorker.ts) — nothing here touches
@@ -237,7 +245,7 @@ export class MultiMailboxService {
         entry: options.entry,
         password: options.password,
         zipLimits,
-        containerLimits: zipLimits,
+        containerLimits,
         maxRawBytes: this.config.maxRawAttachmentBytes,
         maxConcurrentExtractions: this.config.maxConcurrentExtractions,
       });
@@ -249,7 +257,12 @@ export class MultiMailboxService {
     }
 
     if (result.kind === 'zip_listing') {
-      return { ...base, kind: 'zip_listing', zipEntries: result.zipEntries };
+      return {
+        ...base,
+        kind: 'zip_listing',
+        zipEntries: result.zipEntries,
+        hiddenEntries: result.hiddenEntries,
+      };
     }
     if (result.kind === 'raw') {
       // Redundant, cheap defense-in-depth: runAttachmentPipeline already

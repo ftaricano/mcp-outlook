@@ -71,7 +71,11 @@ interface WorkerRequest {
 type TextResult = { readonly text: string; readonly truncated: boolean };
 
 type WorkerResponse =
-  | { readonly kind: 'zip_listing'; readonly zipEntries: readonly ZipEntryInfo[] }
+  | {
+      readonly kind: 'zip_listing';
+      readonly zipEntries: readonly ZipEntryInfo[];
+      readonly hiddenEntries: number;
+    }
   | {
       readonly kind: 'text';
       readonly text: string;
@@ -169,10 +173,16 @@ async function runPipeline(
     // supervisor's wall-clock timeout/terminate() and the extraction
     // concurrency gate — resourceLimits only caps this worker's V8 heap, not
     // the Buffer/native memory ExcelJS/mammoth allocate while parsing.
+    // The caps here are the *container* ones (maxContainerEntries), not the
+    // user-facing .zip ones: a real workbook's internal part count (one per
+    // sheet, plus styles/sharedStrings/drawings) routinely exceeds what is a
+    // sensible cap for an attached archive. Report the zip code as-is instead
+    // of flattening it to EXTRACTION_FAILED, so a tripped cap doesn't read as
+    // "this file is corrupt".
     try {
       await listZipEntries(buffer, containerLimits);
     } catch (error) {
-      if (error instanceof ZipError) return { error: 'EXTRACTION_FAILED' };
+      if (error instanceof ZipError) return { error: error.code };
       throw error;
     }
 
@@ -196,8 +206,12 @@ async function runPipeline(
 async function runArchive(request: WorkerRequest, buffer: Buffer): Promise<WorkerResponse> {
   const limits = { ...request.zipLimits, password: request.password };
   if (!request.entry) {
-    const zipEntries = await listZipEntries(buffer, limits);
-    return { kind: 'zip_listing', zipEntries };
+    const listing = await listZipEntries(buffer, limits);
+    return {
+      kind: 'zip_listing',
+      zipEntries: listing.entries,
+      hiddenEntries: listing.hiddenEntries,
+    };
   }
 
   const isRawMode = request.mode === 'raw';

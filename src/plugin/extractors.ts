@@ -58,7 +58,11 @@ export interface AttachmentPipelineRequest {
 }
 
 export type AttachmentPipelineResult =
-  | { readonly kind: 'zip_listing'; readonly zipEntries: readonly ZipEntryInfo[] }
+  | {
+      readonly kind: 'zip_listing';
+      readonly zipEntries: readonly ZipEntryInfo[];
+      readonly hiddenEntries: number;
+    }
   | {
       readonly kind: 'text';
       readonly text: string;

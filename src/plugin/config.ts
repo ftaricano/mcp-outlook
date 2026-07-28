@@ -50,6 +50,17 @@ const pluginConfigSchema = z
       .min(1024)
       .max(200 * 1024 * 1024)
       .default(50 * 1024 * 1024),
+    // Separate from the .zip caps above: these bound the *internal* structure
+    // of an OOXML document (xlsx/docx), whose part count scales with sheets and
+    // embedded objects and is unrelated to how large an attached archive a
+    // deployment wants to accept.
+    maxContainerEntries: z.number().int().min(1).max(20_000).default(1_000),
+    maxContainerUncompressedBytes: z
+      .number()
+      .int()
+      .min(1024)
+      .max(500 * 1024 * 1024)
+      .default(100 * 1024 * 1024),
     searchMemoryPath: z.string().min(1).optional(),
   })
   .superRefine(({ mailboxes }, context) => {
@@ -96,6 +107,8 @@ export interface PluginConfig {
   readonly maxQueriesPerBatch: number;
   readonly maxZipEntries: number;
   readonly maxZipUncompressedBytes: number;
+  readonly maxContainerEntries: number;
+  readonly maxContainerUncompressedBytes: number;
   readonly searchMemoryPath: string | undefined;
 }
 
@@ -220,6 +233,8 @@ export function loadPluginConfig(configPath?: string): PluginConfig {
     maxQueriesPerBatch: parsed.data.maxQueriesPerBatch,
     maxZipEntries: parsed.data.maxZipEntries,
     maxZipUncompressedBytes: parsed.data.maxZipUncompressedBytes,
+    maxContainerEntries: parsed.data.maxContainerEntries,
+    maxContainerUncompressedBytes: parsed.data.maxContainerUncompressedBytes,
     searchMemoryPath,
   });
 }
