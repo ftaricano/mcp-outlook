@@ -44,7 +44,12 @@ describe('expansion tool schemas', () => {
   it('accepts the new criteria flags and the raised deterministic cap', () => {
     const parsed = listMessagesSchema.parse({
       mailbox: 'finance',
-      criteria: { sender: 'a@b.com', maxResults: 100, includeAttachmentNames: true, expandTerms: true },
+      criteria: {
+        sender: 'a@b.com',
+        maxResults: 100,
+        includeAttachmentNames: true,
+        expandTerms: true,
+      },
     });
     expect(parsed.criteria.maxResults).toBe(100);
   });

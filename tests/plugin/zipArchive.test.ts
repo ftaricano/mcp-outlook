@@ -21,7 +21,10 @@ const LIMITS = { maxEntries: 200, maxUncompressedBytes: 50 * 1024 * 1024 };
 
 describe('zipArchive', () => {
   it('lists entries with sizes', async () => {
-    const zip = await buildZip({ 'GRUPO-ALFA/fatura-05-2026.pdf': '%PDF fake', 'leia-me.txt': 'oi' });
+    const zip = await buildZip({
+      'GRUPO-ALFA/fatura-05-2026.pdf': '%PDF fake',
+      'leia-me.txt': 'oi',
+    });
     const entries = await listZipEntries(zip, LIMITS);
     expect(entries.map((entry) => entry.name)).toEqual(
       expect.arrayContaining(['GRUPO-ALFA/fatura-05-2026.pdf', 'leia-me.txt'])
@@ -43,13 +46,17 @@ describe('zipArchive', () => {
 
   it('rejects listing when the declared total uncompressed size exceeds the cap', async () => {
     const zip = await buildZip({ 'a.txt': 'x'.repeat(2048), 'b.txt': 'y'.repeat(2048) });
-    await expect(listZipEntries(zip, { ...LIMITS, maxUncompressedBytes: 1024 })).rejects.toMatchObject({
+    await expect(
+      listZipEntries(zip, { ...LIMITS, maxUncompressedBytes: 1024 })
+    ).rejects.toMatchObject({
       code: 'ZIP_TOO_LARGE',
     });
   });
 
   it('rejects archives with too many entries', async () => {
-    const many = Object.fromEntries(Array.from({ length: 5 }, (_, index) => [`f${index}.txt`, 'x']));
+    const many = Object.fromEntries(
+      Array.from({ length: 5 }, (_, index) => [`f${index}.txt`, 'x'])
+    );
     const zip = await buildZip(many);
     await expect(listZipEntries(zip, { ...LIMITS, maxEntries: 3 })).rejects.toMatchObject({
       code: 'ZIP_TOO_MANY_ENTRIES',

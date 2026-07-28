@@ -263,7 +263,10 @@ export class MultiMailboxService {
       effectiveName,
       base.contentType,
       this.config.maxExtractedChars,
-      { maxEntries: this.config.maxZipEntries, maxUncompressedBytes: this.config.maxZipUncompressedBytes }
+      {
+        maxEntries: this.config.maxZipEntries,
+        maxUncompressedBytes: this.config.maxZipUncompressedBytes,
+      }
     );
     return {
       ...base,
@@ -450,7 +453,11 @@ export class MultiMailboxService {
       criteria: AdvancedSearchOptions & { expandTerms?: boolean };
     }[]
   ): Promise<{
-    results: readonly { label: string; status: SearchStatus; results: readonly MailboxSearchResult[] }[];
+    results: readonly {
+      label: string;
+      status: SearchStatus;
+      results: readonly MailboxSearchResult[];
+    }[];
   }> {
     if (queries.length > this.config.maxQueriesPerBatch) {
       throw new BatchLimitError(this.config.maxQueriesPerBatch);

@@ -88,7 +88,13 @@ function fakeService(overrides: Partial<MultiMailboxService> = {}): MultiMailbox
       warnings: [],
     }),
     listFolders: async () => [
-      { id: 'inbox', displayName: 'Inbox', totalItemCount: 3, unreadItemCount: 1, childFolderCount: 0 },
+      {
+        id: 'inbox',
+        displayName: 'Inbox',
+        totalItemCount: 3,
+        unreadItemCount: 1,
+        childFolderCount: 0,
+      },
     ],
     getFolderStats: async () => ({ totalItems: 10, unreadItems: 2, sizeInBytes: 1024 }),
     listAttachments: async () => [
@@ -237,7 +243,9 @@ describe('createOutlookPluginServer', () => {
       });
       expect(result.isError).toBe(true);
       expect((result.content as Array<{ text: string }>)[0].text).toContain('RAW_TOO_LARGE');
-      expect((result.content as Array<{ text: string }>)[0].text).not.toMatch(/graph|stack|password/i);
+      expect((result.content as Array<{ text: string }>)[0].text).not.toMatch(
+        /graph|stack|password/i
+      );
     });
   });
 
@@ -245,7 +253,12 @@ describe('createOutlookPluginServer', () => {
     const { client } = await connect(createServer());
     const { tools } = await client.listTools();
     const names = tools.map((tool) => tool.name);
-    for (const name of ['list_allowed_mailboxes', 'search_mailbox', 'search_mailboxes', 'get_message']) {
+    for (const name of [
+      'list_allowed_mailboxes',
+      'search_mailbox',
+      'search_mailboxes',
+      'get_message',
+    ]) {
       expect(names).toContain(name);
     }
     expect(tools.every((tool) => tool.annotations?.destructiveHint === false)).toBe(true);

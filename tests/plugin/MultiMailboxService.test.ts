@@ -106,7 +106,8 @@ describe('read expansion methods', () => {
   it('lists messages via deterministic search on the pinned mailbox service', async () => {
     const advancedSearch = vi.fn(async () => searchResult('FOUND'));
     const service = new MultiMailboxService(config(), () =>
-      stubEmailService({ advancedSearchEmailsDetailed: advancedSearch }));
+      stubEmailService({ advancedSearchEmailsDetailed: advancedSearch })
+    );
     const result = await service.listMessages('finance', { sender: 'x@y.com', maxResults: 100 });
     expect(result.mailbox).toBe('finance');
     expect(advancedSearch).toHaveBeenCalledWith(
@@ -120,7 +121,8 @@ describe('read expansion methods', () => {
         listFolders: vi.fn(async () => {
           throw new Error('Graph secret');
         }),
-      }));
+      })
+    );
     await expect(service.listFolders('finance')).rejects.toThrow(/folder listing failed/i);
   });
 
@@ -129,7 +131,8 @@ describe('read expansion methods', () => {
       stubEmailService({
         getFolderStatistics: vi.fn(async () => ({ totalItems: 10 })),
         listAttachments: vi.fn(async () => [{ id: 'a1', name: 'fatura.pdf', size: 100 }]),
-      }));
+      })
+    );
     await expect(service.getFolderStats('finance', 'inbox')).resolves.toMatchObject({
       totalItems: 10,
     });
@@ -141,7 +144,8 @@ describe('deterministic caps and term expansion', () => {
   it('caps $search criteria at 50 results but allows 100 for deterministic criteria', async () => {
     const advancedSearch = vi.fn(async () => searchResult('FOUND'));
     const service = new MultiMailboxService(config({ maxResultsPerMailbox: 100 }), () =>
-      stubEmailService({ advancedSearchEmailsDetailed: advancedSearch }));
+      stubEmailService({ advancedSearchEmailsDetailed: advancedSearch })
+    );
 
     await service.searchMailbox('finance', { query: 'fatura', maxResults: 100 });
     expect(advancedSearch).toHaveBeenLastCalledWith(expect.objectContaining({ maxResults: 50 }));
@@ -174,7 +178,8 @@ describe('deterministic caps and term expansion', () => {
   it('treats expandTerms as a no-op without memory configured', async () => {
     const advancedSearch = vi.fn(async () => searchResult('FOUND'));
     const service = new MultiMailboxService(config(), () =>
-      stubEmailService({ advancedSearchEmailsDetailed: advancedSearch }));
+      stubEmailService({ advancedSearchEmailsDetailed: advancedSearch })
+    );
     const result = await service.searchMailbox('finance', { query: 'x', expandTerms: true });
     expect(advancedSearch).toHaveBeenCalledTimes(1);
     expect(result.warnings).toContain('search_memory_not_configured');
@@ -184,7 +189,8 @@ describe('deterministic caps and term expansion', () => {
 describe('searchMailboxesBatch', () => {
   it('returns per-label evidence and enforces maxQueriesPerBatch', async () => {
     const service = new MultiMailboxService(config({ maxQueriesPerBatch: 2 }), () =>
-      stubEmailService({ advancedSearchEmailsDetailed: vi.fn(async () => searchResult('FOUND')) }));
+      stubEmailService({ advancedSearchEmailsDetailed: vi.fn(async () => searchResult('FOUND')) })
+    );
     const batch = await service.searchMailboxesBatch([
       { label: 'caso-1', criteria: { query: 'a' } },
       { label: 'caso-2', mailboxes: ['finance'], criteria: { query: 'b' } },
@@ -206,7 +212,8 @@ describe('write methods', () => {
   it('moves messages up to maxBatchSize and reports per-id outcomes without raw errors', async () => {
     const move = vi.fn(async (ids: string[]) => ids.map((id) => ({ id, success: id !== 'bad' })));
     const service = new MultiMailboxService(config({ maxBatchSize: 2 }), () =>
-      stubEmailService({ moveEmailsToFolder: move }));
+      stubEmailService({ moveEmailsToFolder: move })
+    );
     const outcome = await service.moveMessages('finance', ['m1', 'bad'], 'folder-1');
     expect(outcome.results).toHaveLength(2);
     await expect(service.moveMessages('finance', ['a', 'b', 'c'], 'f')).rejects.toThrow(
@@ -218,7 +225,8 @@ describe('write methods', () => {
     const markRead = vi.fn(async () => [{ success: true }]);
     const markUnread = vi.fn(async () => [{ success: true }]);
     const service = new MultiMailboxService(config(), () =>
-      stubEmailService({ batchMarkAsRead: markRead, batchMarkAsUnread: markUnread }));
+      stubEmailService({ batchMarkAsRead: markRead, batchMarkAsUnread: markUnread })
+    );
     await service.markMessages('finance', ['m1'], true);
     expect(markRead).toHaveBeenCalled();
     await service.markMessages('finance', ['m1'], false);
@@ -254,7 +262,8 @@ describe('write methods', () => {
       downloadedFiles: [],
     }));
     const service = new MultiMailboxService(config(), () =>
-      stubEmailService({ downloadAllAttachmentsFromEmail: downloadAll }));
+      stubEmailService({ downloadAllAttachmentsFromEmail: downloadAll })
+    );
     const result = await service.downloadAttachments('finance', 'm1', undefined);
     expect(result).toMatchObject({ successfulDownloads: 2 });
   });
@@ -275,7 +284,8 @@ describe('write methods', () => {
       stubEmailService({
         downloadAttachmentToFile: downloadOne,
         downloadAllAttachmentsFromEmail: downloadAll,
-      }));
+      })
+    );
 
     const result = await service.downloadAttachments('finance', 'm1', ['a1', 'a2']);
 
@@ -301,7 +311,8 @@ describe('write methods', () => {
       };
     });
     const service = new MultiMailboxService(config(), () =>
-      stubEmailService({ downloadAttachmentToFile: downloadOne }));
+      stubEmailService({ downloadAttachmentToFile: downloadOne })
+    );
 
     const result = await service.downloadAttachments('finance', 'm1', ['a1', 'bad']);
 

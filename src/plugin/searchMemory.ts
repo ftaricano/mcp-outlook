@@ -32,11 +32,7 @@ export interface SearchMemory {
 }
 
 export function normalizeKey(value: string): string {
-  return value
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .trim()
-    .toLowerCase();
+  return value.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
 }
 
 export function loadSearchMemory(path: string | undefined): SearchMemory | null {
