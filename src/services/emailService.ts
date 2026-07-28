@@ -2033,6 +2033,13 @@ export class EmailService {
               `$select=${searchFields}`,
               '$expand=attachments($select=name,contentType,size)',
               ...(combinedFilter ? [`$filter=${encodeURIComponent(combinedFilter)}`] : []),
+              // Same condition as the graphOptimizer branch below: without this,
+              // Graph returns an arbitrary order, we paginate a bounded window of
+              // it, and only then sort locally — "most recent N" silently becomes
+              // "N arbitrary, then sorted".
+              ...(sortBy === 'receivedDateTime'
+                ? [`$orderby=${encodeURIComponent(`${sortBy} ${sortOrder}`)}`]
+                : []),
             ].join('&')}`,
             scanLimit,
             maxPages

@@ -300,6 +300,54 @@ describe('EmailService.advancedSearchEmailsDetailed', () => {
 
     expect(calls.some((endpoint) => endpoint.includes('$expand=attachments'))).toBe(true);
   });
+
+  it('preserves server-side receivedDateTime ordering on the attachment-expanded (no-query) endpoint', async () => {
+    const calls: string[] = [];
+    const api = vi.fn((url: string) => {
+      calls.push(url);
+      return { get: async () => ({ value: [] }) };
+    });
+    const service = Object.create(EmailService.prototype) as any;
+    service.client = { api };
+    process.env.TARGET_USER_EMAIL = 'user@example.com';
+
+    await service.advancedSearchEmailsDetailed({
+      sender: 'billing@example.com',
+      includeAttachmentNames: true,
+      maxResults: 10,
+      sortBy: 'receivedDateTime',
+      sortOrder: 'desc',
+    });
+
+    const filterCall = calls.find((endpoint) => endpoint.includes('$expand=attachments'));
+    expect(filterCall).toContain('$orderby=receivedDateTime%20desc');
+  });
+
+  it("matches the graphOptimizer path's orderby condition: only applied for receivedDateTime", async () => {
+    const calls: string[] = [];
+    const api = vi.fn((url: string) => {
+      calls.push(url);
+      return { get: async () => ({ value: [] }) };
+    });
+    const service = Object.create(EmailService.prototype) as any;
+    service.client = { api };
+    process.env.TARGET_USER_EMAIL = 'user@example.com';
+
+    // graphOptimizer.getOptimizedEmailsDetailed only sets orderBy when
+    // sortBy === 'receivedDateTime' (see the ternary a few lines below in
+    // emailService.ts); the manual endpoint must apply the exact same
+    // condition so the two paths never silently diverge on ordering.
+    await service.advancedSearchEmailsDetailed({
+      sender: 'billing@example.com',
+      includeAttachmentNames: true,
+      maxResults: 10,
+      sortBy: 'subject',
+      sortOrder: 'asc',
+    });
+
+    const filterCall = calls.find((endpoint) => endpoint.includes('$expand=attachments'));
+    expect(filterCall).not.toContain('$orderby=');
+  });
 });
 
 describe('EmailService.searchEmailsBySenderDomain pagination', () => {
