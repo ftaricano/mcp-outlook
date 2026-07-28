@@ -1,6 +1,22 @@
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
-import { extractAttachmentText } from '../../src/plugin/extractors.js';
+import {
+  extractAttachmentText,
+  ExtractionError,
+  runIsolatedWorker,
+} from '../../src/plugin/extractors.js';
+
+// extractAttachmentText now delegates all real parsing to a compiled worker
+// (src/plugin/extractionWorker.ts -> dist/plugin/extractionWorker.js) so that
+// hostile input is isolated by worker_threads resourceLimits, not just a
+// Promise.race in the main process. Node's worker_threads loads that file by
+// URL and does not go through vitest's TS transform, so the format-detection
+// tests below need the real build artifact — see tests/globalSetup.ts, which
+// builds it once before any test file runs. This is a deliberate trade-off
+// (see JAR-782 fix notes): the mechanism tests further down (timeout / crash
+// handling) exercise `runIsolatedWorker` directly against small plain-JS
+// fixture workers instead, so they run fast on any Node version without
+// depending on the build.
 
 const MINIMAL_PDF = Buffer.from(
   `%PDF-1.4
@@ -26,7 +42,12 @@ async function xlsxBuffer(): Promise<Buffer> {
 
 describe('extractAttachmentText', () => {
   it('extracts text from a PDF, detected by header even with a .tmp name', async () => {
-    const result = await extractAttachmentText(MINIMAL_PDF, 'arquivo.tmp', 'application/octet-stream', 10_000);
+    const result = await extractAttachmentText(
+      MINIMAL_PDF,
+      'arquivo.tmp',
+      'application/octet-stream',
+      10_000
+    );
     expect(result.extractor).toBe('pdf');
     expect(result.text).toContain('FATURA 12345');
   });
@@ -44,20 +65,35 @@ describe('extractAttachmentText', () => {
   });
 
   it('passes plain text through with charset decoding', async () => {
-    const result = await extractAttachmentText(Buffer.from('linha 1\nlinha 2'), 'notas.txt', 'text/plain', 10_000);
+    const result = await extractAttachmentText(
+      Buffer.from('linha 1\nlinha 2'),
+      'notas.txt',
+      'text/plain',
+      10_000
+    );
     expect(result.extractor).toBe('text');
     expect(result.text).toContain('linha 2');
   });
 
   it('truncates output at maxChars and flags it', async () => {
-    const result = await extractAttachmentText(Buffer.from('x'.repeat(500)), 'big.txt', 'text/plain', 100);
+    const result = await extractAttachmentText(
+      Buffer.from('x'.repeat(500)),
+      'big.txt',
+      'text/plain',
+      100
+    );
     expect(result.text.length).toBeLessThanOrEqual(100);
     expect(result.truncated).toBe(true);
   });
 
   it('rejects unsupported binary formats with a stable code', async () => {
     await expect(
-      extractAttachmentText(Buffer.from([0x00, 0x01, 0x02]), 'blob.bin', 'application/octet-stream', 10_000)
+      extractAttachmentText(
+        Buffer.from([0x00, 0x01, 0x02]),
+        'blob.bin',
+        'application/octet-stream',
+        10_000
+      )
     ).rejects.toMatchObject({ code: 'UNSUPPORTED_FORMAT' });
   });
 
@@ -92,5 +128,31 @@ describe('extractAttachmentText', () => {
         { maxEntries: 1_000, maxUncompressedBytes: 1 }
       )
     ).rejects.toMatchObject({ code: 'EXTRACTION_FAILED' });
+  });
+});
+
+describe('runIsolatedWorker', () => {
+  it('terminates a hung worker and rejects EXTRACTION_TIMEOUT without waiting out the real production timeout', async () => {
+    const hangingWorkerUrl = new URL('../fixtures/hanging-worker.mjs', import.meta.url);
+    await expect(runIsolatedWorker(hangingWorkerUrl, {}, 200)).rejects.toMatchObject({
+      code: 'EXTRACTION_TIMEOUT',
+    });
+  });
+
+  it('maps a worker that exits non-zero without posting a message to EXTRACTION_FAILED', async () => {
+    const crashingWorkerUrl = new URL('../fixtures/crashing-worker.mjs', import.meta.url);
+    await expect(runIsolatedWorker(crashingWorkerUrl, {}, 5_000)).rejects.toMatchObject({
+      code: 'EXTRACTION_FAILED',
+    });
+  });
+
+  it('maps an uncaught worker error to EXTRACTION_FAILED without leaking the underlying message', async () => {
+    const throwingWorkerUrl = new URL('../fixtures/throwing-worker.mjs', import.meta.url);
+    const rejection = await runIsolatedWorker(throwingWorkerUrl, {}, 5_000).catch(
+      (error: unknown) => error
+    );
+    expect(rejection).toBeInstanceOf(ExtractionError);
+    expect((rejection as ExtractionError).code).toBe('EXTRACTION_FAILED');
+    expect((rejection as ExtractionError).message).not.toContain('boom');
   });
 });

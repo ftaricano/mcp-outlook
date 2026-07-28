@@ -58,7 +58,14 @@ export async function listZipEntries(buffer: Buffer, limits: ZipLimits): Promise
   const files = (await openArchive(buffer)).filter((entry) => entry.type === 'File');
   if (files.length > limits.maxEntries) throw new ZipError('ZIP_TOO_MANY_ENTRIES');
 
-  const declaredTotalBytes = files.reduce((total, entry) => total + (entry.uncompressedSize ?? 0), 0);
+  // Heuristic fast-path only: uncompressedSize comes from the ZIP central
+  // directory, metadata the archive itself supplies and a zip bomb can
+  // falsify. This cap does not bound real bytes read — it just rejects
+  // obviously-bad declared totals cheaply, before any parser sees the file.
+  const declaredTotalBytes = files.reduce(
+    (total, entry) => total + (entry.uncompressedSize ?? 0),
+    0
+  );
   if (declaredTotalBytes > limits.maxUncompressedBytes) throw new ZipError('ZIP_TOO_LARGE');
 
   return files
@@ -73,7 +80,10 @@ export async function listZipEntries(buffer: Buffer, limits: ZipLimits): Promise
 // O uncompressedSize do header central é declarado pelo próprio arquivo e pode mentir
 // (zip bomb); o pre-check abaixo é só fast-path. A garantia real é o cap por bytes
 // lidos do stream em readStreamWithCap.
-export function readStreamWithCap(stream: NodeJS.ReadableStream, maxBytes: number): Promise<Buffer> {
+export function readStreamWithCap(
+  stream: NodeJS.ReadableStream,
+  maxBytes: number
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let total = 0;
@@ -124,7 +134,8 @@ export async function extractZipEntry(
 
   // fast-path: o tamanho declarado no header central já descarta bombas óbvias
   // sem abrir o stream, mas não é a garantia — ver readStreamWithCap.
-  if ((entry.uncompressedSize ?? 0) > limits.maxUncompressedBytes) throw new ZipError('ZIP_TOO_LARGE');
+  if ((entry.uncompressedSize ?? 0) > limits.maxUncompressedBytes)
+    throw new ZipError('ZIP_TOO_LARGE');
   if (isEncrypted(entry) && !limits.password) throw new ZipError('ZIP_ENCRYPTED');
 
   let extracted: Buffer;

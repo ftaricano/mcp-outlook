@@ -1,8 +1,12 @@
-import ExcelJS from 'exceljs';
-import mammoth from 'mammoth';
+import { Worker } from 'node:worker_threads';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isDocxName, isXlsxName, isZipContainer } from './extractionFormat.js';
 import { listZipEntries, ZipError } from './zipArchive.js';
 
 const EXTRACTION_TIMEOUT_MS = 30_000;
+const WORKER_MAX_OLD_GENERATION_MB = 512;
+const WORKER_MAX_YOUNG_GENERATION_MB = 64;
 const DEFAULT_CONTAINER_MAX_ENTRIES = 1_000;
 const DEFAULT_CONTAINER_MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024;
 
@@ -26,90 +30,81 @@ export interface ExtractedText {
   readonly extractor: 'pdf' | 'xlsx' | 'docx' | 'text';
 }
 
-function bound(text: string, maxChars: number): { text: string; truncated: boolean } {
-  if (text.length <= maxChars) return { text, truncated: false };
-  return { text: text.slice(0, maxChars), truncated: true };
+interface WorkerFailure {
+  readonly error: ExtractionErrorCode;
 }
 
-function isPdf(buffer: Buffer): boolean {
-  return buffer.subarray(0, 5).toString('latin1').startsWith('%PDF');
+function isWorkerFailure(message: unknown): message is WorkerFailure {
+  return typeof message === 'object' && message !== null && 'error' in message;
 }
 
-function isZipContainer(buffer: Buffer): boolean {
-  return buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4b;
-}
+/**
+ * Spawns `workerUrl` with `workerData`, enforces a wall-clock timeout, and
+ * always tears the worker down. This is the resource-isolation boundary for
+ * hostile input: the resourceLimits below cap the worker's own heap
+ * regardless of what the parser inside it does, and the timeout kills a
+ * worker that never reports back — neither depends on the file's own
+ * declared metadata. Exported (not just used) so the timeout/crash paths can
+ * be exercised directly in tests against a small fixture worker, without
+ * waiting out the real 30s production timeout.
+ */
+export async function runIsolatedWorker<TSuccess>(
+  workerUrl: URL,
+  workerData: unknown,
+  timeoutMs = EXTRACTION_TIMEOUT_MS
+): Promise<TSuccess> {
+  const worker = new Worker(workerUrl, {
+    workerData,
+    resourceLimits: {
+      maxOldGenerationSizeMb: WORKER_MAX_OLD_GENERATION_MB,
+      maxYoungGenerationSizeMb: WORKER_MAX_YOUNG_GENERATION_MB,
+    },
+  });
 
-function isTextual(contentType: string, name: string): boolean {
-  const lowered = contentType.toLowerCase();
-  return (
-    lowered.startsWith('text/') ||
-    lowered.includes('json') ||
-    lowered.includes('xml') ||
-    lowered.includes('csv') ||
-    /\.(txt|csv|json|xml|html?)$/i.test(name)
-  );
-}
-
-async function withTimeout<T>(work: Promise<T>): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new ExtractionError('EXTRACTION_TIMEOUT')), EXTRACTION_TIMEOUT_MS);
-  });
   try {
-    return await Promise.race([work, timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
+    return await new Promise<TSuccess>((resolve, reject) => {
+      timer = setTimeout(() => {
+        reject(new ExtractionError('EXTRACTION_TIMEOUT'));
+      }, timeoutMs);
 
-async function extractPdf(buffer: Buffer, maxChars: number): Promise<ExtractedText> {
-  const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  const document = await getDocument({
-    data: new Uint8Array(buffer),
-    isEvalSupported: false,
-    useSystemFonts: true,
-  }).promise;
+      worker.once('message', (message: TSuccess | WorkerFailure) => {
+        if (isWorkerFailure(message)) {
+          reject(new ExtractionError(message.error));
+          return;
+        }
+        resolve(message);
+      });
 
-  const parts: string[] = [];
-  let total = 0;
-  for (let pageNumber = 1; pageNumber <= document.numPages && total <= maxChars; pageNumber += 1) {
-    const page = await document.getPage(pageNumber);
-    const content = await page.getTextContent();
-    const pageText = content.items.map((item) => ('str' in item ? item.str : '')).join(' ');
-    parts.push(pageText);
-    total += pageText.length;
-  }
-  await document.destroy();
-  const bounded = bound(parts.join('\n\n'), maxChars);
-  return { ...bounded, extractor: 'pdf' };
-}
+      worker.once('error', () => reject(new ExtractionError('EXTRACTION_FAILED')));
 
-async function extractXlsx(buffer: Buffer, maxChars: number): Promise<ExtractedText> {
-  const workbook = new ExcelJS.Workbook();
-  // exceljs bundles its own Buffer typings that don't line up structurally with
-  // Node's; the runtime call accepts a Buffer/ArrayBuffer, only the type check needs help.
-  await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
-  const lines: string[] = [];
-  let total = 0;
-  workbook.eachSheet((sheet) => {
-    if (total > maxChars) return;
-    lines.push(`# ${sheet.name}`);
-    sheet.eachRow((row) => {
-      if (total > maxChars) return;
-      const values = Array.isArray(row.values) ? row.values.slice(1) : [];
-      const line = values.map((value) => (value == null ? '' : String(value))).join('\t');
-      lines.push(line);
-      total += line.length;
+      worker.once('exit', (code) => {
+        // A non-zero exit without a prior message means the worker died before
+        // it could report anything — e.g. the resourceLimits heap cap above
+        // killed it (OOM). Map that to the same opaque EXTRACTION_FAILED.
+        if (code !== 0) reject(new ExtractionError('EXTRACTION_FAILED'));
+      });
     });
-  });
-  const bounded = bound(lines.join('\n'), maxChars);
-  return { ...bounded, extractor: 'xlsx' };
+  } finally {
+    if (timer) clearTimeout(timer);
+    await worker.terminate();
+  }
 }
 
-async function extractDocx(buffer: Buffer, maxChars: number): Promise<ExtractedText> {
-  const result = await mammoth.extractRawText({ buffer });
-  const bounded = bound(result.value, maxChars);
-  return { ...bounded, extractor: 'docx' };
+// worker_threads loads its entry point through plain Node ESM resolution —
+// it never goes through vitest's TS transform. When this module runs
+// compiled (dist/plugin/extractors.js), the sibling extractionWorker.js is
+// right there. When it runs as TS (vitest/ts-node in dev), that sibling
+// doesn't exist next to the source file, so fall back to the compiled
+// artifact in dist/plugin/ instead — this is why the extractAttachmentText
+// tests need a prior `npm run build` (see tests/globalSetup.ts).
+function extractionWorkerUrl(): URL {
+  if (import.meta.url.endsWith('.js')) {
+    return new URL('./extractionWorker.js', import.meta.url);
+  }
+  const srcPluginDir = dirname(fileURLToPath(import.meta.url));
+  const repoRoot = join(srcPluginDir, '..', '..');
+  return pathToFileURL(join(repoRoot, 'dist', 'plugin', 'extractionWorker.js'));
 }
 
 export async function extractAttachmentText(
@@ -124,32 +119,33 @@ export async function extractAttachmentText(
     maxUncompressedBytes: DEFAULT_CONTAINER_MAX_UNCOMPRESSED_BYTES,
   };
   try {
-    if (isPdf(buffer)) return await withTimeout(extractPdf(buffer, maxChars));
     if (isZipContainer(buffer)) {
-      const isXlsx = /\.xlsx$/i.test(name) || contentType.includes('spreadsheetml');
-      const isDocx = /\.docx$/i.test(name) || contentType.includes('wordprocessingml');
+      const isXlsx = isXlsxName(name, contentType);
+      const isDocx = isDocxName(name, contentType);
       if (!isXlsx && !isDocx) throw new ExtractionError('UNSUPPORTED_FORMAT');
 
-      // xlsx/docx são contêineres ZIP entregues inteiros ao parser (ExcelJS/mammoth);
-      // um pre-scan com os mesmos caps do ZIP genérico impede zip bombs disfarçadas de
-      // documento antes de materializar o parser. Promise.race abaixo não cancela o
-      // trabalho do parser em si (limitação conhecida do Node), só o await — a mitigação
-      // real é este cap de entrada.
+      // Fast-path, defense-in-depth only: the ZIP central directory declares an
+      // uncompressed size per entry, but that field is attacker-controlled
+      // metadata (zip bombs falsify it) — this cap does NOT bound real bytes
+      // read. It exists purely to reject obviously-bad declared sizes before
+      // paying for a worker thread. The actual guarantee against unbounded
+      // CPU/memory from a hostile xlsx/docx payload is the worker's
+      // resourceLimits below, which caps real heap usage independent of
+      // anything the file itself claims.
       try {
         await listZipEntries(buffer, limits);
       } catch (error) {
         if (error instanceof ZipError) throw new ExtractionError('EXTRACTION_FAILED');
         throw error;
       }
+    }
 
-      if (isXlsx) return await withTimeout(extractXlsx(buffer, maxChars));
-      return await withTimeout(extractDocx(buffer, maxChars));
-    }
-    if (isTextual(contentType, name)) {
-      const bounded = bound(buffer.toString('utf8'), maxChars);
-      return { ...bounded, extractor: 'text' };
-    }
-    throw new ExtractionError('UNSUPPORTED_FORMAT');
+    return await runIsolatedWorker<ExtractedText>(extractionWorkerUrl(), {
+      buffer,
+      name,
+      contentType,
+      maxChars,
+    });
   } catch (error) {
     if (error instanceof ExtractionError) throw error;
     throw new ExtractionError('EXTRACTION_FAILED');
