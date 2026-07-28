@@ -24,6 +24,7 @@ type Extractor = 'pdf' | 'xlsx' | 'docx' | 'text';
 type WorkerErrorCode =
   | 'UNSUPPORTED_FORMAT'
   | 'EXTRACTION_FAILED'
+  | 'RAW_TOO_LARGE'
   | 'ZIP_INVALID'
   | 'ZIP_TOO_MANY_ENTRIES'
   | 'ZIP_TOO_LARGE'
@@ -46,6 +47,7 @@ interface WorkerRequest {
   readonly password?: string;
   readonly zipLimits: ContainerLimits;
   readonly containerLimits: ContainerLimits;
+  readonly maxRawBytes: number;
 }
 
 type TextResult = { readonly text: string; readonly truncated: boolean };
@@ -117,9 +119,15 @@ async function runPipeline(
   contentType: string,
   maxChars: number,
   mode: 'text' | 'raw',
-  containerLimits: ContainerLimits
+  containerLimits: ContainerLimits,
+  maxRawBytes: number
 ): Promise<WorkerResponse> {
   if (mode === 'raw') {
+    // Enforced here, inside the worker, and before any postMessage: the
+    // caller-facing raw cap must reject on the materialized byte count, not
+    // after the (potentially much larger, up to maxZipUncompressedBytes)
+    // buffer has already been cloned back to the main thread.
+    if (buffer.length > maxRawBytes) return { error: 'RAW_TOO_LARGE' };
     return { kind: 'raw', bytes: new Uint8Array(buffer), sizeBytes: buffer.length };
   }
 
@@ -171,14 +179,40 @@ async function runArchive(request: WorkerRequest, buffer: Buffer): Promise<Worke
     const zipEntries = await listZipEntries(buffer, limits);
     return { kind: 'zip_listing', zipEntries };
   }
-  const inner = await extractZipEntry(buffer, request.entry, limits);
+
+  const isRawMode = request.mode === 'raw';
+  // In raw mode, cap the real bytes read from the zip stream at maxRawBytes
+  // (not just the archive's own, much larger, maxUncompressedBytes budget)
+  // so a raw-mode request on a zip entry aborts the inflate early instead of
+  // materializing up to maxZipUncompressedBytes only to reject afterward.
+  const extractionLimits = isRawMode
+    ? {
+        ...limits,
+        maxUncompressedBytes: Math.min(limits.maxUncompressedBytes, request.maxRawBytes),
+      }
+    : limits;
+
+  let inner: Buffer;
+  try {
+    inner = await extractZipEntry(buffer, request.entry, extractionLimits);
+  } catch (error) {
+    // When the raw cap is the tighter of the two limits, a ZIP_TOO_LARGE here
+    // means the raw ceiling tripped, not the archive's own zip-size ceiling —
+    // report the caller-meaningful code instead of the internal zip one.
+    if (isRawMode && error instanceof ZipError && error.code === 'ZIP_TOO_LARGE') {
+      return { error: 'RAW_TOO_LARGE' };
+    }
+    throw error;
+  }
+
   return runPipeline(
     inner,
     request.entry,
     request.contentType,
     request.maxChars,
     request.mode,
-    request.containerLimits
+    request.containerLimits,
+    request.maxRawBytes
   );
 }
 
@@ -194,7 +228,8 @@ async function run(request: WorkerRequest): Promise<WorkerResponse> {
       request.contentType,
       request.maxChars,
       request.mode,
-      request.containerLimits
+      request.containerLimits,
+      request.maxRawBytes
     );
   } catch (error) {
     if (error instanceof ZipError) return { error: error.code };

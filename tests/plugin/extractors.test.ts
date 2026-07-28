@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   extractAttachmentText,
   ExtractionError,
+  runAttachmentPipeline,
   runIsolatedWorker,
 } from '../../src/plugin/extractors.js';
 
@@ -128,6 +129,69 @@ describe('extractAttachmentText', () => {
         { maxEntries: 1_000, maxUncompressedBytes: 1 }
       )
     ).rejects.toMatchObject({ code: 'EXTRACTION_FAILED' });
+  });
+});
+
+describe('runAttachmentPipeline raw mode cap', () => {
+  const zipLimits = { maxEntries: 200, maxUncompressedBytes: 50 * 1024 * 1024 };
+
+  it('rejects raw mode above maxRawBytes with a stable code, enforced inside the worker', async () => {
+    await expect(
+      runAttachmentPipeline({
+        buffer: Buffer.alloc(300 * 1024),
+        name: 'big.bin',
+        contentType: 'application/octet-stream',
+        maxChars: 10_000,
+        mode: 'raw',
+        zipLimits,
+        maxRawBytes: 256 * 1024,
+      })
+    ).rejects.toMatchObject({ code: 'RAW_TOO_LARGE' });
+  });
+
+  it('accepts raw mode content within maxRawBytes', async () => {
+    const result = await runAttachmentPipeline({
+      buffer: Buffer.from('pequeno'),
+      name: 'nota.txt',
+      contentType: 'text/plain',
+      maxChars: 10_000,
+      mode: 'raw',
+      zipLimits,
+      maxRawBytes: 256 * 1024,
+    });
+    expect(result.kind).toBe('raw');
+  });
+
+  it('is not affected by the raw cap in text mode: only maxExtractedChars applies', async () => {
+    const result = await runAttachmentPipeline({
+      buffer: Buffer.from('x'.repeat(500)),
+      name: 'big.txt',
+      contentType: 'text/plain',
+      maxChars: 100,
+      mode: 'text',
+      zipLimits,
+      maxRawBytes: 10,
+    });
+    expect(result.kind).toBe('text');
+  });
+
+  it('rejects a raw-mode zip entry whose real content vastly exceeds the raw cap without inflating up to the zip limit', async () => {
+    const { buildZip } = await import('./helpers.js');
+    const zip = await buildZip({ 'bomba.txt': 'z'.repeat(1024 * 1024) });
+    const started = Date.now();
+    await expect(
+      runAttachmentPipeline({
+        buffer: zip,
+        name: 'pacote.zip',
+        contentType: 'application/zip',
+        maxChars: 10_000,
+        mode: 'raw',
+        entry: 'bomba.txt',
+        zipLimits: { maxEntries: 200, maxUncompressedBytes: 50 * 1024 * 1024 },
+        maxRawBytes: 1024,
+      })
+    ).rejects.toMatchObject({ code: 'RAW_TOO_LARGE' });
+    expect(Date.now() - started).toBeLessThan(5_000);
   });
 });
 

@@ -235,6 +235,7 @@ export class MultiMailboxService {
         password: options.password,
         zipLimits,
         containerLimits: zipLimits,
+        maxRawBytes: this.config.maxRawAttachmentBytes,
       });
     } catch (error) {
       if (error instanceof ZipError || error instanceof ExtractionError) {

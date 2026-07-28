@@ -16,7 +16,8 @@ export interface ContainerLimits {
   readonly maxUncompressedBytes: number;
 }
 
-export type ExtractionErrorCode = 'UNSUPPORTED_FORMAT' | 'EXTRACTION_FAILED' | 'EXTRACTION_TIMEOUT';
+export type ExtractionErrorCode =
+  'UNSUPPORTED_FORMAT' | 'EXTRACTION_FAILED' | 'EXTRACTION_TIMEOUT' | 'RAW_TOO_LARGE';
 
 export class ExtractionError extends Error {
   constructor(readonly code: ExtractionErrorCode) {
@@ -41,6 +42,10 @@ export interface AttachmentPipelineRequest {
   readonly password?: string;
   readonly zipLimits: ContainerLimits;
   readonly containerLimits?: ContainerLimits;
+  // Required for 'raw' mode: the worker rejects oversized raw output itself,
+  // before cloning bytes back to the main thread via postMessage. Ignored in
+  // 'text' mode (maxExtractedChars is the relevant ceiling there).
+  readonly maxRawBytes?: number;
 }
 
 export type AttachmentPipelineResult =
@@ -174,6 +179,7 @@ export async function runAttachmentPipeline(
     maxEntries: DEFAULT_CONTAINER_MAX_ENTRIES,
     maxUncompressedBytes: DEFAULT_CONTAINER_MAX_UNCOMPRESSED_BYTES,
   };
+  const maxRawBytes = request.maxRawBytes ?? Number.MAX_SAFE_INTEGER;
 
   let response: WorkerSuccessResult;
   try {
@@ -187,6 +193,7 @@ export async function runAttachmentPipeline(
       password: request.password,
       zipLimits: request.zipLimits,
       containerLimits,
+      maxRawBytes,
     });
   } catch (error) {
     throw normalizeWorkerError(error);

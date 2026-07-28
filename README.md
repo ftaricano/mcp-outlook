@@ -194,7 +194,10 @@ Errors from this tool are always redacted to a stable code, never a parser stack
 password: `Attachment content failed: <CODE>` where `<CODE>` is one of `ATTACHMENT_TOO_LARGE`,
 `RAW_TOO_LARGE`, `ATTACHMENT_FETCH_FAILED`, `UNSUPPORTED_FORMAT`, `EXTRACTION_FAILED`,
 `EXTRACTION_TIMEOUT`, `ZIP_INVALID`, `ZIP_TOO_MANY_ENTRIES`, `ZIP_TOO_LARGE`,
-`ZIP_ENTRY_NOT_FOUND`, `ZIP_ENCRYPTED`, or `ZIP_UNSUPPORTED_ENCRYPTION`.
+`ZIP_ENTRY_NOT_FOUND`, `ZIP_ENCRYPTED`, or `ZIP_UNSUPPORTED_ENCRYPTION`. `RAW_TOO_LARGE` is
+enforced inside the extraction worker itself, before the oversized bytes are ever cloned back to
+the main process — so raw mode over the cap fails cheaply rather than after fully inflating the
+attachment (including a ZIP entry, up to `maxZipUncompressedBytes`, if `entry` is set).
 
 ### Labeled batch search: `search_mailboxes_batch`
 
@@ -266,7 +269,7 @@ Create `~/.config/mcp-outlook/plugin.json` with mode `0600`:
 | `allowWrites` | `false` | Registers the 5 write tools when `true` (see env override below) |
 | `maxAttachmentInputBytes` | 15 MB | Cap on the attachment file before extraction/raw handling |
 | `maxExtractedChars` | 200,000 | Cap on extracted text returned to the caller |
-| `maxRawAttachmentBytes` | 256 KB | Cap on `mode: 'raw'` base64 output |
+| `maxRawAttachmentBytes` | 256 KB | Cap on `mode: 'raw'` base64 output (enforced inside the worker) |
 | `maxBatchSize` | 25 | Cap on `messageIds[]` / `attachmentIds[]` in move/copy/mark/download |
 | `maxQueriesPerBatch` | 10 | Cap on `queries[]` in `search_mailboxes_batch` |
 | `maxZipEntries` | 200 | Cap on entries listed/considered in a ZIP |

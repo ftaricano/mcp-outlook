@@ -77,6 +77,19 @@ describe('getAttachmentContent', () => {
     expect(result.entry).toBe('nota.txt');
   });
 
+  it('rejects a zip entry in raw mode whose real content vastly exceeds maxRawAttachmentBytes, without inflating up to the (much larger) zip cap', async () => {
+    const zip = await buildZip({ 'bomba.txt': 'z'.repeat(1024 * 1024) });
+    const service = new MultiMailboxService(
+      config({ maxRawAttachmentBytes: 1024, maxZipUncompressedBytes: 50 * 1024 * 1024 }),
+      () => stubEmailService(attachmentStub(zip, 'pacote.zip', 'application/zip'))
+    );
+    const started = Date.now();
+    await expect(
+      service.getAttachmentContent('finance', 'm1', 'a1', { mode: 'raw', entry: 'bomba.txt' })
+    ).rejects.toMatchObject({ code: 'RAW_TOO_LARGE' });
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
   it('rejects a hostile zip entry whose real content exceeds the cap without materializing it', async () => {
     const zip = await buildZip({ 'bomba.txt': 'z'.repeat(1024 * 1024) });
     const service = new MultiMailboxService(config({ maxZipUncompressedBytes: 10 }), () =>
