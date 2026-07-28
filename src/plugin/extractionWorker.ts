@@ -16,9 +16,12 @@
 // come from `maxAttachmentInputBytes`, the ZIP entry/byte caps enforced by
 // zipArchive.ts's `readStreamWithCap`, the raw-mode cap enforced below before
 // any postMessage, and the extraction concurrency gate in extractors.ts that
-// bounds how many of these workers can run at once. The accepted residual:
-// a hostile attachment can still degrade this one process (self-DoS) within
-// those bounds; it cannot escape the process or exfiltrate data.
+// bounds how many of these workers can run at once. A worker thread is also
+// not a security boundary: it shares the process, its credentials, and its
+// privileges, so a parser exploited by a malicious document is not contained
+// here. Within the bounds above the expected failure is degradation of this
+// one process; see the README's residual-risk note for what does and does not
+// mitigate the exploit case.
 import { parentPort, workerData } from 'node:worker_threads';
 import ExcelJS from 'exceljs';
 import mammoth from 'mammoth';

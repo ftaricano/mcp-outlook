@@ -195,9 +195,10 @@ password: `Attachment content failed: <CODE>` where `<CODE>` is one of `ATTACHME
 `RAW_TOO_LARGE`, `ATTACHMENT_FETCH_FAILED`, `UNSUPPORTED_FORMAT`, `EXTRACTION_FAILED`,
 `EXTRACTION_TIMEOUT`, `EXTRACTION_BUSY`, `ZIP_INVALID`, `ZIP_TOO_MANY_ENTRIES`, `ZIP_TOO_LARGE`,
 `ZIP_ENTRY_NOT_FOUND`, `ZIP_ENCRYPTED`, or `ZIP_UNSUPPORTED_ENCRYPTION`. `RAW_TOO_LARGE` is
-enforced inside the extraction worker itself, before the oversized bytes are ever cloned back to
-the main process — so raw mode over the cap fails cheaply rather than after fully inflating the
-attachment (including a ZIP entry, up to `maxZipUncompressedBytes`, if `entry` is set).
+always raised before the oversized bytes are copied anywhere. A plain (non-archive) attachment
+is size-checked in place, without involving the worker at all; a ZIP entry is checked inside the
+worker while the entry streams, so it fails at the cap rather than after inflating up to
+`maxZipUncompressedBytes`.
 `EXTRACTION_BUSY` means the server already has `maxConcurrentExtractions` extractions in flight
 plus a full backlog queue; retry after a short delay.
 

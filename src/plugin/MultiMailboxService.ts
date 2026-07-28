@@ -218,14 +218,14 @@ export class MultiMailboxService {
       maxUncompressedBytes: this.config.maxZipUncompressedBytes,
     };
 
-    // The isolated worker (extractionWorker.ts) is the sole place that
-    // decrypts, inflates, or parses attachment bytes — nothing here touches
-    // zipArchive.ts or a document parser directly. That worker isolation
-    // bounds the event loop and V8 heap of one worker, not native/Buffer
-    // memory; the actual size guarantees are maxAttachmentInputBytes above,
-    // the raw cap passed below (enforced inside the worker before any bytes
-    // are cloned back here), the ZIP caps, and the concurrency gate bounding
-    // how many workers can run at once (see extractors.ts).
+    // Decryption, inflation and document parsing happen only inside the
+    // isolated worker (extractionWorker.ts) — nothing here touches
+    // zipArchive.ts or a parser directly. runAttachmentPipeline resolves a
+    // plain raw attachment in place, since returning bytes we already hold
+    // needs neither. That worker isolation bounds the event loop and one
+    // worker's V8 heap, not native/Buffer memory and not process privileges;
+    // the size guarantees are maxAttachmentInputBytes above, the raw cap
+    // passed below, the ZIP caps, and the concurrency gate (extractors.ts).
     let result;
     try {
       result = await runAttachmentPipeline({
