@@ -544,6 +544,10 @@ export class MultiMailboxService {
         ...aggregate!,
         messages: union.slice(0, maxResults),
         truncated: aggregate!.truncated || overflowed,
+        // Mirror what advancedSearchEmailsDetailed does when it truncates: a
+        // partial result must not keep claiming high confidence.
+        confidence:
+          overflowed && aggregate!.confidence === 'high' ? 'medium' : aggregate!.confidence,
         warnings: overflowed
           ? [...new Set([...aggregate!.warnings, 'expanded_merge_truncated'])]
           : aggregate!.warnings,
@@ -555,16 +559,19 @@ export class MultiMailboxService {
   }
 }
 
+// The schema allows sorting by receivedDateTime or subject. Both have to be
+// handled here: falling back to Map insertion order for either one would put
+// the caller's requested order at the mercy of which expanded term ran first.
 function sortMessages(
   messages: Message[],
   sortBy: string | undefined,
   sortOrder: string | undefined
 ): Message[] {
-  if (sortBy && sortBy !== 'receivedDateTime') return messages;
+  const key = sortBy === 'subject' ? 'subject' : 'receivedDateTime';
   const direction = sortOrder === 'asc' ? 1 : -1;
   return messages.sort((a, b) => {
-    const left = a.receivedDateTime ?? '';
-    const right = b.receivedDateTime ?? '';
+    const left = a[key] ?? '';
+    const right = b[key] ?? '';
     if (left === right) return 0;
     return left < right ? -direction : direction;
   });

@@ -211,6 +211,40 @@ describe('deterministic caps and term expansion', () => {
     expect(result.warnings).toContain('expanded_merge_truncated');
   });
 
+  it('honours a subject sort across the merged union and demotes confidence when it truncates', async () => {
+    const memory = loadSearchMemory(writeMemory(SAMPLE_MEMORY_YAML))!;
+    let call = 0;
+    const advancedSearch = vi.fn(async () => {
+      call += 1;
+      const base = searchResult('FOUND');
+      return {
+        ...base,
+        confidence: 'high' as const,
+        messages: [
+          { id: `m${call}a`, subject: `Z-${call}` },
+          { id: `m${call}b`, subject: `A-${call}` },
+        ] as typeof base.messages,
+      };
+    });
+    const service = new MultiMailboxService(
+      config(),
+      () => stubEmailService({ advancedSearchEmailsDetailed: advancedSearch }),
+      memory
+    );
+
+    const result = await service.searchMailbox('finance', {
+      query: 'Empresa Alfa Navegacao',
+      expandTerms: true,
+      maxResults: 2,
+      sortBy: 'subject',
+      sortOrder: 'asc',
+    });
+
+    expect(result.messages.map((message) => message.subject)).toEqual(['A-1', 'A-2']);
+    expect(result.truncated).toBe(true);
+    expect(result.confidence).toBe('medium');
+  });
+
   it('treats expandTerms as a no-op without memory configured', async () => {
     const advancedSearch = vi.fn(async () => searchResult('FOUND'));
     const service = new MultiMailboxService(config(), () =>

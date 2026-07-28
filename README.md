@@ -223,12 +223,17 @@ that actually apply to that case are operational rather than architectural: this
 loopback-only and single-operator, and the parser dependencies must be kept current. Note that
 the mailbox allowlist is *not* one of them — the allowlist bounds which mailboxes are read, not
 who can send a document into them, and processing third-party attachments is the point of the
-feature. What does make the exploit case unlikely today is that every parser in the chain
-(`pdfjs-dist` with `isEvalSupported: false`, `exceljs`, `mammoth`, `unzipper`) is pure
-JavaScript with no native addon, so the realistic failure mode is resource exhaustion rather
-than memory-corruption RCE. **Adding a native parsing dependency reopens this question** and
-should come with an OS-level sandbox or container, which is also what deployments with a
-stronger threat model should use regardless.
+feature.
+
+There is also native code in the chain, which is easy to miss: `exceljs`, `mammoth` and
+`unzipper` are plain JavaScript, but `pdfjs-dist` `require`s the optional `@napi-rs/canvas`
+(a Skia binding) at module load on Node, inside a `try`/`catch`, whether or not anything is
+ever rasterized. A default `npm install` therefore puts a `.node` binary in the process that
+parses attachments. This server never rasterizes — it only calls `getTextContent()` — and
+pdfjs degrades gracefully with a warning when the package is absent, so a deployment that
+wants that binary out of the parsing process can install with `--omit=optional`. Assume no
+sandbox beyond that: for a stronger threat model, run the server under an OS-level sandbox or
+in a container.
 
 ### Labeled batch search: `search_mailboxes_batch`
 
