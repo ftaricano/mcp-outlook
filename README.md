@@ -220,9 +220,15 @@ including its credentials, environment, and privileges, so a parser exploited th
 document is not contained by it. Within the size and concurrency bounds above, the expected
 failure mode is degradation of this one local process; a parser RCE would not be. The mitigations
 that actually apply to that case are operational rather than architectural: this server is
-loopback-only and single-operator, every attachment comes from an allowlisted corporate mailbox
-rather than the open internet, and the parser dependencies must be kept current. Deployments with
-a stronger threat model should run the server in an OS-level sandbox or container.
+loopback-only and single-operator, and the parser dependencies must be kept current. Note that
+the mailbox allowlist is *not* one of them — the allowlist bounds which mailboxes are read, not
+who can send a document into them, and processing third-party attachments is the point of the
+feature. What does make the exploit case unlikely today is that every parser in the chain
+(`pdfjs-dist` with `isEvalSupported: false`, `exceljs`, `mammoth`, `unzipper`) is pure
+JavaScript with no native addon, so the realistic failure mode is resource exhaustion rather
+than memory-corruption RCE. **Adding a native parsing dependency reopens this question** and
+should come with an OS-level sandbox or container, which is also what deployments with a
+stronger threat model should use regardless.
 
 ### Labeled batch search: `search_mailboxes_batch`
 

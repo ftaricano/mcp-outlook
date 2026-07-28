@@ -175,6 +175,42 @@ describe('deterministic caps and term expansion', () => {
     ]);
   });
 
+  it('flags the merged union as truncated and keeps the newest across terms, not the first term', async () => {
+    const memory = loadSearchMemory(writeMemory(SAMPLE_MEMORY_YAML))!;
+    // Each term returns distinct messages; the first term's are the OLDEST, so
+    // an unsorted insertion-order cut would keep exactly the wrong ones.
+    let call = 0;
+    const advancedSearch = vi.fn(async () => {
+      call += 1;
+      const base = searchResult('FOUND');
+      return {
+        ...base,
+        messages: [
+          { id: `m${call}a`, receivedDateTime: `2026-0${call}-01T00:00:00Z` },
+          { id: `m${call}b`, receivedDateTime: `2026-0${call}-02T00:00:00Z` },
+        ] as typeof base.messages,
+      };
+    });
+    const service = new MultiMailboxService(
+      config(),
+      () => stubEmailService({ advancedSearchEmailsDetailed: advancedSearch }),
+      memory
+    );
+
+    const result = await service.searchMailbox('finance', {
+      query: 'Empresa Alfa Navegacao',
+      expandTerms: true,
+      maxResults: 2,
+    });
+
+    expect(advancedSearch.mock.calls.length).toBeGreaterThan(1);
+    expect(result.messages).toHaveLength(2);
+    // Newest overall wins regardless of which term produced them.
+    expect(result.messages[0].receivedDateTime! > result.messages[1].receivedDateTime!).toBe(true);
+    expect(result.truncated).toBe(true);
+    expect(result.warnings).toContain('expanded_merge_truncated');
+  });
+
   it('treats expandTerms as a no-op without memory configured', async () => {
     const advancedSearch = vi.fn(async () => searchResult('FOUND'));
     const service = new MultiMailboxService(config(), () =>
@@ -231,6 +267,30 @@ describe('write methods', () => {
     expect(markRead).toHaveBeenCalled();
     await service.markMessages('finance', ['m1'], false);
     expect(markUnread).toHaveBeenCalled();
+  });
+
+  it('refuses the draft when an attachment fails to encode instead of attaching nothing', async () => {
+    const createDraft = vi.fn(async () => ({ success: true, draftId: 'd1', attachmentsCount: 2 }));
+    // The real encoder resolves with success:false rather than throwing.
+    const encodeFileForAttachment = vi.fn(async (path: string) =>
+      path.includes('blocked')
+        ? { success: false, name: '', contentType: '', content: '', size: 0 }
+        : { success: true, name: 'ok.pdf', contentType: 'application/pdf', content: 'AAA', size: 3 }
+    );
+    const service = new MultiMailboxService(config(), () =>
+      stubEmailService({ createDraft, encodeFileForAttachment })
+    );
+
+    await expect(
+      service.createDraftMessage('finance', {
+        to: ['x@example.com'],
+        subject: 's',
+        body: '<p>b</p>',
+        attachmentPaths: ['/allowed/ok.pdf', '/blocked/secret.pdf'],
+      })
+    ).rejects.toThrow(/draft attachment encoding failed/i);
+
+    expect(createDraft).not.toHaveBeenCalled();
   });
 
   it('creates a draft and never exposes a send path', async () => {

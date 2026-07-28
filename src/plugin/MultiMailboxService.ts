@@ -425,6 +425,13 @@ export class MultiMailboxService {
             draft.attachmentPaths.map((path) => emailService.encodeFileForAttachment(path))
           )
         : undefined;
+      // encodeFileForAttachment resolves with success:false instead of throwing
+      // when the path is rejected, missing, or oversized. Attaching that result
+      // would produce a draft carrying an empty attachment while this tool
+      // reported it as attached.
+      if (attachments?.some((attachment) => !attachment.success)) {
+        throw new MailboxOperationError('draft attachment encoding');
+      }
       const outcome = await emailService.createDraft(
         [...draft.to],
         draft.subject,
@@ -439,7 +446,11 @@ export class MultiMailboxService {
         draftId: outcome.draftId,
         attachmentsCount: outcome.attachmentsCount,
       };
-    } catch {
+    } catch (error) {
+      // Keep our own redacted reason; only Graph/encoder failures collapse into
+      // the generic one, so the caller can tell "bad attachment path" apart
+      // from "Graph refused the draft".
+      if (error instanceof MailboxOperationError) throw error;
       throw new MailboxOperationError('draft creation');
     }
   }
@@ -517,16 +528,46 @@ export class MultiMailboxService {
         }
         aggregate = aggregate ? mergeEvidence(aggregate, evidence) : evidence;
       }
+      // Order the union before cutting it: Map iteration is insertion order, so
+      // an unsorted slice would silently favour whichever term ran first — the
+      // original query — and discard the alias/group hits that motivated the
+      // expansion. And a cut here is real incompleteness, so it has to show up
+      // in the evidence rather than being reported as a clean full result.
+      const union = sortMessages(
+        [...merged.values()],
+        searchCriteria.sortBy,
+        searchCriteria.sortOrder
+      );
+      const overflowed = union.length > maxResults;
       return {
         mailbox: mailbox.alias,
         ...aggregate!,
-        messages: [...merged.values()].slice(0, maxResults),
+        messages: union.slice(0, maxResults),
+        truncated: aggregate!.truncated || overflowed,
+        warnings: overflowed
+          ? [...new Set([...aggregate!.warnings, 'expanded_merge_truncated'])]
+          : aggregate!.warnings,
         expandedTerms: terms,
       };
     } catch {
       return redactedFailedSearch(mailbox.alias);
     }
   }
+}
+
+function sortMessages(
+  messages: Message[],
+  sortBy: string | undefined,
+  sortOrder: string | undefined
+): Message[] {
+  if (sortBy && sortBy !== 'receivedDateTime') return messages;
+  const direction = sortOrder === 'asc' ? 1 : -1;
+  return messages.sort((a, b) => {
+    const left = a.receivedDateTime ?? '';
+    const right = b.receivedDateTime ?? '';
+    if (left === right) return 0;
+    return left < right ? -direction : direction;
+  });
 }
 
 function redactBatchOutcomes(
