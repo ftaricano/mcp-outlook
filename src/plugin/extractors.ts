@@ -47,9 +47,10 @@ export interface AttachmentPipelineRequest {
   readonly password?: string;
   readonly zipLimits: ContainerLimits;
   readonly containerLimits?: ContainerLimits;
-  // Required for 'raw' mode: the worker rejects oversized raw output itself,
-  // before cloning bytes back to the main thread via postMessage. Ignored in
-  // 'text' mode (maxExtractedChars is the relevant ceiling there).
+  // Required for 'raw' mode. Enforced wherever the bytes are produced: in this
+  // module for a plain attachment (no worker involved), and inside the worker
+  // for a ZIP entry, before anything is cloned back over postMessage. Ignored
+  // in 'text' mode (maxExtractedChars is the relevant ceiling there).
   readonly maxRawBytes?: number;
   // Caps how many extraction workers may run concurrently across the whole
   // process; see createExtractionGate below.

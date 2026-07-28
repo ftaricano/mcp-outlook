@@ -195,9 +195,11 @@ password: `Attachment content failed: <CODE>` where `<CODE>` is one of `ATTACHME
 `RAW_TOO_LARGE`, `ATTACHMENT_FETCH_FAILED`, `UNSUPPORTED_FORMAT`, `EXTRACTION_FAILED`,
 `EXTRACTION_TIMEOUT`, `EXTRACTION_BUSY`, `ZIP_INVALID`, `ZIP_TOO_MANY_ENTRIES`, `ZIP_TOO_LARGE`,
 `ZIP_ENTRY_NOT_FOUND`, `ZIP_ENCRYPTED`, or `ZIP_UNSUPPORTED_ENCRYPTION`. `RAW_TOO_LARGE` is
-always raised before the oversized bytes are copied anywhere. A plain (non-archive) attachment
-is size-checked in place, without involving the worker at all; a ZIP entry is checked inside the
-worker while the entry streams, so it fails at the cap rather than after inflating up to
+raised where the bytes are produced, before they are copied any further. The attachment itself
+has already been fetched and decoded at that point (bounded by `maxAttachmentInputBytes`); what
+the cap prevents is a second copy. A plain (non-archive) attachment is size-checked in place,
+without involving the worker at all; a ZIP entry is checked inside the worker while the entry
+streams, so it fails at the cap rather than after inflating up to
 `maxZipUncompressedBytes`.
 `EXTRACTION_BUSY` means the server already has `maxConcurrentExtractions` extractions in flight
 plus a full backlog queue; retry after a short delay.
@@ -293,7 +295,7 @@ Create `~/.config/mcp-outlook/plugin.json` with mode `0600`:
 | `allowWrites` | `false` | Registers the 5 write tools when `true` (see env override below) |
 | `maxAttachmentInputBytes` | 15 MB | Cap on the attachment file before extraction/raw handling |
 | `maxExtractedChars` | 200,000 | Cap on extracted text returned to the caller |
-| `maxRawAttachmentBytes` | 256 KB | Cap on `mode: 'raw'` base64 output (enforced inside the worker) |
+| `maxRawAttachmentBytes` | 256 KB | Cap on `mode: 'raw'` base64 output |
 | `maxConcurrentExtractions` | 2 | Max extraction workers running at once (1-8); excess calls queue, then `EXTRACTION_BUSY` |
 | `maxBatchSize` | 25 | Cap on `messageIds[]` / `attachmentIds[]` in move/copy/mark/download |
 | `maxQueriesPerBatch` | 10 | Cap on `queries[]` in `search_mailboxes_batch` |

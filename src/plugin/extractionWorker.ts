@@ -14,8 +14,10 @@
 // exactly what a zip-bomb-style attack grows. It is NOT a memory sandbox and
 // does NOT by itself bound worst-case RSS. The actual input-size guarantees
 // come from `maxAttachmentInputBytes`, the ZIP entry/byte caps enforced by
-// zipArchive.ts's `readStreamWithCap`, the raw-mode cap enforced below before
-// any postMessage, and the extraction concurrency gate in extractors.ts that
+// zipArchive.ts's `readStreamWithCap`, the raw-mode cap — enforced below,
+// before any postMessage, for the ZIP entries that reach this worker; a plain
+// raw attachment never gets here, extractors.ts caps it in the caller — and
+// the extraction concurrency gate in extractors.ts that
 // bounds how many of these workers can run at once. A worker thread is also
 // not a security boundary: it shares the process, its credentials, and its
 // privileges, so a parser exploited by a malicious document is not contained

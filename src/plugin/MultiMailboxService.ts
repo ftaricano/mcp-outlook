@@ -252,8 +252,9 @@ export class MultiMailboxService {
       return { ...base, kind: 'zip_listing', zipEntries: result.zipEntries };
     }
     if (result.kind === 'raw') {
-      // Redundant, cheap defense-in-depth: the worker already enforced this
-      // cap before the bytes were cloned back via postMessage.
+      // Redundant, cheap defense-in-depth: runAttachmentPipeline already
+      // enforced this cap where the bytes were produced — in the caller for a
+      // plain attachment, inside the worker for a ZIP entry.
       if (result.sizeBytes > this.config.maxRawAttachmentBytes) {
         throw new AttachmentContentError('RAW_TOO_LARGE');
       }
