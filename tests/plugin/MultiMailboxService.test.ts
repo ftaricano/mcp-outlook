@@ -245,6 +245,44 @@ describe('deterministic caps and term expansion', () => {
     expect(result.confidence).toBe('medium');
   });
 
+  it('orders the merged union the same way the underlying search does, accents and case included', async () => {
+    const memory = loadSearchMemory(writeMemory(SAMPLE_MEMORY_YAML))!;
+    // Binary '<' would sort uppercase before lowercase and put accented words
+    // after 'z'; localeCompare — what EmailService uses — does neither.
+    const subjects = [
+      ['fatura', 'Ápice'],
+      ['Zebra', 'ábaco'],
+    ];
+    let call = 0;
+    const advancedSearch = vi.fn(async () => {
+      const base = searchResult('FOUND');
+      const pair = subjects[call];
+      call += 1;
+      return {
+        ...base,
+        messages: pair.map((subject, index) => ({ id: `${subject}-${index}`, subject })),
+      } as typeof base;
+    });
+    const service = new MultiMailboxService(
+      config(),
+      () => stubEmailService({ advancedSearchEmailsDetailed: advancedSearch }),
+      memory
+    );
+
+    const result = await service.searchMailbox('finance', {
+      query: 'Empresa Alfa Navegacao',
+      expandTerms: true,
+      maxResults: 10,
+      sortBy: 'subject',
+      sortOrder: 'asc',
+    });
+
+    const merged = ['fatura', 'Ápice', 'Zebra', 'ábaco'];
+    expect(result.messages.map((message) => message.subject)).toEqual(
+      [...merged].sort((a, b) => a.localeCompare(b))
+    );
+  });
+
   it('treats expandTerms as a no-op without memory configured', async () => {
     const advancedSearch = vi.fn(async () => searchResult('FOUND'));
     const service = new MultiMailboxService(config(), () =>

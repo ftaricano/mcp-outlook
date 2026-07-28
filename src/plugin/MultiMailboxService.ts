@@ -572,22 +572,29 @@ export class MultiMailboxService {
   }
 }
 
-// The schema allows sorting by receivedDateTime or subject. Both have to be
-// handled here: falling back to Map insertion order for either one would put
-// the caller's requested order at the mercy of which expanded term ran first.
+// Re-sorts the union of the expanded terms before it is cut: falling back to
+// Map insertion order would put the caller's requested order at the mercy of
+// which term ran first. This deliberately mirrors the comparator in
+// EmailService.sortAdvancedMessages — same key selection, same localeCompare,
+// same direction — so a merged result cannot be ordered differently from a
+// single-term one. Keep the two in step if either changes.
 function sortMessages(
   messages: Message[],
   sortBy: string | undefined,
   sortOrder: string | undefined
 ): Message[] {
-  const key = sortBy === 'subject' ? 'subject' : 'receivedDateTime';
   const direction = sortOrder === 'asc' ? 1 : -1;
-  return messages.sort((a, b) => {
-    const left = a[key] ?? '';
-    const right = b[key] ?? '';
-    if (left === right) return 0;
-    return left < right ? -direction : direction;
-  });
+  const valueOf = (message: Message): string | null | undefined =>
+    sortBy === 'from'
+      ? message.from?.emailAddress?.address
+      : sortBy === 'subject'
+        ? message.subject
+        : message.receivedDateTime;
+
+  return [...messages].sort(
+    (left, right) =>
+      String(valueOf(left) ?? '').localeCompare(String(valueOf(right) ?? '')) * direction
+  );
 }
 
 function redactBatchOutcomes(
