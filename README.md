@@ -209,11 +209,17 @@ or native-addon memory — it is not a full memory sandbox. The actual size guar
 `maxAttachmentInputBytes` (checked before any parser runs), the ZIP entry/byte caps
 (`maxZipEntries`, `maxZipUncompressedBytes`, enforced on real bytes read, not declared metadata),
 the raw-mode cap above, and `maxConcurrentExtractions` (below), which bounds how many of these
-workers can run at once so per-worker cost can't be multiplied by unbounded parallelism. Accepted
-residual risk: a hostile attachment can still degrade (self-DoS) this one local process within
-those bounds. It cannot escape the process, read another mailbox's data, or exfiltrate anything —
-this server is loopback-only, single-operator, and every attachment already comes from an
-allowlisted corporate mailbox.
+workers can run at once so per-worker cost can't be multiplied by unbounded parallelism.
+
+Accepted residual risk, stated plainly: a worker thread is an isolation boundary for the event
+loop and for wall-clock time, **not a security boundary**. It shares the process with the server,
+including its credentials, environment, and privileges, so a parser exploited through a malicious
+document is not contained by it. Within the size and concurrency bounds above, the expected
+failure mode is degradation of this one local process; a parser RCE would not be. The mitigations
+that actually apply to that case are operational rather than architectural: this server is
+loopback-only and single-operator, every attachment comes from an allowlisted corporate mailbox
+rather than the open internet, and the parser dependencies must be kept current. Deployments with
+a stronger threat model should run the server in an OS-level sandbox or container.
 
 ### Labeled batch search: `search_mailboxes_batch`
 

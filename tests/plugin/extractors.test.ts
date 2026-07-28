@@ -136,7 +136,25 @@ describe('extractAttachmentText', () => {
 describe('runAttachmentPipeline raw mode cap', () => {
   const zipLimits = { maxEntries: 200, maxUncompressedBytes: 50 * 1024 * 1024 };
 
-  it('rejects raw mode above maxRawBytes with a stable code, enforced inside the worker', async () => {
+  it('returns the caller buffer itself for non-container raw mode, proving it never crossed a thread boundary', async () => {
+    const buffer = Buffer.from('bytes que nao precisam de parser');
+    const result = await runAttachmentPipeline({
+      buffer,
+      name: 'nota.bin',
+      contentType: 'application/octet-stream',
+      maxChars: 10_000,
+      mode: 'raw',
+      zipLimits,
+      maxRawBytes: 256 * 1024,
+    });
+
+    // structuredClone through workerData would hand back a copy; identity here
+    // is the observable proof that the short-circuit skipped the worker.
+    expect(result).toMatchObject({ kind: 'raw' });
+    expect((result as { bytes: Buffer }).bytes).toBe(buffer);
+  });
+
+  it('rejects raw mode above maxRawBytes with a stable code, before any thread transfer', async () => {
     await expect(
       runAttachmentPipeline({
         buffer: Buffer.alloc(300 * 1024),

@@ -1,6 +1,7 @@
 import { Worker } from 'node:worker_threads';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isZipArchiveAttachment } from './extractionFormat.js';
 import { ZipError, type ZipEntryInfo, type ZipErrorCode } from './zipArchive.js';
 
 export { ZipError, type ZipEntryInfo, type ZipErrorCode } from './zipArchive.js';
@@ -267,6 +268,24 @@ export async function runAttachmentPipeline(
     maxUncompressedBytes: DEFAULT_CONTAINER_MAX_UNCOMPRESSED_BYTES,
   };
   const maxRawBytes = request.maxRawBytes ?? Number.MAX_SAFE_INTEGER;
+
+  // Raw mode on a non-container attachment needs no parser and no inflate, so
+  // handing it to the worker would only structured-clone the payload across the
+  // thread boundary before rejecting it. Decide here instead: the size check is
+  // a length comparison on bytes we already hold, and `isZipArchiveAttachment`
+  // reads magic bytes and the name only.
+  if (
+    request.mode === 'raw' &&
+    !isZipArchiveAttachment(request.buffer, request.name, request.contentType)
+  ) {
+    if (request.buffer.length > maxRawBytes) throw new ExtractionError('RAW_TOO_LARGE');
+    return {
+      kind: 'raw',
+      bytes: request.buffer,
+      sizeBytes: request.buffer.length,
+    };
+  }
+
   const gate = getSharedExtractionGate(
     request.maxConcurrentExtractions ?? DEFAULT_MAX_CONCURRENT_EXTRACTIONS
   );
