@@ -1,11 +1,24 @@
 // Runs inside a dedicated worker_thread (spawned by extractors.ts). This is
 // the single hostile-content handler: ZIP listing/extraction (decryption +
 // inflate, via zipArchive.ts) and attachment parsing (pdfjs / ExcelJS /
-// mammoth) all happen here, so a hostile or malformed file can only exhaust
-// the resourceLimits budget of this worker — never the CPU/heap of the main
-// MCP process. The supervisor (extractors.ts) enforces the wall-clock
-// timeout and terminates this thread; this file never talks back except via
-// a single postMessage, and it never includes a password in that message.
+// mammoth) all happen here. The supervisor (extractors.ts) enforces the
+// wall-clock timeout and terminates this thread; this file never talks back
+// except via a single postMessage, and it never includes a password in that
+// message.
+//
+// Honest scope of the isolation, corrected per JAR-782 review: worker_threads
+// keeps a hostile file's *event-loop* work (parsing, decompression) off the
+// main MCP process and lets the supervisor `terminate()` it hard on timeout.
+// `resourceLimits` below only caps this worker's own V8 heap — it does
+// nothing for Buffer/ArrayBuffer allocations or native-addon memory, which is
+// exactly what a zip-bomb-style attack grows. It is NOT a memory sandbox and
+// does NOT by itself bound worst-case RSS. The actual input-size guarantees
+// come from `maxAttachmentInputBytes`, the ZIP entry/byte caps enforced by
+// zipArchive.ts's `readStreamWithCap`, the raw-mode cap enforced below before
+// any postMessage, and the extraction concurrency gate in extractors.ts that
+// bounds how many of these workers can run at once. The accepted residual:
+// a hostile attachment can still degrade this one process (self-DoS) within
+// those bounds; it cannot escape the process or exfiltrate data.
 import { parentPort, workerData } from 'node:worker_threads';
 import ExcelJS from 'exceljs';
 import mammoth from 'mammoth';
@@ -145,10 +158,12 @@ async function runPipeline(
     // uncompressed size per entry, but that field is attacker-controlled
     // metadata (zip bombs falsify it) — this cap does NOT bound real bytes
     // read. It exists purely to reject obviously-bad declared sizes before
-    // paying for ExcelJS/mammoth. The real guarantee against unbounded
-    // CPU/memory from a hostile xlsx/docx payload is this worker's own
-    // resourceLimits, enforced by the supervisor regardless of what the file
-    // itself claims.
+    // paying for ExcelJS/mammoth. What actually bounds a hostile xlsx/docx
+    // payload here is the pre-parse input cap (maxAttachmentInputBytes, this
+    // buffer already passed it before reaching the worker) plus the
+    // supervisor's wall-clock timeout/terminate() and the extraction
+    // concurrency gate — resourceLimits only caps this worker's V8 heap, not
+    // the Buffer/native memory ExcelJS/mammoth allocate while parsing.
     try {
       await listZipEntries(buffer, containerLimits);
     } catch (error) {

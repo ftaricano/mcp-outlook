@@ -114,4 +114,16 @@ describe('getAttachmentContent', () => {
     const result = await service.getAttachmentContent('finance', 'm1', 'a1', { mode: 'text' });
     expect(result.kind).toBe('zip_listing');
   });
+
+  it('serializes concurrent extractions under a tight maxConcurrentExtractions instead of failing them', async () => {
+    const service = new MultiMailboxService(config({ maxConcurrentExtractions: 1 }), () =>
+      stubEmailService(attachmentStub(MINIMAL_PDF, 'fatura.pdf', 'application/pdf'))
+    );
+    const results = await Promise.all(
+      Array.from({ length: 3 }, () =>
+        service.getAttachmentContent('finance', 'm1', 'a1', { mode: 'text' })
+      )
+    );
+    expect(results.every((result) => result.kind === 'text')).toBe(true);
+  });
 });

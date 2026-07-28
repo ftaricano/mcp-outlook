@@ -152,6 +152,7 @@ describe('expansion config fields', () => {
     expect(config.maxAttachmentInputBytes).toBe(15 * 1024 * 1024);
     expect(config.maxExtractedChars).toBe(200_000);
     expect(config.maxRawAttachmentBytes).toBe(256 * 1024);
+    expect(config.maxConcurrentExtractions).toBe(2);
     expect(config.maxBatchSize).toBe(25);
     expect(config.maxQueriesPerBatch).toBe(10);
     expect(config.maxZipEntries).toBe(200);
@@ -162,6 +163,19 @@ describe('expansion config fields', () => {
   it('rejects out-of-range limits', () => {
     expect(() =>
       loadPluginConfig(writeConfig(validConfig({ maxRawAttachmentBytes: 10 * 1024 * 1024 })))
+    ).toThrow(/Invalid Outlook plugin configuration/);
+  });
+
+  it('accepts maxConcurrentExtractions within [1, 8] and rejects outside it', () => {
+    expect(
+      loadPluginConfig(writeConfig(validConfig({ maxConcurrentExtractions: 8 })))
+        .maxConcurrentExtractions
+    ).toBe(8);
+    expect(() =>
+      loadPluginConfig(writeConfig(validConfig({ maxConcurrentExtractions: 0 })))
+    ).toThrow(/Invalid Outlook plugin configuration/);
+    expect(() =>
+      loadPluginConfig(writeConfig(validConfig({ maxConcurrentExtractions: 9 })))
     ).toThrow(/Invalid Outlook plugin configuration/);
   });
 

@@ -17,7 +17,11 @@ export interface ContainerLimits {
 }
 
 export type ExtractionErrorCode =
-  'UNSUPPORTED_FORMAT' | 'EXTRACTION_FAILED' | 'EXTRACTION_TIMEOUT' | 'RAW_TOO_LARGE';
+  | 'UNSUPPORTED_FORMAT'
+  | 'EXTRACTION_FAILED'
+  | 'EXTRACTION_TIMEOUT'
+  | 'RAW_TOO_LARGE'
+  | 'EXTRACTION_BUSY';
 
 export class ExtractionError extends Error {
   constructor(readonly code: ExtractionErrorCode) {
@@ -46,6 +50,9 @@ export interface AttachmentPipelineRequest {
   // before cloning bytes back to the main thread via postMessage. Ignored in
   // 'text' mode (maxExtractedChars is the relevant ceiling there).
   readonly maxRawBytes?: number;
+  // Caps how many extraction workers may run concurrently across the whole
+  // process; see createExtractionGate below.
+  readonly maxConcurrentExtractions?: number;
 }
 
 export type AttachmentPipelineResult =
@@ -81,13 +88,16 @@ function isZipErrorCode(code: string): code is ZipErrorCode {
 
 /**
  * Spawns `workerUrl` with `workerData`, enforces a wall-clock timeout, and
- * always tears the worker down. This is the resource-isolation boundary for
- * hostile input: the resourceLimits below cap the worker's own heap
- * regardless of what the parser inside it does, and the timeout kills a
- * worker that never reports back — neither depends on the file's own
- * declared metadata. Exported (not just used) so the timeout/crash paths can
- * be exercised directly in tests against a small fixture worker, without
- * waiting out the real 30s production timeout.
+ * always tears the worker down. This keeps a hostile file's parsing work off
+ * the main process's event loop and guarantees a hard `terminate()` if the
+ * worker never reports back — neither depends on the file's own declared
+ * metadata. `resourceLimits` below caps only this worker's V8 heap; it does
+ * NOT bound Buffer/ArrayBuffer or native-addon memory, so it is not a memory
+ * sandbox by itself (see extractionWorker.ts header and the extraction
+ * concurrency gate below for the rest of the picture). Exported (not just
+ * used) so the timeout/crash paths can be exercised directly in tests against
+ * a small fixture worker, without waiting out the real 30s production
+ * timeout.
  */
 export async function runIsolatedWorker<TSuccess>(
   workerUrl: URL,
@@ -164,6 +174,83 @@ interface RawWorkerResult {
 
 type WorkerSuccessResult = Exclude<AttachmentPipelineResult, { kind: 'raw' }> | RawWorkerResult;
 
+const DEFAULT_MAX_CONCURRENT_EXTRACTIONS = 2;
+// Not caller-configurable (unlike maxConcurrentExtractions): a bound on how
+// many callers may wait for a free worker slot before the server tells them
+// to back off, so an overload can't grow the pending-promise queue without
+// limit.
+const MAX_QUEUED_EXTRACTIONS = 16;
+
+export interface ExtractionGate {
+  run<T>(task: () => Promise<T>): Promise<T>;
+}
+
+/**
+ * A simple counting semaphore bounding how many extraction workers may run
+ * at once. worker_threads' resourceLimits only caps a single worker's own
+ * heap (see extractionWorker.ts) — nothing stops a caller from spawning many
+ * workers in parallel and multiplying that per-worker budget by however many
+ * are in flight. This gate is the process-wide cap on concurrency: calls
+ * beyond `maxConcurrent` wait in a bounded queue; calls beyond
+ * `maxConcurrent + maxQueued` fail fast with EXTRACTION_BUSY instead of
+ * growing the queue without limit.
+ */
+export function createExtractionGate(
+  maxConcurrent: number,
+  maxQueued: number = MAX_QUEUED_EXTRACTIONS
+): ExtractionGate {
+  let active = 0;
+  const waiting: Array<() => void> = [];
+
+  function acquire(): Promise<void> | void {
+    if (active < maxConcurrent) {
+      active += 1;
+      return;
+    }
+    if (waiting.length >= maxQueued) {
+      throw new ExtractionError('EXTRACTION_BUSY');
+    }
+    return new Promise<void>((resolve) => {
+      waiting.push(() => {
+        active += 1;
+        resolve();
+      });
+    });
+  }
+
+  function release(): void {
+    active -= 1;
+    const next = waiting.shift();
+    if (next) next();
+  }
+
+  return {
+    async run<T>(task: () => Promise<T>): Promise<T> {
+      await acquire();
+      try {
+        return await task();
+      } finally {
+        release();
+      }
+    },
+  };
+}
+
+let sharedExtractionGate: ExtractionGate | undefined;
+let sharedExtractionGateCapacity: number | undefined;
+
+// `maxConcurrentExtractions` is a static per-process config value, so a
+// single shared gate (recreated only if the requested capacity actually
+// changes, e.g. across test configs) is enough — the queue must persist
+// across concurrent calls for the count to mean anything.
+function getSharedExtractionGate(maxConcurrent: number): ExtractionGate {
+  if (!sharedExtractionGate || sharedExtractionGateCapacity !== maxConcurrent) {
+    sharedExtractionGate = createExtractionGate(maxConcurrent);
+    sharedExtractionGateCapacity = maxConcurrent;
+  }
+  return sharedExtractionGate;
+}
+
 /**
  * The single entry point into the isolated worker for attachment content.
  * Everything that touches hostile bytes — ZIP listing, decryption, inflate,
@@ -180,21 +267,26 @@ export async function runAttachmentPipeline(
     maxUncompressedBytes: DEFAULT_CONTAINER_MAX_UNCOMPRESSED_BYTES,
   };
   const maxRawBytes = request.maxRawBytes ?? Number.MAX_SAFE_INTEGER;
+  const gate = getSharedExtractionGate(
+    request.maxConcurrentExtractions ?? DEFAULT_MAX_CONCURRENT_EXTRACTIONS
+  );
 
   let response: WorkerSuccessResult;
   try {
-    response = await runIsolatedWorker<WorkerSuccessResult>(extractionWorkerUrl(), {
-      buffer: request.buffer,
-      name: request.name,
-      contentType: request.contentType,
-      maxChars: request.maxChars,
-      mode: request.mode,
-      entry: request.entry,
-      password: request.password,
-      zipLimits: request.zipLimits,
-      containerLimits,
-      maxRawBytes,
-    });
+    response = await gate.run(() =>
+      runIsolatedWorker<WorkerSuccessResult>(extractionWorkerUrl(), {
+        buffer: request.buffer,
+        name: request.name,
+        contentType: request.contentType,
+        maxChars: request.maxChars,
+        mode: request.mode,
+        entry: request.entry,
+        password: request.password,
+        zipLimits: request.zipLimits,
+        containerLimits,
+        maxRawBytes,
+      })
+    );
   } catch (error) {
     throw normalizeWorkerError(error);
   }

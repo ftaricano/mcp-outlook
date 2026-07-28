@@ -220,9 +220,12 @@ export class MultiMailboxService {
 
     // The isolated worker (extractionWorker.ts) is the sole place that
     // decrypts, inflates, or parses attachment bytes — nothing here touches
-    // zipArchive.ts or a document parser directly, so hostile content can
-    // only exhaust that worker's own resourceLimits budget, never the main
-    // MCP process.
+    // zipArchive.ts or a document parser directly. That worker isolation
+    // bounds the event loop and V8 heap of one worker, not native/Buffer
+    // memory; the actual size guarantees are maxAttachmentInputBytes above,
+    // the raw cap passed below (enforced inside the worker before any bytes
+    // are cloned back here), the ZIP caps, and the concurrency gate bounding
+    // how many workers can run at once (see extractors.ts).
     let result;
     try {
       result = await runAttachmentPipeline({
@@ -236,6 +239,7 @@ export class MultiMailboxService {
         zipLimits,
         containerLimits: zipLimits,
         maxRawBytes: this.config.maxRawAttachmentBytes,
+        maxConcurrentExtractions: this.config.maxConcurrentExtractions,
       });
     } catch (error) {
       if (error instanceof ZipError || error instanceof ExtractionError) {
@@ -248,6 +252,8 @@ export class MultiMailboxService {
       return { ...base, kind: 'zip_listing', zipEntries: result.zipEntries };
     }
     if (result.kind === 'raw') {
+      // Redundant, cheap defense-in-depth: the worker already enforced this
+      // cap before the bytes were cloned back via postMessage.
       if (result.sizeBytes > this.config.maxRawAttachmentBytes) {
         throw new AttachmentContentError('RAW_TOO_LARGE');
       }

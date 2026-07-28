@@ -27,6 +27,7 @@ function dependencies() {
     maxAttachmentInputBytes: 15 * 1024 * 1024,
     maxExtractedChars: 200_000,
     maxRawAttachmentBytes: 256 * 1024,
+    maxConcurrentExtractions: 2,
     maxBatchSize: 25,
     maxQueriesPerBatch: 10,
     maxZipEntries: 200,

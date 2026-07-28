@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
 import {
+  createExtractionGate,
   extractAttachmentText,
   ExtractionError,
   runAttachmentPipeline,
@@ -192,6 +193,48 @@ describe('runAttachmentPipeline raw mode cap', () => {
       })
     ).rejects.toMatchObject({ code: 'RAW_TOO_LARGE' });
     expect(Date.now() - started).toBeLessThan(5_000);
+  });
+});
+
+describe('createExtractionGate', () => {
+  it('never runs more than maxConcurrent tasks at once', async () => {
+    const gate = createExtractionGate(2, 16);
+    let active = 0;
+    let peak = 0;
+
+    const task = () =>
+      gate.run(async () => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        active -= 1;
+      });
+
+    await Promise.all([task(), task(), task(), task(), task()]);
+    expect(peak).toBeLessThanOrEqual(2);
+  });
+
+  it('rejects with EXTRACTION_BUSY once the wait queue is full instead of growing it unbounded', async () => {
+    function deferred(): { promise: Promise<void>; resolve: () => void } {
+      let resolve!: () => void;
+      const promise = new Promise<void>((r) => {
+        resolve = r;
+      });
+      return { promise, resolve };
+    }
+
+    const gate = createExtractionGate(1, 1);
+    const first = deferred();
+    const second = deferred();
+
+    const firstRun = gate.run(() => first.promise); // takes the only active slot
+    const secondRun = gate.run(() => second.promise); // queues (queue now full: 1/1)
+    await expect(gate.run(async () => {})).rejects.toMatchObject({ code: 'EXTRACTION_BUSY' });
+
+    first.resolve();
+    await firstRun;
+    second.resolve();
+    await secondRun;
   });
 });
 

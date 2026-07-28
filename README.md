@@ -193,11 +193,27 @@ unzip tool.
 Errors from this tool are always redacted to a stable code, never a parser stack or the
 password: `Attachment content failed: <CODE>` where `<CODE>` is one of `ATTACHMENT_TOO_LARGE`,
 `RAW_TOO_LARGE`, `ATTACHMENT_FETCH_FAILED`, `UNSUPPORTED_FORMAT`, `EXTRACTION_FAILED`,
-`EXTRACTION_TIMEOUT`, `ZIP_INVALID`, `ZIP_TOO_MANY_ENTRIES`, `ZIP_TOO_LARGE`,
+`EXTRACTION_TIMEOUT`, `EXTRACTION_BUSY`, `ZIP_INVALID`, `ZIP_TOO_MANY_ENTRIES`, `ZIP_TOO_LARGE`,
 `ZIP_ENTRY_NOT_FOUND`, `ZIP_ENCRYPTED`, or `ZIP_UNSUPPORTED_ENCRYPTION`. `RAW_TOO_LARGE` is
 enforced inside the extraction worker itself, before the oversized bytes are ever cloned back to
 the main process — so raw mode over the cap fails cheaply rather than after fully inflating the
 attachment (including a ZIP entry, up to `maxZipUncompressedBytes`, if `entry` is set).
+`EXTRACTION_BUSY` means the server already has `maxConcurrentExtractions` extractions in flight
+plus a full backlog queue; retry after a short delay.
+
+**Worker isolation — what it actually guarantees.** Each attachment is parsed inside a dedicated
+`worker_thread` with a wall-clock timeout and a hard `terminate()`, so a hostile or slow file
+cannot block the main process's event loop and cannot outlive the timeout. `worker_threads`
+`resourceLimits` caps that worker's own V8 heap, but **not** its Buffer/ArrayBuffer allocations
+or native-addon memory — it is not a full memory sandbox. The actual size guarantees are
+`maxAttachmentInputBytes` (checked before any parser runs), the ZIP entry/byte caps
+(`maxZipEntries`, `maxZipUncompressedBytes`, enforced on real bytes read, not declared metadata),
+the raw-mode cap above, and `maxConcurrentExtractions` (below), which bounds how many of these
+workers can run at once so per-worker cost can't be multiplied by unbounded parallelism. Accepted
+residual risk: a hostile attachment can still degrade (self-DoS) this one local process within
+those bounds. It cannot escape the process, read another mailbox's data, or exfiltrate anything —
+this server is loopback-only, single-operator, and every attachment already comes from an
+allowlisted corporate mailbox.
 
 ### Labeled batch search: `search_mailboxes_batch`
 
@@ -257,6 +273,7 @@ Create `~/.config/mcp-outlook/plugin.json` with mode `0600`:
   "maxAttachmentInputBytes": 15728640,
   "maxExtractedChars": 200000,
   "maxRawAttachmentBytes": 262144,
+  "maxConcurrentExtractions": 2,
   "maxBatchSize": 25,
   "maxQueriesPerBatch": 10,
   "maxZipEntries": 200,
@@ -270,6 +287,7 @@ Create `~/.config/mcp-outlook/plugin.json` with mode `0600`:
 | `maxAttachmentInputBytes` | 15 MB | Cap on the attachment file before extraction/raw handling |
 | `maxExtractedChars` | 200,000 | Cap on extracted text returned to the caller |
 | `maxRawAttachmentBytes` | 256 KB | Cap on `mode: 'raw'` base64 output (enforced inside the worker) |
+| `maxConcurrentExtractions` | 2 | Max extraction workers running at once (1-8); excess calls queue, then `EXTRACTION_BUSY` |
 | `maxBatchSize` | 25 | Cap on `messageIds[]` / `attachmentIds[]` in move/copy/mark/download |
 | `maxQueriesPerBatch` | 10 | Cap on `queries[]` in `search_mailboxes_batch` |
 | `maxZipEntries` | 200 | Cap on entries listed/considered in a ZIP |
