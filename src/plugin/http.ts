@@ -113,7 +113,7 @@ export function createOutlookHttpApp(
     res.json({
       ok: true,
       service: 'mcp-outlook-plugin',
-      version: options.version ?? '2.2.0',
+      version: options.version ?? '2.3.0',
     });
   });
 

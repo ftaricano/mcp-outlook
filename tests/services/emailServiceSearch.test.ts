@@ -254,6 +254,52 @@ describe('EmailService.advancedSearchEmailsDetailed', () => {
     expect(result.truncated).toBe(true);
     expect(api).toHaveBeenCalledWith('https://graph.microsoft.com/v1.0/query-page-2');
   });
+
+  it('appends $expand=attachments to the search endpoint when includeAttachmentNames is set', async () => {
+    const calls: string[] = [];
+    const api = vi.fn((url: string) => {
+      calls.push(url);
+      return {
+        get: async () => {
+          if (url.includes('$search=')) {
+            return { value: [{ id: 'match', subject: 'fatura' }] };
+          }
+          return { value: [] };
+        },
+      };
+    });
+    const service = Object.create(EmailService.prototype) as any;
+    service.client = { api };
+    process.env.TARGET_USER_EMAIL = 'user@example.com';
+
+    await service.advancedSearchEmailsDetailed({
+      query: 'fatura',
+      includeAttachmentNames: true,
+      maxResults: 10,
+    });
+
+    const searchCall = calls.find((endpoint) => endpoint.includes('$search='));
+    expect(searchCall).toContain('$expand=attachments($select=name,contentType,size)');
+  });
+
+  it('appends $expand=attachments to the filter endpoint when includeAttachmentNames is set', async () => {
+    const calls: string[] = [];
+    const api = vi.fn((url: string) => {
+      calls.push(url);
+      return { get: async () => ({ value: [] }) };
+    });
+    const service = Object.create(EmailService.prototype) as any;
+    service.client = { api };
+    process.env.TARGET_USER_EMAIL = 'user@example.com';
+
+    await service.advancedSearchEmailsDetailed({
+      sender: 'billing@example.com',
+      includeAttachmentNames: true,
+      maxResults: 10,
+    });
+
+    expect(calls.some((endpoint) => endpoint.includes('$expand=attachments'))).toBe(true);
+  });
 });
 
 describe('EmailService.searchEmailsBySenderDomain pagination', () => {

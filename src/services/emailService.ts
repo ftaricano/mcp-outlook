@@ -45,6 +45,7 @@ export interface AdvancedSearchOptions {
   maxPages?: number;
   scanLimit?: number;
   includeFullContent?: boolean;
+  includeAttachmentNames?: boolean;
   sortBy?: string;
   sortOrder?: string;
 }
@@ -1944,6 +1945,7 @@ export class EmailService {
       maxPages = 10,
       scanLimit = 500,
       includeFullContent = true,
+      includeAttachmentNames = false,
       sortBy = 'receivedDateTime',
       sortOrder = 'desc',
     } = options;
@@ -1953,6 +1955,9 @@ export class EmailService {
     const searchFields =
       'id,subject,from,receivedDateTime,isRead,hasAttachments,bodyPreview' +
       (includeFullContent ? ',body' : '');
+    const attachmentExpand = includeAttachmentNames
+      ? '&$expand=attachments($select=name,contentType,size)'
+      : '';
 
     if (query) {
       const searchResult = await runReliableTextSearch({
@@ -1963,7 +1968,8 @@ export class EmailService {
           const endpoint =
             `${apiEndpoint}?$search="${encodeURIComponent(cleanTerm)}"` +
             `&$top=${Math.min(scanLimit, Math.max(maxResults * 3, 50), 100)}` +
-            `&$select=${searchFields}`;
+            `&$select=${searchFields}` +
+            attachmentExpand;
           const page = await this.collectMessagePages(endpoint, scanLimit, maxPages);
           return {
             ...page,
@@ -1987,7 +1993,7 @@ export class EmailService {
             isRead,
           });
           const params = [`$top=${Math.min(scanLimit, 100)}`, `$select=${searchFields}`];
-          if (includeFullContent) {
+          if (includeFullContent || includeAttachmentNames) {
             params.push('$expand=attachments($select=name,contentType,size)');
           }
           if (filter) params.push(`$filter=${encodeURIComponent(filter)}`);
@@ -2020,15 +2026,26 @@ export class EmailService {
         hasAttachments,
         isRead,
       });
-      const page = await this.graphOptimizer.getOptimizedEmailsDetailed({
-        folder,
-        maxResults: scanLimit,
-        maxPages,
-        filter: combinedFilter,
-        enableCache: false,
-        select: this.graphOptimizer.getOptimalFields('search'),
-        orderBy: sortBy === 'receivedDateTime' ? `${sortBy} ${sortOrder}` : undefined,
-      });
+      const page = includeAttachmentNames
+        ? await this.collectMessagePages(
+            `${apiEndpoint}?${[
+              `$top=${Math.min(scanLimit, 100)}`,
+              `$select=${searchFields}`,
+              '$expand=attachments($select=name,contentType,size)',
+              ...(combinedFilter ? [`$filter=${encodeURIComponent(combinedFilter)}`] : []),
+            ].join('&')}`,
+            scanLimit,
+            maxPages
+          )
+        : await this.graphOptimizer.getOptimizedEmailsDetailed({
+            folder,
+            maxResults: scanLimit,
+            maxPages,
+            filter: combinedFilter,
+            enableCache: false,
+            select: this.graphOptimizer.getOptimalFields('search'),
+            orderBy: sortBy === 'receivedDateTime' ? `${sortBy} ${sortOrder}` : undefined,
+          });
       const sortedMessages = this.sortAdvancedMessages(
         this.filterAdvancedMessages(page.items, {
           sender,

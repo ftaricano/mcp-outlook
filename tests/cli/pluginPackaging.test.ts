@@ -20,7 +20,7 @@ describe('plugin packaging', () => {
 
     expect(plugin).toMatchObject({
       name: 'outlook-multi-mailbox',
-      version: '2.2.0',
+      version: '2.3.0',
       description: 'Read-only Outlook search across explicitly allowed mailboxes',
       author: { name: 'Fernando Taricano' },
       mcpServers: './.mcp.json',

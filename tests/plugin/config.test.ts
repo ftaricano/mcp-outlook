@@ -70,6 +70,17 @@ describe('loadPluginConfig', () => {
     );
   });
 
+  it('accepts maxResultsPerMailbox up to the schema ceiling of 100', () => {
+    const config = loadPluginConfig(writeConfig(validConfig({ maxResultsPerMailbox: 100 })));
+    expect(config.maxResultsPerMailbox).toBe(100);
+  });
+
+  it('rejects maxResultsPerMailbox above the schema ceiling of 100', () => {
+    expect(() =>
+      loadPluginConfig(writeConfig(validConfig({ maxResultsPerMailbox: 101 })))
+    ).toThrow(/Invalid Outlook plugin configuration/);
+  });
+
   it('rejects a symbolic link before resolving the real path', () => {
     const target = writeConfig(validConfig());
     const linkPath = join(tempDirectories[0], 'link.json');
@@ -131,5 +142,62 @@ describe('loadPluginConfig', () => {
     expect(() =>
       loadPluginConfig(writeConfig(validConfig({ clientSecret: 'not-allowed' })))
     ).toThrow(PluginConfigError);
+  });
+});
+
+describe('expansion config fields', () => {
+  it('applies safe defaults for the new limits', () => {
+    const config = loadPluginConfig(writeConfig(validConfig()));
+    expect(config.allowWrites).toBe(false);
+    expect(config.maxAttachmentInputBytes).toBe(15 * 1024 * 1024);
+    expect(config.maxExtractedChars).toBe(200_000);
+    expect(config.maxRawAttachmentBytes).toBe(256 * 1024);
+    expect(config.maxBatchSize).toBe(25);
+    expect(config.maxQueriesPerBatch).toBe(10);
+    expect(config.maxZipEntries).toBe(200);
+    expect(config.maxZipUncompressedBytes).toBe(50 * 1024 * 1024);
+    expect(config.searchMemoryPath).toBeUndefined();
+  });
+
+  it('rejects out-of-range limits', () => {
+    expect(() =>
+      loadPluginConfig(writeConfig(validConfig({ maxRawAttachmentBytes: 10 * 1024 * 1024 })))
+    ).toThrow(/Invalid Outlook plugin configuration/);
+  });
+
+  it('lets PLUGIN_ALLOW_WRITES=true override the file value', () => {
+    process.env.PLUGIN_ALLOW_WRITES = 'true';
+    try {
+      const config = loadPluginConfig(writeConfig(validConfig({ allowWrites: false })));
+      expect(config.allowWrites).toBe(true);
+    } finally {
+      delete process.env.PLUGIN_ALLOW_WRITES;
+    }
+  });
+
+  it('lets PLUGIN_ALLOW_WRITES=false force writes off even when the file enables them', () => {
+    process.env.PLUGIN_ALLOW_WRITES = 'false';
+    try {
+      const config = loadPluginConfig(writeConfig(validConfig({ allowWrites: true })));
+      expect(config.allowWrites).toBe(false);
+    } finally {
+      delete process.env.PLUGIN_ALLOW_WRITES;
+    }
+  });
+
+  it('falls back to the file value when the env override is absent', () => {
+    delete process.env.PLUGIN_ALLOW_WRITES;
+    const config = loadPluginConfig(writeConfig(validConfig({ allowWrites: true })));
+    expect(config.allowWrites).toBe(true);
+  });
+
+  it('lets PLUGIN_SEARCH_MEMORY_PATH override the file value', () => {
+    process.env.PLUGIN_SEARCH_MEMORY_PATH = '/tmp/memory.yaml';
+    try {
+      const config = loadPluginConfig(writeConfig(validConfig()));
+      expect(config.searchMemoryPath).toBe('/tmp/memory.yaml');
+    } finally {
+      delete process.env.PLUGIN_SEARCH_MEMORY_PATH;
+    }
   });
 });

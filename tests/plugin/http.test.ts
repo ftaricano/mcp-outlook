@@ -23,6 +23,15 @@ function dependencies() {
     maxMailboxesPerSearch: 1,
     maxResultsPerMailbox: 10,
     maxBodyChars: 100,
+    allowWrites: false,
+    maxAttachmentInputBytes: 15 * 1024 * 1024,
+    maxExtractedChars: 200_000,
+    maxRawAttachmentBytes: 256 * 1024,
+    maxBatchSize: 25,
+    maxQueriesPerBatch: 10,
+    maxZipEntries: 200,
+    maxZipUncompressedBytes: 50 * 1024 * 1024,
+    searchMemoryPath: undefined,
   };
   const service = {
     listAllowedMailboxes: () => ['finance'],
@@ -74,7 +83,7 @@ describe('Outlook plugin HTTP server', () => {
     expect(await response.json()).toEqual({
       ok: true,
       service: 'mcp-outlook-plugin',
-      version: '2.2.0',
+      version: '2.3.0',
     });
   });
 
@@ -150,7 +159,7 @@ describe('Outlook plugin HTTP server', () => {
     });
     await client.close();
 
-    expect(tools).toHaveLength(4);
+    expect(tools).toHaveLength(10);
     expect(result.structuredContent).toEqual({ mailboxes: ['finance'] });
   });
 });

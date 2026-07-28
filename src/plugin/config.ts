@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 const MAX_CONCURRENT_MAILBOXES = 8;
 const MAX_MAILBOXES_PER_SEARCH = 32;
-const MAX_RESULTS_PER_MAILBOX = 50;
+const MAX_RESULTS_PER_MAILBOX = 100;
 const MAX_BODY_CHARS = 12000;
 
 const mailboxSchema = z
@@ -26,6 +26,30 @@ const pluginConfigSchema = z
     maxMailboxesPerSearch: z.number().int().min(1).max(MAX_MAILBOXES_PER_SEARCH).default(8),
     maxResultsPerMailbox: z.number().int().min(1).max(MAX_RESULTS_PER_MAILBOX).default(20),
     maxBodyChars: z.number().int().min(1).max(MAX_BODY_CHARS).default(12000),
+    allowWrites: z.boolean().default(false),
+    maxAttachmentInputBytes: z
+      .number()
+      .int()
+      .min(1024)
+      .max(50 * 1024 * 1024)
+      .default(15 * 1024 * 1024),
+    maxExtractedChars: z.number().int().min(1_000).max(1_000_000).default(200_000),
+    maxRawAttachmentBytes: z
+      .number()
+      .int()
+      .min(1024)
+      .max(1024 * 1024)
+      .default(256 * 1024),
+    maxBatchSize: z.number().int().min(1).max(100).default(25),
+    maxQueriesPerBatch: z.number().int().min(1).max(25).default(10),
+    maxZipEntries: z.number().int().min(1).max(1_000).default(200),
+    maxZipUncompressedBytes: z
+      .number()
+      .int()
+      .min(1024)
+      .max(200 * 1024 * 1024)
+      .default(50 * 1024 * 1024),
+    searchMemoryPath: z.string().min(1).optional(),
   })
   .superRefine(({ mailboxes }, context) => {
     const aliases = new Set<string>();
@@ -62,6 +86,15 @@ export interface PluginConfig {
   readonly maxMailboxesPerSearch: number;
   readonly maxResultsPerMailbox: number;
   readonly maxBodyChars: number;
+  readonly allowWrites: boolean;
+  readonly maxAttachmentInputBytes: number;
+  readonly maxExtractedChars: number;
+  readonly maxRawAttachmentBytes: number;
+  readonly maxBatchSize: number;
+  readonly maxQueriesPerBatch: number;
+  readonly maxZipEntries: number;
+  readonly maxZipUncompressedBytes: number;
+  readonly searchMemoryPath: string | undefined;
 }
 
 export class PluginConfigError extends Error {
@@ -130,6 +163,12 @@ function readPrivateConfigFile(configPath: string): string {
   }
 }
 
+function resolveAllowWrites(envValue: string | undefined, fileValue: boolean): boolean {
+  if (envValue === 'true') return true;
+  if (envValue === 'false') return false;
+  return fileValue;
+}
+
 export function loadPluginConfig(configPath?: string): PluginConfig {
   const resolvedConfigPath = resolvePluginConfigPath(configPath);
   let source: unknown;
@@ -149,6 +188,10 @@ export function loadPluginConfig(configPath?: string): PluginConfig {
   }
 
   const mailboxes = Object.freeze([...parsed.data.mailboxes]);
+  const allowWrites = resolveAllowWrites(process.env.PLUGIN_ALLOW_WRITES, parsed.data.allowWrites);
+  const searchMemoryPath =
+    process.env.PLUGIN_SEARCH_MEMORY_PATH?.trim() || parsed.data.searchMemoryPath;
+
   return Object.freeze({
     mailboxes,
     mailboxesByAlias: createImmutableMailboxMap(
@@ -158,5 +201,14 @@ export function loadPluginConfig(configPath?: string): PluginConfig {
     maxMailboxesPerSearch: parsed.data.maxMailboxesPerSearch,
     maxResultsPerMailbox: parsed.data.maxResultsPerMailbox,
     maxBodyChars: parsed.data.maxBodyChars,
+    allowWrites,
+    maxAttachmentInputBytes: parsed.data.maxAttachmentInputBytes,
+    maxExtractedChars: parsed.data.maxExtractedChars,
+    maxRawAttachmentBytes: parsed.data.maxRawAttachmentBytes,
+    maxBatchSize: parsed.data.maxBatchSize,
+    maxQueriesPerBatch: parsed.data.maxQueriesPerBatch,
+    maxZipEntries: parsed.data.maxZipEntries,
+    maxZipUncompressedBytes: parsed.data.maxZipUncompressedBytes,
+    searchMemoryPath,
   });
 }
