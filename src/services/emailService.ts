@@ -1510,24 +1510,39 @@ export class EmailService {
   // ===============================
 
   /**
-   * List email folders with optional subfolder inclusion
+   * List email folders with optional subfolder inclusion. Thin wrapper over
+   * listFoldersDetailed for callers that only need the array.
    */
   async listFolders(includeSubfolders: boolean = true, maxDepth: number = 3): Promise<any[]> {
+    const result = await this.listFoldersDetailed(includeSubfolders, maxDepth);
+    return result.items;
+  }
+
+  /**
+   * List email folders with pagination evidence. Follows @odata.nextLink in
+   * both the optimized path and the non-optimized fallback instead of
+   * trusting a single Graph page, and reports whether the returned tree is
+   * complete.
+   */
+  async listFoldersDetailed(
+    includeSubfolders: boolean = true,
+    maxDepth: number = 3
+  ): Promise<{ items: any[]; truncated: boolean }> {
     try {
       console.error(
         `📁 Listando pastas otimizado${includeSubfolders ? ' (incluindo subpastas)' : ''}`
       );
 
       // Use GraphOptimizer for optimized folder fetching with caching
-      const folders = await this.graphOptimizer.getOptimizedFolders({
+      const result = await this.graphOptimizer.getOptimizedFoldersDetailed({
         includeSubfolders,
         maxDepth,
         enableCache: true,
         select: ['id', 'displayName', 'totalItemCount', 'unreadItemCount', 'parentFolderId'],
       });
 
-      console.error(`✅ Encontradas ${folders.length} pastas (com cache/otimização)`);
-      return folders;
+      console.error(`✅ Encontradas ${result.items.length} pastas (com cache/otimização)`);
+      return { items: result.items, truncated: result.truncated };
     } catch (error) {
       console.error('❌ Erro ao listar pastas otimizado:', error);
 
@@ -1539,23 +1554,33 @@ export class EmailService {
         const apiEndpoint =
           userEmail === 'me' ? '/me/mailFolders' : `/users/${userEmail}/mailFolders`;
 
-        const response = await this.client
+        const firstPage = await this.client
           .api(apiEndpoint)
           .select('id,displayName,totalItemCount,unreadItemCount,parentFolderId')
+          .top(100)
           .get();
 
-        let allFolders = response.value || [];
+        const pagination = await collectGraphPages({
+          firstPage,
+          fetchNext: (nextLink) => this.client.api(validateGraphNextLink(nextLink)).get(),
+          maxItems: 1000,
+          maxPages: 20,
+        });
+
+        let allFolders: any[] = pagination.items;
+        let truncated = pagination.truncated;
 
         if (includeSubfolders && maxDepth > 1) {
           // Recursively get subfolders
           for (const folder of [...allFolders]) {
-            const subfolders = await this.getSubfolders(folder.id, maxDepth - 1);
-            allFolders = allFolders.concat(subfolders);
+            const subfolders = await this.getSubfoldersDetailed(folder.id, maxDepth - 1);
+            allFolders = allFolders.concat(subfolders.items);
+            if (subfolders.truncated) truncated = true;
           }
         }
 
         console.error(`✅ Fallback concluído: ${allFolders.length} pastas`);
-        return allFolders;
+        return { items: allFolders, truncated };
       } catch (fallbackError) {
         console.error('❌ Erro no fallback de pastas:', fallbackError);
         throw fallbackError;
@@ -1564,10 +1589,23 @@ export class EmailService {
   }
 
   /**
-   * Get subfolders recursively
+   * Get subfolders recursively. Thin wrapper over getSubfoldersDetailed for
+   * the one internal caller (getFolderStatistics) that only needs the array.
    */
   private async getSubfolders(parentFolderId: string, maxDepth: number): Promise<any[]> {
-    if (maxDepth <= 0) return [];
+    const result = await this.getSubfoldersDetailed(parentFolderId, maxDepth);
+    return result.items;
+  }
+
+  /**
+   * Get subfolders recursively with pagination evidence, used by the
+   * non-optimized listFolders fallback.
+   */
+  private async getSubfoldersDetailed(
+    parentFolderId: string,
+    maxDepth: number
+  ): Promise<{ items: any[]; truncated: boolean }> {
+    if (maxDepth <= 0) return { items: [], truncated: false };
 
     try {
       const userEmail = this.targetUserEmail || 'me';
@@ -1576,24 +1614,34 @@ export class EmailService {
           ? `/me/mailFolders/${encodeGraphSegment(parentFolderId)}/childFolders`
           : `/users/${userEmail}/mailFolders/${encodeGraphSegment(parentFolderId)}/childFolders`;
 
-      const response = await this.client
+      const firstPage = await this.client
         .api(apiEndpoint)
         .select('id,displayName,totalItemCount,unreadItemCount,parentFolderId')
+        .top(100)
         .get();
 
-      let subfolders = response.value || [];
+      const pagination = await collectGraphPages({
+        firstPage,
+        fetchNext: (nextLink) => this.client.api(validateGraphNextLink(nextLink)).get(),
+        maxItems: 1000,
+        maxPages: 20,
+      });
+
+      let subfolders: any[] = pagination.items;
+      let truncated = pagination.truncated;
 
       if (maxDepth > 1) {
         for (const subfolder of [...subfolders]) {
-          const deeperSubfolders = await this.getSubfolders(subfolder.id, maxDepth - 1);
-          subfolders = subfolders.concat(deeperSubfolders);
+          const deeperSubfolders = await this.getSubfoldersDetailed(subfolder.id, maxDepth - 1);
+          subfolders = subfolders.concat(deeperSubfolders.items);
+          if (deeperSubfolders.truncated) truncated = true;
         }
       }
 
-      return subfolders;
+      return { items: subfolders, truncated };
     } catch (error) {
       console.error(`❌ Erro ao obter subpastas de ${parentFolderId}:`, error);
-      return [];
+      return { items: [], truncated: true };
     }
   }
 

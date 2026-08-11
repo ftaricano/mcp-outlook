@@ -62,10 +62,12 @@ interface FolderRecord {
 }
 
 interface FolderStatsRecord {
-  folderId?: string;
-  totalItems?: number;
-  unreadItems?: number;
-  sizeInBytes?: number;
+  folderName?: string;
+  totalEmails?: number;
+  unreadEmails?: number;
+  readEmails?: number;
+  emailsWithAttachments?: number;
+  dateRange?: { oldest: string; newest: string } | null;
 }
 
 interface AttachmentRecord {
@@ -340,12 +342,19 @@ export function createOutlookPluginServer(
     },
     async ({ mailbox }) => {
       try {
-        const folders = ((await service.listFolders(mailbox)) as FolderRecord[]).map(
-          folderProjection
-        );
+        const result = await service.listFolders(mailbox);
+        const folders = (result.items as FolderRecord[]).map(folderProjection);
+        const truncated = result.truncated;
         return {
-          content: [{ type: 'text', text: `Mailbox ${mailbox}: ${folders.length} folder(s).` }],
-          structuredContent: { mailbox, folders },
+          content: [
+            {
+              type: 'text',
+              text:
+                `Mailbox ${mailbox}: ${folders.length} folder(s).` +
+                (truncated ? ' Folder tree is incomplete — some folders were not fetched.' : ''),
+            },
+          ],
+          structuredContent: { mailbox, folders, truncated },
         };
       } catch {
         return toolError('Folder listing failed or the mailbox alias is not allowed.');
@@ -357,7 +366,7 @@ export function createOutlookPluginServer(
     'get_folder_stats',
     {
       title: 'Get Outlook folder statistics',
-      description: 'Get item counts and size for one folder in an allowed mailbox alias.',
+      description: 'Get item counts and date range for one folder in an allowed mailbox alias.',
       inputSchema: getFolderStatsSchema,
       annotations: READ_ONLY_ANNOTATIONS,
     },
@@ -367,9 +376,12 @@ export function createOutlookPluginServer(
         const structuredContent = {
           mailbox,
           folderId,
-          totalItems: stats.totalItems ?? undefined,
-          unreadItems: stats.unreadItems ?? undefined,
-          sizeInBytes: stats.sizeInBytes ?? undefined,
+          folderName: stats.folderName ?? undefined,
+          totalEmails: stats.totalEmails ?? undefined,
+          unreadEmails: stats.unreadEmails ?? undefined,
+          readEmails: stats.readEmails ?? undefined,
+          emailsWithAttachments: stats.emailsWithAttachments ?? undefined,
+          dateRange: stats.dateRange ?? undefined,
         };
         return {
           content: [{ type: 'text', text: `Folder ${folderId} in mailbox ${mailbox}.` }],

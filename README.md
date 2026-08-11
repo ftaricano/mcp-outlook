@@ -151,7 +151,7 @@ dispatch branch exists for them in the plugin, regardless of config.
 | `get_message` | read | Read one message with a server-truncated body |
 | `list_messages` | read | List a folder deterministically (filter, no relevance search) |
 | `list_folders` | read | Folder tree of one mailbox |
-| `get_folder_stats` | read | Item counts and size for one folder |
+| `get_folder_stats` | read | Item counts and date range for one folder |
 | `list_attachments` | read | Attachment metadata (name, type, size) for one message |
 | `get_attachment_content` | read | Attachment text/raw content, or ZIP listing/entry — see below |
 | `search_mailboxes_batch` | read | N labeled searches in one call — see below |

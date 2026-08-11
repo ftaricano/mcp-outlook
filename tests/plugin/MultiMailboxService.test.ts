@@ -118,7 +118,7 @@ describe('read expansion methods', () => {
   it('lists folders and redacts failures', async () => {
     const service = new MultiMailboxService(config(), () =>
       stubEmailService({
-        listFolders: vi.fn(async () => {
+        listFoldersDetailed: vi.fn(async () => {
           throw new Error('Graph secret');
         }),
       })
@@ -126,15 +126,30 @@ describe('read expansion methods', () => {
     await expect(service.listFolders('finance')).rejects.toThrow(/folder listing failed/i);
   });
 
+  it('lists folders and propagates the truncated signal', async () => {
+    const service = new MultiMailboxService(config(), () =>
+      stubEmailService({
+        listFoldersDetailed: vi.fn(async () => ({
+          items: [{ id: 'inbox', displayName: 'Inbox' }],
+          truncated: true,
+        })),
+      })
+    );
+    await expect(service.listFolders('finance')).resolves.toMatchObject({
+      items: [{ id: 'inbox' }],
+      truncated: true,
+    });
+  });
+
   it('returns folder stats and attachment metadata from the pinned service', async () => {
     const service = new MultiMailboxService(config(), () =>
       stubEmailService({
-        getFolderStatistics: vi.fn(async () => ({ totalItems: 10 })),
+        getFolderStatistics: vi.fn(async () => ({ totalEmails: 10, unreadEmails: 2 })),
         listAttachments: vi.fn(async () => [{ id: 'a1', name: 'fatura.pdf', size: 100 }]),
       })
     );
     await expect(service.getFolderStats('finance', 'inbox')).resolves.toMatchObject({
-      totalItems: 10,
+      totalEmails: 10,
     });
     await expect(service.listAttachments('finance', 'm1')).resolves.toHaveLength(1);
   });
