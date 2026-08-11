@@ -245,7 +245,8 @@ export class GraphOptimizer {
     } = options;
 
     const cacheKey =
-      `folders:${this.targetUserEmail || 'me'}:optimized:` + `${includeSubfolders}:${maxDepth}`;
+      `folders:${this.targetUserEmail || 'me'}:optimized:` +
+      `${includeSubfolders}:${maxDepth}:${maxItems}:${maxPages}`;
 
     // Try cache first. truncated:false is safe here (not a stale guess)
     // only because the write side below never caches a truncated fetch.
@@ -279,11 +280,12 @@ export class GraphOptimizer {
 
       // Recursively get subfolders if needed
       if (includeSubfolders && maxDepth > 1) {
+        const budget = { remaining: Math.max(0, maxItems - folderList.length) };
         const subResult = await this.getSubfoldersRecursive(
           folderList,
           maxDepth - 1,
           select,
-          maxItems,
+          budget,
           maxPages
         );
         folderList = subResult.folders;
@@ -574,7 +576,7 @@ export class GraphOptimizer {
     folders: any[],
     remainingDepth: number,
     selectFields: string[],
-    maxItems: number,
+    budget: { remaining: number },
     maxPages: number
   ): Promise<{ folders: any[]; truncated: boolean }> {
     if (remainingDepth <= 0) return { folders, truncated: false };
@@ -585,19 +587,24 @@ export class GraphOptimizer {
     const baseEndpoint = this.getBaseEndpoint();
 
     for (const folder of folders) {
+      if (budget.remaining <= 0) {
+        truncated = true;
+        break;
+      }
       try {
         const firstPage = await this.client
           .api(`${baseEndpoint}/mailFolders/${encodeGraphSegment(folder.id)}/childFolders`)
           .select(selectFields)
-          .top(Math.min(maxItems, 100))
+          .top(Math.min(budget.remaining, 100))
           .get();
 
         const pagination = await collectGraphPages({
           firstPage,
           fetchNext: (nextLink) => this.client.api(validateGraphNextLink(nextLink)).get(),
-          maxItems,
+          maxItems: budget.remaining,
           maxPages,
         });
+        budget.remaining -= pagination.items.length;
         if (pagination.truncated) truncated = true;
 
         if (pagination.items.length > 0) {
@@ -605,7 +612,7 @@ export class GraphOptimizer {
             pagination.items,
             remainingDepth - 1,
             selectFields,
-            maxItems,
+            budget,
             maxPages
           );
           allFolders.push(...nested.folders);

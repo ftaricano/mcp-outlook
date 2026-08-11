@@ -23,6 +23,7 @@ function pluginConfig(overrides: Partial<PluginConfig> = {}): PluginConfig {
     maxRawAttachmentBytes: 256 * 1024,
     maxConcurrentExtractions: 2,
     maxBatchSize: 25,
+    maxDownloadBatchBytes: 50 * 1024 * 1024,
     maxQueriesPerBatch: 10,
     maxZipEntries: 200,
     maxZipUncompressedBytes: 50 * 1024 * 1024,
@@ -109,6 +110,9 @@ function fakeService(overrides: Partial<MultiMailboxService> = {}): MultiMailbox
       readEmails: 8,
       emailsWithAttachments: 3,
       dateRange: { oldest: '01/01/2026 00:00:00', newest: '02/01/2026 00:00:00' },
+      messagesScanned: 10,
+      pagesScanned: 2,
+      truncated: true,
     }),
     listAttachments: async () => [
       { id: 'a1', name: 'fatura.pdf', contentType: 'application/pdf', size: 100, isInline: false },
@@ -449,6 +453,9 @@ describe('createOutlookPluginServer', () => {
       readEmails: 8,
       emailsWithAttachments: 3,
       dateRange: { oldest: '01/01/2026 00:00:00', newest: '02/01/2026 00:00:00' },
+      messagesScanned: 10,
+      pagesScanned: 2,
+      truncated: true,
     });
     expect(result.structuredContent).not.toHaveProperty('totalItems');
     expect(result.structuredContent).not.toHaveProperty('unreadItems');

@@ -68,6 +68,9 @@ interface FolderStatsRecord {
   readEmails?: number;
   emailsWithAttachments?: number;
   dateRange?: { oldest: string; newest: string } | null;
+  messagesScanned?: number;
+  pagesScanned?: number;
+  truncated?: boolean;
 }
 
 interface AttachmentRecord {
@@ -382,9 +385,19 @@ export function createOutlookPluginServer(
           readEmails: stats.readEmails ?? undefined,
           emailsWithAttachments: stats.emailsWithAttachments ?? undefined,
           dateRange: stats.dateRange ?? undefined,
+          messagesScanned: stats.messagesScanned ?? undefined,
+          pagesScanned: stats.pagesScanned ?? undefined,
+          truncated: stats.truncated ?? undefined,
         };
         return {
-          content: [{ type: 'text', text: `Folder ${folderId} in mailbox ${mailbox}.` }],
+          content: [
+            {
+              type: 'text',
+              text:
+                `Folder ${folderId} in mailbox ${mailbox}.` +
+                (stats.truncated ? ' Statistics are incomplete because the scan was capped.' : ''),
+            },
+          ],
           structuredContent,
         };
       } catch {

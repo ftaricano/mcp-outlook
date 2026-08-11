@@ -973,6 +973,7 @@ export class EmailService {
       filename?: string;
       overwrite?: boolean;
       validateIntegrity?: boolean;
+      maxBytes?: number;
     } = {}
   ): Promise<{
     success: boolean;
@@ -1000,12 +1001,27 @@ export class EmailService {
       console.error(`   Tipo: ${attachment.contentType}`);
       console.error(`   Tamanho: ${attachment.size || 0} bytes`);
 
+      const decodedSize = Buffer.byteLength(attachment.content, 'base64');
+      if (options.maxBytes !== undefined && decodedSize > options.maxBytes) {
+        return {
+          success: false,
+          filename: attachment.name,
+          filePath: '',
+          originalSize: decodedSize,
+          savedSize: 0,
+          contentType: attachment.contentType,
+          integrity: false,
+          downloadTime: Date.now() - startTime,
+          error: 'Attachment exceeds the remaining download byte budget',
+        };
+      }
+
       // 2. Preparar dados para o FileManager
       const attachmentData = {
         name: attachment.name,
         contentType: attachment.contentType,
         contentBytes: attachment.content, // Base64
-        size: attachment.size || 0,
+        size: decodedSize,
         id: attachmentId,
       };
 
@@ -1571,9 +1587,14 @@ export class EmailService {
         let truncated = pagination.truncated;
 
         if (includeSubfolders && maxDepth > 1) {
+          const budget = { remaining: Math.max(0, 1000 - allFolders.length) };
           // Recursively get subfolders
           for (const folder of [...allFolders]) {
-            const subfolders = await this.getSubfoldersDetailed(folder.id, maxDepth - 1);
+            if (budget.remaining <= 0) {
+              truncated = true;
+              break;
+            }
+            const subfolders = await this.getSubfoldersDetailed(folder.id, maxDepth - 1, budget);
             allFolders = allFolders.concat(subfolders.items);
             if (subfolders.truncated) truncated = true;
           }
@@ -1603,9 +1624,11 @@ export class EmailService {
    */
   private async getSubfoldersDetailed(
     parentFolderId: string,
-    maxDepth: number
+    maxDepth: number,
+    budget: { remaining: number } = { remaining: 1000 }
   ): Promise<{ items: any[]; truncated: boolean }> {
     if (maxDepth <= 0) return { items: [], truncated: false };
+    if (budget.remaining <= 0) return { items: [], truncated: true };
 
     try {
       const userEmail = this.targetUserEmail || 'me';
@@ -1617,22 +1640,31 @@ export class EmailService {
       const firstPage = await this.client
         .api(apiEndpoint)
         .select('id,displayName,totalItemCount,unreadItemCount,parentFolderId')
-        .top(100)
+        .top(Math.min(budget.remaining, 100))
         .get();
 
       const pagination = await collectGraphPages({
         firstPage,
         fetchNext: (nextLink) => this.client.api(validateGraphNextLink(nextLink)).get(),
-        maxItems: 1000,
+        maxItems: budget.remaining,
         maxPages: 20,
       });
+      budget.remaining -= pagination.items.length;
 
       let subfolders: any[] = pagination.items;
       let truncated = pagination.truncated;
 
       if (maxDepth > 1) {
         for (const subfolder of [...subfolders]) {
-          const deeperSubfolders = await this.getSubfoldersDetailed(subfolder.id, maxDepth - 1);
+          if (budget.remaining <= 0) {
+            truncated = true;
+            break;
+          }
+          const deeperSubfolders = await this.getSubfoldersDetailed(
+            subfolder.id,
+            maxDepth - 1,
+            budget
+          );
           subfolders = subfolders.concat(deeperSubfolders.items);
           if (deeperSubfolders.truncated) truncated = true;
         }
@@ -1822,13 +1854,19 @@ export class EmailService {
           ? `/me/mailFolders/${encodeGraphSegment(folderId)}/messages`
           : `/users/${userEmail}/mailFolders/${encodeGraphSegment(folderId)}/messages`;
 
-      const messages = await this.client
+      const firstMessagesPage = await this.client
         .api(messagesEndpoint)
         .select('receivedDateTime,hasAttachments')
-        .top(1000)
+        .top(100)
         .get();
+      const messagePagination = await collectGraphPages({
+        firstPage: firstMessagesPage,
+        fetchNext: (nextLink) => this.client.api(validateGraphNextLink(nextLink)).get(),
+        maxItems: 1000,
+        maxPages: 20,
+      });
 
-      const emails = messages.value || [];
+      const emails = messagePagination.items;
 
       // Calculate statistics
       const unreadEmails = folder.unreadItemCount || 0;
@@ -1856,6 +1894,9 @@ export class EmailService {
         readEmails,
         emailsWithAttachments,
         dateRange,
+        messagesScanned: messagePagination.itemsScanned,
+        pagesScanned: messagePagination.pagesScanned,
+        truncated: messagePagination.truncated,
       };
 
       // Include subfolders if requested

@@ -20,7 +20,6 @@ export type MailboxEmailService = Pick<
   | 'listAttachments'
   | 'downloadAttachment'
   | 'downloadAttachmentToFile'
-  | 'downloadAllAttachmentsFromEmail'
   | 'moveEmailsToFolder'
   | 'copyEmailsToFolder'
   | 'batchMarkAsRead'
@@ -56,6 +55,13 @@ export class BatchLimitError extends Error {
   constructor(limit: number) {
     super(`Requested items exceed the server batch limit of ${limit}`);
     this.name = 'BatchLimitError';
+  }
+}
+
+export class DownloadLimitError extends Error {
+  constructor(limit: number) {
+    super(`Requested attachments exceed the server download limit of ${limit} bytes`);
+    this.name = 'DownloadLimitError';
   }
 }
 
@@ -381,40 +387,83 @@ export class MultiMailboxService {
     totalFiles: number;
     successfulDownloads: number;
     failedDownloads: number;
+    downloadedBytes: number;
+    byteLimit: number;
   }> {
-    if (attachmentIds) this.assertBatch(attachmentIds);
     const mailbox = this.resolveMailbox(alias);
     const emailService = this.createEmailService(mailbox.address);
 
-    if (attachmentIds) {
+    try {
+      const listed = (await emailService.listAttachments(messageId)) as {
+        id?: string | null;
+        size?: number | null;
+      }[];
+      if (!attachmentIds && listed.length > this.config.maxBatchSize) {
+        throw new BatchLimitError(this.config.maxBatchSize);
+      }
+      const byId = new Map(
+        listed
+          .filter((attachment): attachment is { id: string; size?: number | null } =>
+            Boolean(attachment.id)
+          )
+          .map((attachment) => [attachment.id, attachment] as const)
+      );
+      if (!attachmentIds && byId.size !== listed.length) {
+        throw new DownloadLimitError(this.config.maxDownloadBatchBytes);
+      }
+      const requestedIds = attachmentIds ? [...attachmentIds] : [...byId.keys()];
+      this.assertBatch(requestedIds);
+
+      const requested = requestedIds.map((attachmentId) => {
+        const metadata = byId.get(attachmentId);
+        if (!metadata || !Number.isSafeInteger(metadata.size) || (metadata.size ?? -1) < 0) {
+          throw new DownloadLimitError(this.config.maxDownloadBatchBytes);
+        }
+        return { id: attachmentId, size: metadata.size as number };
+      });
+      const declaredBytes = requested.reduce((total, attachment) => total + attachment.size, 0);
+      if (declaredBytes > this.config.maxDownloadBatchBytes) {
+        throw new DownloadLimitError(this.config.maxDownloadBatchBytes);
+      }
+
       let successfulDownloads = 0;
       let failedDownloads = 0;
-      for (const attachmentId of attachmentIds) {
+      let downloadedBytes = 0;
+      for (const attachment of requested) {
         try {
-          const outcome = await emailService.downloadAttachmentToFile(messageId, attachmentId, {});
-          if (outcome.success) successfulDownloads += 1;
-          else failedDownloads += 1;
+          const outcome = await emailService.downloadAttachmentToFile(messageId, attachment.id, {
+            maxBytes: this.config.maxDownloadBatchBytes - downloadedBytes,
+          });
+          if (outcome.success) {
+            const remainingBytes = this.config.maxDownloadBatchBytes - downloadedBytes;
+            if (
+              !Number.isSafeInteger(outcome.savedSize) ||
+              outcome.savedSize < 0 ||
+              outcome.savedSize > remainingBytes
+            ) {
+              failedDownloads += 1;
+              continue;
+            }
+            successfulDownloads += 1;
+            downloadedBytes += outcome.savedSize;
+          } else {
+            failedDownloads += 1;
+          }
         } catch {
           failedDownloads += 1;
         }
       }
+
       return {
         mailbox: mailbox.alias,
-        totalFiles: attachmentIds.length,
+        totalFiles: requested.length,
         successfulDownloads,
         failedDownloads,
+        downloadedBytes,
+        byteLimit: this.config.maxDownloadBatchBytes,
       };
-    }
-
-    try {
-      const outcome = await emailService.downloadAllAttachmentsFromEmail(messageId, {});
-      return {
-        mailbox: mailbox.alias,
-        totalFiles: outcome.totalFiles,
-        successfulDownloads: outcome.successfulDownloads,
-        failedDownloads: outcome.failedDownloads,
-      };
-    } catch {
+    } catch (error) {
+      if (error instanceof BatchLimitError || error instanceof DownloadLimitError) throw error;
       throw new MailboxOperationError('attachment download');
     }
   }

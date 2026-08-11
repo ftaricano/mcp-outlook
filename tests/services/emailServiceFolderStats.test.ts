@@ -50,4 +50,74 @@ describe('EmailService.getFolderStatistics', () => {
     expect(stats).not.toHaveProperty('unreadItems');
     expect(stats).not.toHaveProperty('sizeInBytes');
   });
+
+  it('follows message nextLink and returns pagination evidence', async () => {
+    const pages = new Map<string, unknown>([
+      [
+        '/users/user@example.com/mailFolders/inbox/messages',
+        {
+          value: [{ receivedDateTime: '2026-01-01T10:00:00Z', hasAttachments: false }],
+          '@odata.nextLink': 'https://graph.microsoft.com/v1.0/folder-stats-page-2',
+        },
+      ],
+      [
+        'https://graph.microsoft.com/v1.0/folder-stats-page-2',
+        { value: [{ receivedDateTime: '2026-01-02T10:00:00Z', hasAttachments: true }] },
+      ],
+    ]);
+    const api = (url: string) => {
+      const chain: any = {
+        select: () => chain,
+        top: () => chain,
+        get: async () => {
+          if (url.endsWith('/mailFolders/inbox')) {
+            return { displayName: 'Inbox', totalItemCount: 2, unreadItemCount: 0 };
+          }
+          return pages.get(url);
+        },
+      };
+      return chain;
+    };
+    const service = Object.create(EmailService.prototype) as any;
+    service.client = { api };
+    service.targetUserEmail = 'user@example.com';
+
+    const stats = await service.getFolderStatistics('inbox', false);
+
+    expect(stats).toMatchObject({
+      emailsWithAttachments: 1,
+      messagesScanned: 2,
+      pagesScanned: 2,
+      truncated: false,
+    });
+  });
+
+  it('marks attachment and date statistics truncated when the message cap is reached', async () => {
+    const api = (url: string) => {
+      const chain: any = {
+        select: () => chain,
+        top: () => chain,
+        get: async () => {
+          if (url.endsWith('/mailFolders/inbox')) {
+            return { displayName: 'Inbox', totalItemCount: 1001, unreadItemCount: 0 };
+          }
+          return {
+            value: Array.from({ length: 1000 }, () => ({
+              receivedDateTime: '2026-01-01T10:00:00Z',
+              hasAttachments: false,
+            })),
+            '@odata.nextLink': 'https://graph.microsoft.com/v1.0/not-fetched',
+          };
+        },
+      };
+      return chain;
+    };
+    const service = Object.create(EmailService.prototype) as any;
+    service.client = { api };
+    service.targetUserEmail = 'user@example.com';
+
+    const stats = await service.getFolderStatistics('inbox', false);
+
+    expect(stats).toMatchObject({ messagesScanned: 1000, pagesScanned: 1, truncated: true });
+  });
 });

@@ -35,6 +35,13 @@ export function normalizeKey(value: string): string {
   return value.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
 }
 
+function normalizeLookupKey(value: string, stopwords: ReadonlySet<string>): string {
+  return normalizeKey(value)
+    .split(/\s+/)
+    .filter((token) => token && !stopwords.has(token))
+    .join(' ');
+}
+
 export function loadSearchMemory(path: string | undefined): SearchMemory | null {
   if (!path?.trim()) return null;
 
@@ -54,18 +61,26 @@ export function loadSearchMemory(path: string | undefined): SearchMemory | null 
     throw new SearchMemoryError('Search memory file is invalid');
   }
 
+  const stopwords = Object.freeze([
+    ...new Set(parsed.stopwords.map(normalizeKey).filter(Boolean)),
+  ] as string[]);
+  const stopwordSet = new Set(stopwords);
+
   const aliasesByName = new Map<string, readonly string[]>();
   for (const [name, value] of Object.entries(parsed.apelidos)) {
     const aliases = Array.isArray(value) ? value : [value];
-    aliasesByName.set(normalizeKey(name), Object.freeze([...aliases]));
+    const key = normalizeLookupKey(name, stopwordSet);
+    if (key) aliasesByName.set(key, Object.freeze([...aliases]));
   }
 
   const groupByMember = new Map<string, string>();
   const membersByGroup = new Map<string, readonly string[]>();
   for (const [group, members] of Object.entries(parsed.grupos)) {
-    membersByGroup.set(normalizeKey(group), Object.freeze([...members]));
+    const groupKey = normalizeLookupKey(group, stopwordSet);
+    if (groupKey) membersByGroup.set(groupKey, Object.freeze([...members]));
     for (const member of members) {
-      groupByMember.set(normalizeKey(member), group);
+      const memberKey = normalizeLookupKey(member, stopwordSet);
+      if (memberKey) groupByMember.set(memberKey, group);
     }
   }
 
@@ -73,17 +88,18 @@ export function loadSearchMemory(path: string | undefined): SearchMemory | null 
     aliasesByName,
     groupByMember,
     membersByGroup,
-    stopwords: Object.freeze(parsed.stopwords.map(normalizeKey)),
+    stopwords,
   });
 }
 
 export function expandTerm(memory: SearchMemory, term: string): string[] {
-  const key = normalizeKey(term);
+  const stopwords = new Set(memory.stopwords);
+  const key = normalizeLookupKey(term, stopwords);
   const variants: string[] = [term];
   const seen = new Set([key]);
 
   const push = (candidate: string): void => {
-    const candidateKey = normalizeKey(candidate);
+    const candidateKey = normalizeLookupKey(candidate, stopwords);
     if (seen.has(candidateKey) || variants.length >= MAX_VARIANTS) return;
     seen.add(candidateKey);
     variants.push(candidate);

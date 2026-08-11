@@ -42,6 +42,12 @@ const pluginConfigSchema = z
       .default(256 * 1024),
     maxConcurrentExtractions: z.number().int().min(1).max(8).default(2),
     maxBatchSize: z.number().int().min(1).max(100).default(25),
+    maxDownloadBatchBytes: z
+      .number()
+      .int()
+      .min(1024)
+      .max(500 * 1024 * 1024)
+      .default(50 * 1024 * 1024),
     maxQueriesPerBatch: z.number().int().min(1).max(25).default(10),
     maxZipEntries: z.number().int().min(1).max(1_000).default(200),
     maxZipUncompressedBytes: z
@@ -104,6 +110,7 @@ export interface PluginConfig {
   readonly maxRawAttachmentBytes: number;
   readonly maxConcurrentExtractions: number;
   readonly maxBatchSize: number;
+  readonly maxDownloadBatchBytes: number;
   readonly maxQueriesPerBatch: number;
   readonly maxZipEntries: number;
   readonly maxZipUncompressedBytes: number;
@@ -230,6 +237,7 @@ export function loadPluginConfig(configPath?: string): PluginConfig {
     maxRawAttachmentBytes: parsed.data.maxRawAttachmentBytes,
     maxConcurrentExtractions: parsed.data.maxConcurrentExtractions,
     maxBatchSize: parsed.data.maxBatchSize,
+    maxDownloadBatchBytes: parsed.data.maxDownloadBatchBytes,
     maxQueriesPerBatch: parsed.data.maxQueriesPerBatch,
     maxZipEntries: parsed.data.maxZipEntries,
     maxZipUncompressedBytes: parsed.data.maxZipUncompressedBytes,

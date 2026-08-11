@@ -46,11 +46,85 @@ interface RawEntry {
   stream(password?: string): NodeJS.ReadableStream;
 }
 
-async function openArchive(buffer: Buffer): Promise<RawEntry[]> {
+const END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
+const CENTRAL_DIRECTORY_ENTRY_SIGNATURE = 0x02014b50;
+const MAX_END_COMMENT_BYTES = 0xffff;
+const MAX_CENTRAL_RECORD_BYTES = 4096;
+
+function preflightCentralDirectory(buffer: Buffer, limits: ZipLimits): void {
+  const minimumOffset = Math.max(0, buffer.length - (22 + MAX_END_COMMENT_BYTES));
+  let endOffset = -1;
+
+  for (let offset = buffer.length - 22; offset >= minimumOffset; offset -= 1) {
+    if (buffer.readUInt32LE(offset) !== END_OF_CENTRAL_DIRECTORY_SIGNATURE) continue;
+    const commentLength = buffer.readUInt16LE(offset + 20);
+    if (offset + 22 + commentLength === buffer.length) {
+      endOffset = offset;
+      break;
+    }
+  }
+
+  if (endOffset < 0) throw new ZipError('ZIP_INVALID');
+
+  const diskNumber = buffer.readUInt16LE(endOffset + 4);
+  const centralDirectoryDisk = buffer.readUInt16LE(endOffset + 6);
+  const entriesOnDisk = buffer.readUInt16LE(endOffset + 8);
+  const totalEntries = buffer.readUInt16LE(endOffset + 10);
+  const centralDirectorySize = buffer.readUInt32LE(endOffset + 12);
+  const centralDirectoryOffset = buffer.readUInt32LE(endOffset + 16);
+
+  // Multi-disk and ZIP64 archives need a different parser. Refuse them before
+  // unzipper can allocate a directory with bounds we have not validated.
+  if (
+    diskNumber !== 0 ||
+    centralDirectoryDisk !== 0 ||
+    entriesOnDisk !== totalEntries ||
+    totalEntries === 0xffff ||
+    centralDirectorySize === 0xffffffff ||
+    centralDirectoryOffset === 0xffffffff
+  ) {
+    throw new ZipError('ZIP_INVALID');
+  }
+
+  if (totalEntries > limits.maxEntries) throw new ZipError('ZIP_TOO_MANY_ENTRIES');
+  if (centralDirectorySize > limits.maxEntries * MAX_CENTRAL_RECORD_BYTES) {
+    throw new ZipError('ZIP_TOO_LARGE');
+  }
+
+  const centralDirectoryEnd = centralDirectoryOffset + centralDirectorySize;
+  if (
+    centralDirectoryOffset > endOffset ||
+    centralDirectoryEnd > endOffset ||
+    centralDirectoryEnd < centralDirectoryOffset
+  ) {
+    throw new ZipError('ZIP_INVALID');
+  }
+
+  let cursor = centralDirectoryOffset;
+  for (let index = 0; index < totalEntries; index += 1) {
+    if (cursor + 46 > centralDirectoryEnd) throw new ZipError('ZIP_INVALID');
+    if (buffer.readUInt32LE(cursor) !== CENTRAL_DIRECTORY_ENTRY_SIGNATURE) {
+      throw new ZipError('ZIP_INVALID');
+    }
+    const filenameLength = buffer.readUInt16LE(cursor + 28);
+    const extraLength = buffer.readUInt16LE(cursor + 30);
+    const commentLength = buffer.readUInt16LE(cursor + 32);
+    const recordLength = 46 + filenameLength + extraLength + commentLength;
+    if (recordLength > MAX_CENTRAL_RECORD_BYTES) throw new ZipError('ZIP_TOO_LARGE');
+    cursor += recordLength;
+  }
+  if (cursor !== centralDirectoryEnd) throw new ZipError('ZIP_INVALID');
+}
+
+async function openArchive(buffer: Buffer, limits: ZipLimits): Promise<RawEntry[]> {
+  preflightCentralDirectory(buffer, limits);
   try {
     const directory = await Open.buffer(buffer);
-    return directory.files as unknown as RawEntry[];
-  } catch {
+    const entries = directory.files as unknown as RawEntry[];
+    if (entries.length > limits.maxEntries) throw new ZipError('ZIP_TOO_MANY_ENTRIES');
+    return entries;
+  } catch (error) {
+    if (error instanceof ZipError) throw error;
     throw new ZipError('ZIP_INVALID');
   }
 }
@@ -61,8 +135,7 @@ function isEncrypted(entry: RawEntry): boolean {
 }
 
 export async function listZipEntries(buffer: Buffer, limits: ZipLimits): Promise<ZipListing> {
-  const files = (await openArchive(buffer)).filter((entry) => entry.type === 'File');
-  if (files.length > limits.maxEntries) throw new ZipError('ZIP_TOO_MANY_ENTRIES');
+  const files = (await openArchive(buffer, limits)).filter((entry) => entry.type === 'File');
 
   // Heuristic fast-path only: uncompressedSize comes from the ZIP central
   // directory, metadata the archive itself supplies and a zip bomb can
@@ -128,13 +201,62 @@ export function readStreamWithCap(
   });
 }
 
+function measureStreamWithCap(stream: NodeJS.ReadableStream, maxBytes: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    let total = 0;
+    let settled = false;
+
+    const fail = (error: ZipError): void => {
+      if (settled) return;
+      settled = true;
+      const destroyable = stream as unknown as { destroy?: (error?: Error) => void };
+      destroyable.destroy?.();
+      reject(error);
+    };
+
+    stream.on('data', (chunk: Buffer) => {
+      if (settled) return;
+      total += chunk.length;
+      if (total > maxBytes) fail(new ZipError('ZIP_TOO_LARGE'));
+    });
+    stream.on('end', () => {
+      if (settled) return;
+      settled = true;
+      resolve(total);
+    });
+    stream.on('error', () => fail(new ZipError('ZIP_INVALID')));
+  });
+}
+
+export async function validateZipContents(buffer: Buffer, limits: ZipLimits): Promise<void> {
+  const files = (await openArchive(buffer, limits)).filter((entry) => entry.type === 'File');
+  const declaredTotalBytes = files.reduce(
+    (total, entry) => total + (entry.uncompressedSize ?? 0),
+    0
+  );
+  if (declaredTotalBytes > limits.maxUncompressedBytes) throw new ZipError('ZIP_TOO_LARGE');
+
+  let measuredTotalBytes = 0;
+  for (const entry of files) {
+    if (isEncrypted(entry) && !limits.password) throw new ZipError('ZIP_ENCRYPTED');
+    try {
+      measuredTotalBytes += await measureStreamWithCap(
+        entry.stream(limits.password),
+        limits.maxUncompressedBytes - measuredTotalBytes
+      );
+    } catch (error) {
+      if (error instanceof ZipError && error.code === 'ZIP_TOO_LARGE') throw error;
+      throw new ZipError(isEncrypted(entry) ? 'ZIP_UNSUPPORTED_ENCRYPTION' : 'ZIP_INVALID');
+    }
+  }
+}
+
 export async function extractZipEntry(
   buffer: Buffer,
   entryName: string,
   limits: ZipLimits
 ): Promise<Buffer> {
-  const files = (await openArchive(buffer)).filter((entry) => entry.type === 'File');
-  if (files.length > limits.maxEntries) throw new ZipError('ZIP_TOO_MANY_ENTRIES');
+  const files = (await openArchive(buffer, limits)).filter((entry) => entry.type === 'File');
 
   const entry = files.find(
     (candidate) => candidate.path === entryName && isAddressableZipEntryName(candidate.path)

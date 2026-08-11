@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { PassThrough } from 'node:stream';
 import { ZipFile } from 'yazl';
-import { extractZipEntry, listZipEntries, readStreamWithCap } from '../../src/plugin/zipArchive.js';
+import {
+  extractZipEntry,
+  listZipEntries,
+  readStreamWithCap,
+  validateZipContents,
+} from '../../src/plugin/zipArchive.js';
 
 function buildZip(entries: Record<string, string>): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -9,6 +14,21 @@ function buildZip(entries: Record<string, string>): Promise<Buffer> {
     for (const [name, content] of Object.entries(entries)) {
       zip.addBuffer(Buffer.from(content), name);
     }
+    zip.end();
+    const chunks: Buffer[] = [];
+    zip.outputStream.on('data', (chunk) => chunks.push(chunk as Buffer));
+    zip.outputStream.on('end', () => resolve(Buffer.concat(chunks)));
+    zip.outputStream.on('error', reject);
+  });
+}
+
+function buildZipWithDirectories(directoryCount: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const zip = new ZipFile();
+    for (let index = 0; index < directoryCount; index += 1) {
+      zip.addEmptyDirectory(`dir-${index}`);
+    }
+    zip.addBuffer(Buffer.from('x'), 'file.txt');
     zip.end();
     const chunks: Buffer[] = [];
     zip.outputStream.on('data', (chunk) => chunks.push(chunk as Buffer));
@@ -90,6 +110,13 @@ describe('zipArchive', () => {
     });
   });
 
+  it('counts directory records against maxEntries before opening the archive', async () => {
+    const zip = await buildZipWithDirectories(3);
+    await expect(listZipEntries(zip, { ...LIMITS, maxEntries: 3 })).rejects.toMatchObject({
+      code: 'ZIP_TOO_MANY_ENTRIES',
+    });
+  });
+
   it('rejects entries whose declared uncompressed size exceeds the cap', async () => {
     const zip = await buildZip({ 'big.txt': 'y'.repeat(2048) });
     await expect(
@@ -124,6 +151,19 @@ describe('zipArchive', () => {
     const zip = await buildZip({ 'big.txt': 'z'.repeat(1024 * 1024) });
     await expect(
       extractZipEntry(zip, 'big.txt', { ...LIMITS, maxUncompressedBytes: 10 })
+    ).rejects.toMatchObject({ code: 'ZIP_TOO_LARGE' });
+  });
+
+  it('validates aggregate real entry bytes before an OOXML parser receives the container', async () => {
+    const zip = await buildZip({ 'a.xml': 'a'.repeat(700), 'b.xml': 'b'.repeat(700) });
+    const dishonest = Buffer.from(zip);
+    for (let offset = 0; offset <= dishonest.length - 46; offset += 1) {
+      if (dishonest.readUInt32LE(offset) === 0x02014b50) {
+        dishonest.writeUInt32LE(1, offset + 24);
+      }
+    }
+    await expect(
+      validateZipContents(dishonest, { ...LIMITS, maxUncompressedBytes: 1_000 })
     ).rejects.toMatchObject({ code: 'ZIP_TOO_LARGE' });
   });
 

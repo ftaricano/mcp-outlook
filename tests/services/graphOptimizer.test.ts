@@ -307,6 +307,46 @@ describe('getOptimizedFoldersDetailed - pagination evidence', () => {
     expect(result.truncated).toBe(true);
   });
 
+  it('applies maxItems to the whole folder tree instead of once per parent', async () => {
+    const client = {
+      api(url: string) {
+        const chain: any = {
+          select: () => chain,
+          filter: () => chain,
+          orderby: () => chain,
+          top: () => chain,
+          get: async () => {
+            if (url === '/users/user@example.com/mailFolders') {
+              return { value: [{ id: 'root', displayName: 'Root' }] };
+            }
+            if (url === '/users/user@example.com/mailFolders/root/childFolders') {
+              return {
+                value: [
+                  { id: 'child-1', displayName: 'Child 1' },
+                  { id: 'child-2', displayName: 'Child 2' },
+                ],
+              };
+            }
+            throw new Error(`unexpected url in test: ${url}`);
+          },
+        };
+        return chain;
+      },
+    } as never;
+    const opt = new GraphOptimizer(client, new CacheManager(), {}, 'user@example.com');
+
+    const result = await opt.getOptimizedFoldersDetailed({
+      includeSubfolders: true,
+      maxDepth: 2,
+      enableCache: false,
+      maxItems: 2,
+      maxPages: 5,
+    });
+
+    expect(result.items.map((item: any) => item.id)).toEqual(['root', 'child-1']);
+    expect(result.truncated).toBe(true);
+  });
+
   it('does not serve a cached truncated fetch as truncated:false on a later cache hit', async () => {
     // Regression test: getOptimizedFoldersDetailed used to cache folderList
     // unconditionally and hardcode truncated:false on every cache hit, so a

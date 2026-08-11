@@ -13,8 +13,9 @@
 // nothing for Buffer/ArrayBuffer allocations or native-addon memory, which is
 // exactly what a zip-bomb-style attack grows. It is NOT a memory sandbox and
 // does NOT by itself bound worst-case RSS. The actual input-size guarantees
-// come from `maxAttachmentInputBytes`, the ZIP entry/byte caps enforced by
-// zipArchive.ts's `readStreamWithCap`, the raw-mode cap — enforced below,
+// come from `maxAttachmentInputBytes`, the bounded central-directory preflight,
+// the ZIP entry/byte caps enforced by zipArchive.ts's `readStreamWithCap`, the
+// OOXML aggregate real-byte preflight, the raw-mode cap — enforced below,
 // before any postMessage, for the ZIP entries that reach this worker; a plain
 // raw attachment never gets here, extractors.ts caps it in the caller — and
 // the extraction concurrency gate in extractors.ts that
@@ -36,7 +37,13 @@ import {
   isZipArchiveAttachment,
   isZipContainer,
 } from './extractionFormat.js';
-import { extractZipEntry, listZipEntries, ZipError, type ZipEntryInfo } from './zipArchive.js';
+import {
+  extractZipEntry,
+  listZipEntries,
+  validateZipContents,
+  ZipError,
+  type ZipEntryInfo,
+} from './zipArchive.js';
 
 type Extractor = 'pdf' | 'xlsx' | 'docx' | 'text';
 type WorkerErrorCode =
@@ -163,16 +170,10 @@ async function runPipeline(
     const isDocx = isDocxName(effectiveName, contentType);
     if (!isXlsx && !isDocx) return { error: 'UNSUPPORTED_FORMAT' };
 
-    // Fast-path, defense-in-depth only: the ZIP central directory declares an
-    // uncompressed size per entry, but that field is attacker-controlled
-    // metadata (zip bombs falsify it) — this cap does NOT bound real bytes
-    // read. It exists purely to reject obviously-bad declared sizes before
-    // paying for ExcelJS/mammoth. What actually bounds a hostile xlsx/docx
-    // payload here is the pre-parse input cap (maxAttachmentInputBytes, this
-    // buffer already passed it before reaching the worker) plus the
-    // supervisor's wall-clock timeout/terminate() and the extraction
-    // concurrency gate — resourceLimits only caps this worker's V8 heap, not
-    // the Buffer/native memory ExcelJS/mammoth allocate while parsing.
+    // Preflight the bounded central directory and stream every entry through
+    // one aggregate real-byte budget before ExcelJS/mammoth sees the file.
+    // The parser may still use more RSS than the decompressed input size, so
+    // this is an input guarantee, not a memory-sandbox claim.
     // The caps here are the *container* ones (maxContainerEntries), not the
     // user-facing .zip ones: a real workbook's internal part count (one per
     // sheet, plus styles/sharedStrings/drawings) routinely exceeds what is a
@@ -180,7 +181,7 @@ async function runPipeline(
     // of flattening it to EXTRACTION_FAILED, so a tripped cap doesn't read as
     // "this file is corrupt".
     try {
-      await listZipEntries(buffer, containerLimits);
+      await validateZipContents(buffer, containerLimits);
     } catch (error) {
       if (error instanceof ZipError) return { error: error.code };
       throw error;

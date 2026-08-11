@@ -56,6 +56,11 @@ describe('expandTerm', () => {
     expect(variants).toContain('GRUPO NAUTICO');
   });
 
+  it('uses configured stopwords when matching a member name', () => {
+    const variants = expandTerm(memory, 'Empresa Alfa Navegacao LTDA');
+    expect(variants).toContain('GRUPO NAUTICO');
+  });
+
   it('expands a group name into its member companies', () => {
     const variants = expandTerm(memory, 'grupo nautico');
     expect(variants).toEqual(

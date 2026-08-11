@@ -41,6 +41,9 @@ These are enforced by CI or by design. Don't regress them.
     application `Mail.Read`. Enabling its five write tools requires `Mail.ReadWrite`, but never
     `Mail.Send`. The original 40-tool server requires `Mail.ReadWrite` and needs `Mail.Send` only
     for `send_email` and `reply_to_email`.
+13. **Plugin downloads have aggregate budgets.** `download_attachments` applies both
+    `maxBatchSize` and `maxDownloadBatchBytes` whether `attachmentIds` is supplied or omitted.
+    No attachment may start writing when its real decoded size exceeds the remaining byte budget.
 
 ## Architecture at a glance
 

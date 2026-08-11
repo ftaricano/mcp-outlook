@@ -163,11 +163,11 @@ forces writes off, an unset or empty value delegates to `allowWrites` in the pri
 | `get_message` | read | Read one message with a server-truncated body |
 | `list_messages` | read | List a folder deterministically (filter, no relevance search) |
 | `list_folders` | read | Folder tree of one mailbox |
-| `get_folder_stats` | read | Item counts and date range for one folder |
+| `get_folder_stats` | read | Item counts and a paginated, explicitly truncated date/attachment scan |
 | `list_attachments` | read | Attachment metadata (name, type, size) for one message |
 | `get_attachment_content` | read | Attachment text/raw content, or ZIP listing/entry — see below |
 | `search_mailboxes_batch` | read | N labeled searches in one call — see below |
-| `download_attachments` | write (disk) | Save one or more attachments to `DOWNLOAD_DIR` |
+| `download_attachments` | write (disk) | Save a count- and byte-bounded batch to `DOWNLOAD_DIR` |
 | `move_messages` | write (mailbox) | Move `messageIds[]` to another folder |
 | `copy_messages` | write (mailbox) | Copy `messageIds[]` to another folder |
 | `mark_messages` | write (mailbox) | Mark `messageIds[]` read or unread |
@@ -192,7 +192,9 @@ the caller's context window:
 If the attachment is a ZIP: calling without `entry` returns a bounded listing of entries (name,
 size, `encrypted` flag) instead of content; calling with `entry` (and optional `password`)
 extracts that one entry and pipes it through the same mode/ceiling logic as a regular
-attachment. ZIP guards: entry-count cap (`maxZipEntries`, default 200), uncompressed-size cap
+attachment. Before `unzipper` opens an archive, the server validates a bounded central directory;
+directory records count toward the entry cap (`maxZipEntries`, default 200). ZIP guards also
+include an uncompressed-size cap
 (`maxZipUncompressedBytes`, default 50 MB, anti zip-bomb), and rejection of entry names that are
 not addressable — a `..` path segment, a leading `/`, a backslash (ambiguous between a legacy
 Windows separator and a literal character), or a name over 512 chars. Those entries are **counted
@@ -201,11 +203,13 @@ listing is incomplete and "no such document in this archive" is not a supported 
 Entry names are sender-controlled, so the listing carries the same untrusted-data framing as
 attachment content.
 
-These caps apply to an attached `.zip`. The internal structure of an OOXML document
-(xlsx/docx) is bounded separately by `maxContainerEntries` (default 1,000) and
+These caps apply to an attached `.zip`. Before ExcelJS or mammoth parses an OOXML document
+(xlsx/docx), every internal entry is streamed through a real aggregate byte budget. Its structure
+is bounded separately by `maxContainerEntries` (default 1,000) and
 `maxContainerUncompressedBytes` (default 100 MB) — a legitimate workbook has one internal part
 per sheet plus styles, shared strings and drawings, so the archive caps are the wrong ruler for
-it.
+it. This bounds parser input, not parser RSS: the parser may allocate more memory than the
+decompressed document size.
 
 **ZIP encryption support:** the underlying `unzipper` library decrypts **ZipCrypto**
 (the classic `zip -P` format used by most corporate senders) when `password` is supplied. **AES-256
@@ -233,7 +237,8 @@ cannot block the main process's event loop and cannot outlive the timeout. `work
 `resourceLimits` caps that worker's own V8 heap, but **not** its Buffer/ArrayBuffer allocations
 or native-addon memory — it is not a full memory sandbox. The actual size guarantees are
 `maxAttachmentInputBytes` (checked before any parser runs), the ZIP entry/byte caps
-(`maxZipEntries`, `maxZipUncompressedBytes`, enforced on real bytes read, not declared metadata),
+(`maxZipEntries`, plus `maxZipUncompressedBytes` on extracted real bytes), the OOXML aggregate
+real-byte preflight,
 the raw-mode cap above, and `maxConcurrentExtractions` (below), which bounds how many of these
 workers can run at once so per-worker cost can't be multiplied by unbounded parallelism.
 
@@ -293,8 +298,9 @@ grupos:
 stopwords: ["LTDA", "SA"]
 ```
 
-Only `apelidos`, `grupos`, and `stopwords` are read; other keys in the same file (e.g. an
-existing private sender map) are ignored. This mechanism is generic — the actual aliases,
+Only `apelidos`, `grupos`, and `stopwords` are read; configured stopwords are removed from both
+stored names and incoming terms during alias/group matching. Other keys in the same file (e.g.
+an existing private sender map) are ignored. This mechanism is generic — the actual aliases,
 groups, and stopwords are deployment data and must live outside this repository (see Hard
 invariant 9 in `CLAUDE.md`).
 
@@ -318,6 +324,7 @@ Create `~/.config/mcp-outlook/plugin.json` with mode `0600`:
   "maxRawAttachmentBytes": 262144,
   "maxConcurrentExtractions": 2,
   "maxBatchSize": 25,
+  "maxDownloadBatchBytes": 52428800,
   "maxQueriesPerBatch": 10,
   "maxZipEntries": 200,
   "maxZipUncompressedBytes": 52428800,
@@ -334,11 +341,12 @@ Create `~/.config/mcp-outlook/plugin.json` with mode `0600`:
 | `maxRawAttachmentBytes` | 256 KB | Cap on `mode: 'raw'` base64 output |
 | `maxConcurrentExtractions` | 2 | Max extraction workers running at once (1-8); excess calls queue, then `EXTRACTION_BUSY` |
 | `maxBatchSize` | 25 | Cap on `messageIds[]` / `attachmentIds[]` in move/copy/mark/download |
+| `maxDownloadBatchBytes` | 50 MB | Aggregate cap for one `download_attachments` call, checked before and during writes |
 | `maxQueriesPerBatch` | 10 | Cap on `queries[]` in `search_mailboxes_batch` |
-| `maxZipEntries` | 200 | Cap on entries listed/considered in a ZIP |
-| `maxZipUncompressedBytes` | 50 MB | Cap on ZIP uncompressed size (anti zip-bomb) |
+| `maxZipEntries` | 200 | Cap on all central-directory records, including directories |
+| `maxZipUncompressedBytes` | 50 MB | Real-byte cap while extracting one ZIP entry; listings also reject oversized declared totals |
 | `maxContainerEntries` | 1,000 | Cap on internal parts of an OOXML document (xlsx/docx) |
-| `maxContainerUncompressedBytes` | 100 MB | Cap on declared uncompressed size of an OOXML document |
+| `maxContainerUncompressedBytes` | 100 MB | Aggregate real-byte cap streamed before parsing an OOXML document |
 | `searchMemoryPath` | — | Path to the external search-memory YAML (see above) |
 
 Environment overrides (useful for deploy-time toggles without editing the private config file):

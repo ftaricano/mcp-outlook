@@ -17,6 +17,7 @@ const config = {
   maxExtractedChars: 200_000,
   maxRawAttachmentBytes: 256 * 1024,
   maxBatchSize: 25,
+  maxDownloadBatchBytes: 50 * 1024 * 1024,
   maxQueriesPerBatch: 10,
   maxZipEntries: 200,
   maxZipUncompressedBytes: 50 * 1024 * 1024,

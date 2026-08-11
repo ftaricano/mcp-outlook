@@ -154,6 +154,7 @@ describe('expansion config fields', () => {
     expect(config.maxRawAttachmentBytes).toBe(256 * 1024);
     expect(config.maxConcurrentExtractions).toBe(2);
     expect(config.maxBatchSize).toBe(25);
+    expect(config.maxDownloadBatchBytes).toBe(50 * 1024 * 1024);
     expect(config.maxQueriesPerBatch).toBe(10);
     expect(config.maxZipEntries).toBe(200);
     expect(config.maxZipUncompressedBytes).toBe(50 * 1024 * 1024);
