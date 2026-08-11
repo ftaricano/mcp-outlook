@@ -109,6 +109,18 @@ function preflightCentralDirectory(buffer: Buffer, limits: ZipLimits): void {
     const filenameLength = buffer.readUInt16LE(cursor + 28);
     const extraLength = buffer.readUInt16LE(cursor + 30);
     const commentLength = buffer.readUInt16LE(cursor + 32);
+    const compressedSize = buffer.readUInt32LE(cursor + 20);
+    const uncompressedSize = buffer.readUInt32LE(cursor + 24);
+    const diskStart = buffer.readUInt16LE(cursor + 34);
+    const localHeaderOffset = buffer.readUInt32LE(cursor + 42);
+    if (
+      diskStart !== 0 ||
+      compressedSize === 0xffffffff ||
+      uncompressedSize === 0xffffffff ||
+      localHeaderOffset === 0xffffffff
+    ) {
+      throw new ZipError('ZIP_INVALID');
+    }
     const recordLength = 46 + filenameLength + extraLength + commentLength;
     if (recordLength > MAX_CENTRAL_RECORD_BYTES) throw new ZipError('ZIP_TOO_LARGE');
     cursor += recordLength;

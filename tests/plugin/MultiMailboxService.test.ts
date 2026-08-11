@@ -404,6 +404,7 @@ describe('write methods', () => {
     const downloadOne = vi.fn(async () => ({
       success: true,
       filename: 'file.pdf',
+      relativePath: 'file.pdf',
       filePath: '/tmp/file.pdf',
       originalSize: 40,
       savedSize: 40,
@@ -413,10 +414,14 @@ describe('write methods', () => {
     }));
     const service = new MultiMailboxService(config(), () =>
       stubEmailService({
-        listAttachments: vi.fn(async () => [
-          { id: 'a1', size: 40 },
-          { id: 'a2', size: 40 },
-        ]),
+        listAttachmentsDetailed: vi.fn(async () => ({
+          items: [
+            { id: 'a1', size: 40 },
+            { id: 'a2', size: 40 },
+          ],
+          pagesScanned: 2,
+          truncated: false,
+        })),
         downloadAttachmentToFile: downloadOne,
       })
     );
@@ -426,17 +431,57 @@ describe('write methods', () => {
     expect(downloadOne).toHaveBeenNthCalledWith(2, 'm1', 'a2', {
       maxBytes: 50 * 1024 * 1024 - 40,
     });
+    expect(result.files).toEqual([
+      {
+        attachmentId: 'a1',
+        status: 'saved',
+        filename: 'file.pdf',
+        relativePath: 'file.pdf',
+        sizeBytes: 40,
+      },
+      {
+        attachmentId: 'a2',
+        status: 'saved',
+        filename: 'file.pdf',
+        relativePath: 'file.pdf',
+        sizeBytes: 40,
+      },
+    ]);
+    expect(result.files.every((file) => !('filePath' in file))).toBe(true);
+  });
+
+  it('fails closed when attachment pagination is truncated before the first write', async () => {
+    const downloadOne = vi.fn();
+    const listAttachmentsDetailed = vi.fn(async () => ({
+      items: [{ id: 'a1', size: 1 }],
+      pagesScanned: 20,
+      truncated: true,
+    }));
+    const service = new MultiMailboxService(config({ maxBatchSize: 2 }), () =>
+      stubEmailService({
+        listAttachmentsDetailed,
+        downloadAttachmentToFile: downloadOne,
+      })
+    );
+
+    await expect(service.downloadAttachments('finance', 'm1')).rejects.toThrow(/batch limit/i);
+    expect(listAttachmentsDetailed).toHaveBeenCalledWith('m1', { maxItems: 3, maxPages: 20 });
+    expect(downloadOne).not.toHaveBeenCalled();
   });
 
   it('rejects download-all above maxBatchSize before the first write', async () => {
     const downloadOne = vi.fn();
     const service = new MultiMailboxService(config({ maxBatchSize: 2 }), () =>
       stubEmailService({
-        listAttachments: vi.fn(async () => [
-          { id: 'a1', size: 1 },
-          { id: 'a2', size: 1 },
-          { id: 'a3', size: 1 },
-        ]),
+        listAttachmentsDetailed: vi.fn(async () => ({
+          items: [
+            { id: 'a1', size: 1 },
+            { id: 'a2', size: 1 },
+            { id: 'a3', size: 1 },
+          ],
+          pagesScanned: 1,
+          truncated: false,
+        })),
         downloadAttachmentToFile: downloadOne,
       })
     );
@@ -449,10 +494,14 @@ describe('write methods', () => {
     const downloadOne = vi.fn();
     const service = new MultiMailboxService(config({ maxDownloadBatchBytes: 100 }), () =>
       stubEmailService({
-        listAttachments: vi.fn(async () => [
-          { id: 'a1', size: 60 },
-          { id: 'a2', size: 50 },
-        ]),
+        listAttachmentsDetailed: vi.fn(async () => ({
+          items: [
+            { id: 'a1', size: 60 },
+            { id: 'a2', size: 50 },
+          ],
+          pagesScanned: 1,
+          truncated: false,
+        })),
         downloadAttachmentToFile: downloadOne,
       })
     );
@@ -465,16 +514,20 @@ describe('write methods', () => {
     const downloadOne = vi.fn(async (_messageId: string, attachmentId: string, options: any) => {
       if (attachmentId === 'a2') {
         expect(options.maxBytes).toBe(2);
-        return { success: false, savedSize: 0 };
+        return { success: false, savedSize: 0, errorCode: 'BYTE_BUDGET_EXCEEDED' };
       }
-      return { success: true, savedSize: 8 };
+      return { success: true, filename: 'a1.pdf', relativePath: 'a1.pdf', savedSize: 8 };
     });
     const service = new MultiMailboxService(config({ maxDownloadBatchBytes: 10 }), () =>
       stubEmailService({
-        listAttachments: vi.fn(async () => [
-          { id: 'a1', size: 1 },
-          { id: 'a2', size: 1 },
-        ]),
+        listAttachmentsDetailed: vi.fn(async () => ({
+          items: [
+            { id: 'a1', size: 1 },
+            { id: 'a2', size: 1 },
+          ],
+          pagesScanned: 1,
+          truncated: false,
+        })),
         downloadAttachmentToFile: downloadOne,
       })
     );
@@ -487,12 +540,28 @@ describe('write methods', () => {
       downloadedBytes: 8,
       byteLimit: 10,
     });
+    expect(result.files).toEqual([
+      {
+        attachmentId: 'a1',
+        status: 'saved',
+        filename: 'a1.pdf',
+        relativePath: 'a1.pdf',
+        sizeBytes: 8,
+      },
+      {
+        attachmentId: 'a2',
+        status: 'failed',
+        sizeBytes: 0,
+        errorCode: 'BYTE_BUDGET_EXCEEDED',
+      },
+    ]);
   });
 
   it('downloads only the requested attachmentIds, one at a time, without downloading all', async () => {
     const downloadOne = vi.fn(async (_messageId: string, attachmentId: string) => ({
       success: true,
       filename: `${attachmentId}.pdf`,
+      relativePath: `${attachmentId}.pdf`,
       filePath: `/tmp/${attachmentId}.pdf`,
       originalSize: 10,
       savedSize: 10,
@@ -502,10 +571,14 @@ describe('write methods', () => {
     }));
     const service = new MultiMailboxService(config(), () =>
       stubEmailService({
-        listAttachments: vi.fn(async () => [
-          { id: 'a1', size: 10 },
-          { id: 'a2', size: 10 },
-        ]),
+        listAttachmentsDetailed: vi.fn(async () => ({
+          items: [
+            { id: 'a1', size: 10 },
+            { id: 'a2', size: 10 },
+          ],
+          pagesScanned: 1,
+          truncated: false,
+        })),
         downloadAttachmentToFile: downloadOne,
       })
     );
@@ -528,6 +601,7 @@ describe('write methods', () => {
       return {
         success: true,
         filename: `${attachmentId}.pdf`,
+        relativePath: `${attachmentId}.pdf`,
         filePath: `/tmp/${attachmentId}.pdf`,
         originalSize: 10,
         savedSize: 10,
@@ -538,10 +612,14 @@ describe('write methods', () => {
     });
     const service = new MultiMailboxService(config(), () =>
       stubEmailService({
-        listAttachments: vi.fn(async () => [
-          { id: 'a1', size: 10 },
-          { id: 'bad', size: 10 },
-        ]),
+        listAttachmentsDetailed: vi.fn(async () => ({
+          items: [
+            { id: 'a1', size: 10 },
+            { id: 'bad', size: 10 },
+          ],
+          pagesScanned: 1,
+          truncated: false,
+        })),
         downloadAttachmentToFile: downloadOne,
       })
     );
@@ -549,5 +627,11 @@ describe('write methods', () => {
     const result = await service.downloadAttachments('finance', 'm1', ['a1', 'bad']);
 
     expect(result).toMatchObject({ totalFiles: 2, successfulDownloads: 1, failedDownloads: 1 });
+    expect(result.files[1]).toEqual({
+      attachmentId: 'bad',
+      status: 'failed',
+      sizeBytes: 0,
+      errorCode: 'DOWNLOAD_FAILED',
+    });
   });
 });

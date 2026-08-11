@@ -50,6 +50,7 @@ export function stubEmailService(
     'listFoldersDetailed',
     'getFolderStatistics',
     'listAttachments',
+    'listAttachmentsDetailed',
     'downloadAttachment',
     'downloadAttachmentToFile',
     'moveEmailsToFolder',

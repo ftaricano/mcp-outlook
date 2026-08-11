@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
 import { PathGuard } from '../security/pathGuard.js';
 
 /**
@@ -52,10 +53,13 @@ export class FileManager {
     } = {}
   ): Promise<{
     success: boolean;
+    filename: string;
     filePath: string;
+    relativePath: string;
     originalSize: number;
     savedSize: number;
     integrity: boolean;
+    errorCode?: 'FILE_WRITE_FAILED';
     error?: string;
   }> {
     try {
@@ -79,32 +83,46 @@ export class FileManager {
       ) {
         throw new Error(`filename escapes targetDir: ${filename}`);
       }
-      const filePath = resolvedCandidate;
-
-      // Verificar se arquivo já existe
-      if (fs.existsSync(filePath) && !options.overwrite) {
-        const timestamp = Date.now();
-        const ext = path.extname(filename);
-        const nameWithoutExt = path.basename(filename, ext);
-        const newFilename = `${nameWithoutExt}_${timestamp}${ext}`;
-        return this.saveAttachmentToDisk(attachment, {
-          ...options,
-          filename: newFilename,
-          targetDirectory: targetDir,
-        });
-      }
+      const temporaryPath = path.join(targetDir, `.${filename}.${process.pid}.${randomUUID()}.tmp`);
 
       console.error('💾 Iniciando salvamento otimizado...');
       console.error(`   Arquivo: ${filename}`);
       console.error(`   Tamanho original: ${attachment.size} bytes`);
-      console.error(`   Destino: ${filePath}`);
+      console.error(`   Destino: ${resolvedCandidate}`);
 
-      // Processar Base64 em chunks para evitar problemas de memória
+      // Write completely to a private create-only temp file. Publication is
+      // atomic below, so callers never observe a partial attachment.
       const result = await this.saveBase64ToFileOptimized(
         attachment.contentBytes,
-        filePath,
+        temporaryPath,
         attachment.size
       );
+      if (!result.success) {
+        return {
+          success: false,
+          filename: '',
+          filePath: '',
+          relativePath: '',
+          originalSize: attachment.size,
+          savedSize: 0,
+          integrity: false,
+          errorCode: 'FILE_WRITE_FAILED',
+          error: result.error,
+        };
+      }
+
+      let filePath: string;
+      try {
+        if (options.overwrite) {
+          await fs.promises.rename(temporaryPath, resolvedCandidate);
+          filePath = resolvedCandidate;
+        } else {
+          filePath = await this.publishWithoutClobber(temporaryPath, targetDir, filename);
+        }
+      } catch (error) {
+        await fs.promises.unlink(temporaryPath).catch(() => undefined);
+        throw error;
+      }
 
       // Validação de integridade opcional
       let integrity = true;
@@ -115,7 +133,9 @@ export class FileManager {
 
       return {
         success: result.success,
+        filename: path.basename(filePath),
         filePath,
+        relativePath: path.relative(this.downloadDir, filePath).split(path.sep).join('/'),
         originalSize: attachment.size,
         savedSize: result.fileSize,
         integrity,
@@ -125,18 +145,48 @@ export class FileManager {
       console.error('❌ Erro no FileManager:', error);
       return {
         success: false,
+        filename: '',
         filePath: '',
+        relativePath: '',
         originalSize: attachment.size,
         savedSize: 0,
         integrity: false,
+        errorCode: 'FILE_WRITE_FAILED',
         error: error instanceof Error ? error.message : 'Erro desconhecido',
       };
     }
   }
 
-  /**
-   * Salva Base64 para arquivo de forma otimizada usando streams
-   */
+  private async publishWithoutClobber(
+    temporaryPath: string,
+    targetDirectory: string,
+    preferredFilename: string
+  ): Promise<string> {
+    const extension = path.extname(preferredFilename);
+    const stem = path.basename(preferredFilename, extension);
+
+    for (let index = 0; index <= 1_000; index += 1) {
+      const candidateName = index === 0 ? preferredFilename : `${stem}_${index}${extension}`;
+      const candidatePath = path.join(targetDirectory, candidateName);
+      try {
+        await fs.promises.link(temporaryPath, candidatePath);
+        try {
+          await fs.promises.unlink(temporaryPath);
+        } catch (error) {
+          await fs.promises.unlink(candidatePath).catch(() => undefined);
+          throw error;
+        }
+        return candidatePath;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') continue;
+        throw error;
+      }
+    }
+
+    throw new Error('Unable to allocate a collision-free attachment filename');
+  }
+
+  /** Salva Base64 em blocos para um arquivo temporário create-only. */
   private async saveBase64ToFileOptimized(
     base64Content: string,
     filePath: string,
@@ -146,69 +196,34 @@ export class FileManager {
     // below is only about back-pressuring writes — we still hold the full
     // base64 in memory. For attachments under Graph's ~15MB cap this is
     // fine. Callers can swap to a streaming pipeline later if we grow.
-    return new Promise((resolve) => {
-      const writeStream = fs.createWriteStream(filePath);
-      let settled = false;
-
-      const settle = (value: { success: boolean; fileSize: number; error?: string }) => {
-        if (settled) return;
-        settled = true;
-        resolve(value);
-      };
-
-      writeStream.on('error', (error) => {
-        console.error('❌ Erro no stream de escrita:', error);
-        settle({ success: false, fileSize: 0, error: error.message });
-      });
-
-      writeStream.on('finish', () => {
-        try {
-          const stats = fs.statSync(filePath);
-          console.error(`✅ Arquivo salvo: ${stats.size} bytes`);
-          settle({ success: true, fileSize: stats.size });
-        } catch (statErr) {
-          settle({
-            success: false,
-            fileSize: 0,
-            error: statErr instanceof Error ? statErr.message : 'stat failed',
-          });
-        }
-      });
-
+    let handle: fs.promises.FileHandle | undefined;
+    try {
+      handle = await fs.promises.open(filePath, 'wx', 0o600);
       const chunkSize = 8192;
-      let offset = 0;
-
-      const processChunk = (): void => {
-        if (settled) return;
-        if (offset >= base64Content.length) {
-          writeStream.end();
-          return;
+      for (let offset = 0; offset < base64Content.length; offset += chunkSize) {
+        const buffer = Buffer.from(base64Content.slice(offset, offset + chunkSize), 'base64');
+        let written = 0;
+        while (written < buffer.length) {
+          const result = await handle.write(buffer, written);
+          if (result.bytesWritten <= 0) throw new Error('Attachment write made no progress');
+          written += result.bytesWritten;
         }
-        try {
-          const chunk = base64Content.slice(offset, offset + chunkSize);
-          const buffer = Buffer.from(chunk, 'base64');
-          writeStream.write(buffer, (error) => {
-            if (error) {
-              console.error('❌ Erro ao escrever chunk:', error);
-              writeStream.destroy();
-              settle({ success: false, fileSize: 0, error: error.message });
-              return;
-            }
-            offset += chunkSize;
-            setImmediate(processChunk);
-          });
-        } catch (error) {
-          writeStream.destroy();
-          settle({
-            success: false,
-            fileSize: 0,
-            error: error instanceof Error ? error.message : 'Erro na conversão',
-          });
-        }
+      }
+      const stats = await handle.stat();
+      await handle.close();
+      handle = undefined;
+      console.error(`✅ Arquivo preparado: ${stats.size} bytes`);
+      return { success: true, fileSize: stats.size };
+    } catch (error) {
+      await handle?.close().catch(() => undefined);
+      await fs.promises.unlink(filePath).catch(() => undefined);
+      console.error('❌ Erro na escrita atômica:', error);
+      return {
+        success: false,
+        fileSize: 0,
+        error: error instanceof Error ? error.message : 'Erro na conversão',
       };
-
-      processChunk();
-    });
+    }
   }
 
   /**

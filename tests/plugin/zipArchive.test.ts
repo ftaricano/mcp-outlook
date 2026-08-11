@@ -37,6 +37,20 @@ function buildZipWithDirectories(directoryCount: number): Promise<Buffer> {
   });
 }
 
+function patchFirstCentralEntry(
+  zip: Buffer,
+  mutate: (buffer: Buffer, offset: number) => void
+): Buffer {
+  const patched = Buffer.from(zip);
+  for (let offset = 0; offset <= patched.length - 46; offset += 1) {
+    if (patched.readUInt32LE(offset) === 0x02014b50) {
+      mutate(patched, offset);
+      return patched;
+    }
+  }
+  throw new Error('central directory entry not found');
+}
+
 const LIMITS = { maxEntries: 200, maxUncompressedBytes: 50 * 1024 * 1024 };
 
 describe('zipArchive', () => {
@@ -115,6 +129,28 @@ describe('zipArchive', () => {
     await expect(listZipEntries(zip, { ...LIMITS, maxEntries: 3 })).rejects.toMatchObject({
       code: 'ZIP_TOO_MANY_ENTRIES',
     });
+  });
+
+  it.each([
+    [
+      'non-zero entry disk',
+      (buffer: Buffer, offset: number) => buffer.writeUInt16LE(1, offset + 34),
+    ],
+    [
+      'ZIP64 compressed size sentinel',
+      (buffer: Buffer, offset: number) => buffer.writeUInt32LE(0xffffffff, offset + 20),
+    ],
+    [
+      'ZIP64 local header offset sentinel',
+      (buffer: Buffer, offset: number) => buffer.writeUInt32LE(0xffffffff, offset + 42),
+    ],
+  ])('rejects a central entry with %s before opening', async (_label, mutate) => {
+    const zip = await buildZip({ 'a.txt': 'x' });
+    await expect(listZipEntries(patchFirstCentralEntry(zip, mutate), LIMITS)).rejects.toMatchObject(
+      {
+        code: 'ZIP_INVALID',
+      }
+    );
   });
 
   it('rejects entries whose declared uncompressed size exceeds the cap', async () => {

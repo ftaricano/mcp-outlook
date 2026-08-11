@@ -735,6 +735,14 @@ export class EmailService {
 
   // Funcionalidades de Anexos
   async listAttachments(emailId: string): Promise<any[]> {
+    const result = await this.listAttachmentsDetailed(emailId);
+    return result.items;
+  }
+
+  async listAttachmentsDetailed(
+    emailId: string,
+    options: { maxItems?: number; maxPages?: number } = {}
+  ): Promise<{ items: any[]; pagesScanned: number; truncated: boolean }> {
     try {
       const userEmail = this.targetUserEmail || 'me';
       const apiPath =
@@ -742,16 +750,26 @@ export class EmailService {
           ? `/me/messages/${encodeGraphSegment(emailId)}/attachments`
           : `/users/${userEmail}/messages/${encodeGraphSegment(emailId)}/attachments`;
 
-      const response = await this.client.api(apiPath).get();
+      const firstPage = await this.client.api(apiPath).get();
+      const pagination = await collectGraphPages({
+        firstPage,
+        fetchNext: (nextLink) => this.client.api(validateGraphNextLink(nextLink)).get(),
+        maxItems: options.maxItems ?? 1_000,
+        maxPages: options.maxPages ?? 20,
+      });
 
-      return response.value.map((attachment: any) => ({
-        id: attachment.id,
-        name: attachment.name,
-        contentType: attachment.contentType,
-        size: attachment.size,
-        isInline: attachment.isInline,
-        attachmentType: attachment['@odata.type'], // Adiciona o tipo do anexo
-      }));
+      return {
+        items: pagination.items.map((attachment: any) => ({
+          id: attachment.id,
+          name: attachment.name,
+          contentType: attachment.contentType,
+          size: attachment.size,
+          isInline: attachment.isInline,
+          attachmentType: attachment['@odata.type'],
+        })),
+        pagesScanned: pagination.pagesScanned,
+        truncated: pagination.truncated,
+      };
     } catch (error) {
       console.error('Erro ao listar anexos:', error);
       throw new Error(
@@ -979,11 +997,13 @@ export class EmailService {
     success: boolean;
     filename: string;
     filePath: string;
+    relativePath: string;
     originalSize: number;
     savedSize: number;
     contentType: string;
     integrity: boolean;
     downloadTime: number;
+    errorCode?: 'BYTE_BUDGET_EXCEEDED' | 'FILE_WRITE_FAILED' | 'DOWNLOAD_FAILED';
     error?: string;
   }> {
     const startTime = Date.now();
@@ -1007,11 +1027,13 @@ export class EmailService {
           success: false,
           filename: attachment.name,
           filePath: '',
+          relativePath: '',
           originalSize: decodedSize,
           savedSize: 0,
           contentType: attachment.contentType,
           integrity: false,
           downloadTime: Date.now() - startTime,
+          errorCode: 'BYTE_BUDGET_EXCEEDED',
           error: 'Attachment exceeds the remaining download byte budget',
         };
       }
@@ -1037,13 +1059,15 @@ export class EmailService {
 
       return {
         success: saveResult.success,
-        filename: attachment.name,
+        filename: saveResult.filename,
         filePath: saveResult.filePath,
+        relativePath: saveResult.relativePath,
         originalSize: saveResult.originalSize,
         savedSize: saveResult.savedSize,
         contentType: attachment.contentType,
         integrity: saveResult.integrity,
         downloadTime,
+        errorCode: saveResult.errorCode,
         error: saveResult.error,
       };
     } catch (error) {
@@ -1056,11 +1080,13 @@ export class EmailService {
         success: false,
         filename: '',
         filePath: '',
+        relativePath: '',
         originalSize: 0,
         savedSize: 0,
         contentType: '',
         integrity: false,
         downloadTime,
+        errorCode: 'DOWNLOAD_FAILED',
         error: errorMessage,
       };
     }

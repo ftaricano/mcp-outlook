@@ -18,6 +18,7 @@ export type MailboxEmailService = Pick<
   | 'listFoldersDetailed'
   | 'getFolderStatistics'
   | 'listAttachments'
+  | 'listAttachmentsDetailed'
   | 'downloadAttachment'
   | 'downloadAttachmentToFile'
   | 'moveEmailsToFolder'
@@ -63,6 +64,31 @@ export class DownloadLimitError extends Error {
     super(`Requested attachments exceed the server download limit of ${limit} bytes`);
     this.name = 'DownloadLimitError';
   }
+}
+
+export type AttachmentDownloadErrorCode =
+  'BYTE_BUDGET_EXCEEDED' | 'FILE_WRITE_FAILED' | 'DOWNLOAD_FAILED' | 'INVALID_RESULT';
+
+export interface AttachmentDownloadReceipt {
+  readonly attachmentId: string;
+  readonly status: 'saved' | 'failed';
+  readonly filename?: string;
+  readonly relativePath?: string;
+  readonly sizeBytes: number;
+  readonly errorCode?: AttachmentDownloadErrorCode;
+}
+
+function isSafeDownloadReceiptPath(filename: unknown, relativePath: unknown): boolean {
+  if (typeof filename !== 'string' || filename.length === 0) return false;
+  if (typeof relativePath !== 'string' || relativePath.length === 0) return false;
+  if (relativePath.startsWith('/') || relativePath.includes('\\') || relativePath.includes('\0')) {
+    return false;
+  }
+  const segments = relativePath.split('/');
+  return (
+    segments.every((segment) => segment.length > 0 && segment !== '.' && segment !== '..') &&
+    segments.at(-1) === filename
+  );
 }
 
 export type AttachmentContentErrorCode =
@@ -389,16 +415,21 @@ export class MultiMailboxService {
     failedDownloads: number;
     downloadedBytes: number;
     byteLimit: number;
+    files: readonly AttachmentDownloadReceipt[];
   }> {
     const mailbox = this.resolveMailbox(alias);
     const emailService = this.createEmailService(mailbox.address);
 
     try {
-      const listed = (await emailService.listAttachments(messageId)) as {
+      const listing = await emailService.listAttachmentsDetailed(messageId, {
+        maxItems: this.config.maxBatchSize + 1,
+        maxPages: 20,
+      });
+      const listed = listing.items as {
         id?: string | null;
         size?: number | null;
       }[];
-      if (!attachmentIds && listed.length > this.config.maxBatchSize) {
+      if (listing.truncated || listed.length > this.config.maxBatchSize) {
         throw new BatchLimitError(this.config.maxBatchSize);
       }
       const byId = new Map(
@@ -426,9 +457,8 @@ export class MultiMailboxService {
         throw new DownloadLimitError(this.config.maxDownloadBatchBytes);
       }
 
-      let successfulDownloads = 0;
-      let failedDownloads = 0;
       let downloadedBytes = 0;
+      const files: AttachmentDownloadReceipt[] = [];
       for (const attachment of requested) {
         try {
           const outcome = await emailService.downloadAttachmentToFile(messageId, attachment.id, {
@@ -439,20 +469,50 @@ export class MultiMailboxService {
             if (
               !Number.isSafeInteger(outcome.savedSize) ||
               outcome.savedSize < 0 ||
-              outcome.savedSize > remainingBytes
+              outcome.savedSize > remainingBytes ||
+              !isSafeDownloadReceiptPath(outcome.filename, outcome.relativePath)
             ) {
-              failedDownloads += 1;
+              files.push({
+                attachmentId: attachment.id,
+                status: 'failed',
+                sizeBytes: 0,
+                errorCode: 'INVALID_RESULT',
+              });
               continue;
             }
-            successfulDownloads += 1;
             downloadedBytes += outcome.savedSize;
+            files.push({
+              attachmentId: attachment.id,
+              status: 'saved',
+              filename: outcome.filename,
+              relativePath: outcome.relativePath,
+              sizeBytes: outcome.savedSize,
+            });
           } else {
-            failedDownloads += 1;
+            const errorCode =
+              outcome.errorCode === 'BYTE_BUDGET_EXCEEDED' ||
+              outcome.errorCode === 'FILE_WRITE_FAILED'
+                ? outcome.errorCode
+                : 'DOWNLOAD_FAILED';
+            files.push({
+              attachmentId: attachment.id,
+              status: 'failed',
+              sizeBytes: 0,
+              errorCode,
+            });
           }
         } catch {
-          failedDownloads += 1;
+          files.push({
+            attachmentId: attachment.id,
+            status: 'failed',
+            sizeBytes: 0,
+            errorCode: 'DOWNLOAD_FAILED',
+          });
         }
       }
+
+      const successfulDownloads = files.filter((file) => file.status === 'saved').length;
+      const failedDownloads = files.length - successfulDownloads;
 
       return {
         mailbox: mailbox.alias,
@@ -461,6 +521,7 @@ export class MultiMailboxService {
         failedDownloads,
         downloadedBytes,
         byteLimit: this.config.maxDownloadBatchBytes,
+        files,
       };
     } catch (error) {
       if (error instanceof BatchLimitError || error instanceof DownloadLimitError) throw error;

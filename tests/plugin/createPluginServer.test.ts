@@ -158,6 +158,17 @@ function fakeService(overrides: Partial<MultiMailboxService> = {}): MultiMailbox
       totalFiles: 1,
       successfulDownloads: 1,
       failedDownloads: 0,
+      downloadedBytes: 10,
+      byteLimit: 50 * 1024 * 1024,
+      files: [
+        {
+          attachmentId: 'a1',
+          status: 'saved',
+          filename: 'file.pdf',
+          relativePath: 'file.pdf',
+          sizeBytes: 10,
+        },
+      ],
     }),
     createDraftMessage: async () => ({ mailbox: 'finance', draftId: 'd1', attachmentsCount: 0 }),
     ...overrides,
