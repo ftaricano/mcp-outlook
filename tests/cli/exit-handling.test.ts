@@ -69,4 +69,16 @@ describe('outlook CLI — server shutdown exit handling', () => {
     expect(r.stderr).toMatch(/simulated startup failure/i);
     expect(r.stdout).not.toContain('fake_tool');
   });
+
+  it('reports the real reason instead of crashing when the server dies before the CLI writes', async () => {
+    // The server closes its input while answering initialize, so the CLI's next
+    // write hits a dead pipe (EPIPE). Without an 'error' listener that used to
+    // surface as an uncaught exception + Node stack trace, hiding the real reason.
+    const r = await runCli(['list'], 'deaf-after-initialize');
+    expect(r.code).toBe(1);
+    expect(r.stderr).not.toMatch(/Unhandled 'error' event/i);
+    expect(r.stderr).not.toMatch(/^\s+at .*outlook\.js/m);
+    expect(r.stderr).toMatch(/mailbox lock lost/i);
+    expect(r.stdout).not.toContain('fake_tool');
+  });
 });

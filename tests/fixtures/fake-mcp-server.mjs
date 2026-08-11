@@ -11,7 +11,13 @@
  *   success-clean               — same, but exit 0 on SIGTERM
  *   fail-before-frame           — write a reason to stderr and exit 1 BEFORE
  *                                 answering anything (genuine startup failure)
+ *   deaf-after-initialize       — CLOSE its own stdin fd while answering
+ *                                 initialize (staying alive), so the CLI's NEXT
+ *                                 write gets a deterministic EPIPE (must not
+ *                                 crash the CLI; the stderr reason must surface)
  */
+
+import { closeSync } from 'node:fs';
 
 const mode = process.env.FAKE_SERVER_MODE || 'success-then-fail';
 
@@ -43,6 +49,15 @@ process.stdin.on('data', (chunk) => {
       continue;
     }
     if (frame.method === 'initialize') {
+      if (mode === 'deaf-after-initialize') {
+        // Close the read end for real (not just the JS stream) BEFORE answering,
+        // so the CLI's next write is guaranteed to raise EPIPE instead of racing
+        // us and landing in a still-open pipe buffer.
+        process.stderr.write('[fake] simulated crash after initialize: mailbox lock lost\n');
+        process.stdin.pause();
+        process.stdin.on('error', () => {});
+        closeSync(0);
+      }
       send({
         jsonrpc: '2.0',
         id: frame.id,

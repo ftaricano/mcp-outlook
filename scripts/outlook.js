@@ -306,6 +306,8 @@ async function runMcp({
   // Captured server stderr, surfaced verbatim when the server dies BEFORE
   // answering (real reason — lock contention, bad env — beats a generic hint).
   let serverStderr = '';
+  // Set when writing to the server's stdin fails (EPIPE — server already gone).
+  let pipeErrorTimer;
 
   return new Promise((resolve) => {
     const responses = new Map();
@@ -360,7 +362,29 @@ async function runMcp({
       }
     });
 
+    // Writing to a server that already exited raises EPIPE on stdin. With no
+    // listener Node escalates that to an uncaught 'error' event, killing the CLI
+    // with a stack trace instead of reporting why the server went away. The
+    // 'close' handler carries the better reason (full stderr), so give it a
+    // moment to win; only report the pipe error itself if the child lingers.
+    child.stdin.on('error', (err) => reportPipeFailure(err.message));
+
+    function reportPipeFailure(detail) {
+      if (settled || pipeErrorTimer) return;
+      pipeErrorTimer = setTimeout(() => {
+        const reason = serverStderr.trim();
+        fail(
+          `Cannot reach the server (${detail})` +
+            (reason ? `:\n${reason}` : ' — it closed its input before responding.')
+        );
+      }, 250);
+    }
+
     function send(msg) {
+      if (child.stdin.destroyed || child.stdin.writableEnded) {
+        reportPipeFailure('server input stream is closed');
+        return;
+      }
       child.stdin.write(JSON.stringify(msg) + '\n');
     }
 
@@ -387,6 +411,7 @@ async function runMcp({
 
     function finish(renderedOutput, result) {
       clearTimeout(timer);
+      clearTimeout(pipeErrorTimer);
       settled = true;
       void recordRun('success', result).finally(() => {
         process.stdout.write(renderedOutput + '\n');
@@ -401,6 +426,7 @@ async function runMcp({
     function fail(message, result) {
       if (settled) return;
       clearTimeout(timer);
+      clearTimeout(pipeErrorTimer);
       settled = true;
       child.kill();
       void recordRun('error', result, message).finally(() => die(message));
