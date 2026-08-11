@@ -247,7 +247,8 @@ export class GraphOptimizer {
     const cacheKey =
       `folders:${this.targetUserEmail || 'me'}:optimized:` + `${includeSubfolders}:${maxDepth}`;
 
-    // Try cache first
+    // Try cache first. truncated:false is safe here (not a stale guess)
+    // only because the write side below never caches a truncated fetch.
     if (enableCache) {
       const cached = this.cacheManager.get<any[]>(cacheKey);
       if (cached) {
@@ -289,8 +290,12 @@ export class GraphOptimizer {
         truncated = truncated || subResult.truncated;
       }
 
-      // Cache results with longer TTL for folders
-      if (enableCache) {
+      // Cache results with longer TTL for folders — but only when the fetch
+      // was complete. Caching a truncated fetch would serve the same
+      // incomplete tree as truncated:false (a hardcoded/stale cache hit
+      // can't know the flag) for the whole TTL, reintroducing the silent
+      // truncation this method exists to fix.
+      if (enableCache && !truncated) {
         this.cacheManager.cacheFolders(cacheKey, folderList);
       }
 

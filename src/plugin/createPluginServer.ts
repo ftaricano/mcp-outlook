@@ -366,7 +366,7 @@ export function createOutlookPluginServer(
     'get_folder_stats',
     {
       title: 'Get Outlook folder statistics',
-      description: 'Get item counts and size for one folder in an allowed mailbox alias.',
+      description: 'Get item counts and date range for one folder in an allowed mailbox alias.',
       inputSchema: getFolderStatsSchema,
       annotations: READ_ONLY_ANNOTATIONS,
     },

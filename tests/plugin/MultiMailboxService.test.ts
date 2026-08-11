@@ -144,12 +144,12 @@ describe('read expansion methods', () => {
   it('returns folder stats and attachment metadata from the pinned service', async () => {
     const service = new MultiMailboxService(config(), () =>
       stubEmailService({
-        getFolderStatistics: vi.fn(async () => ({ totalItems: 10 })),
+        getFolderStatistics: vi.fn(async () => ({ totalEmails: 10, unreadEmails: 2 })),
         listAttachments: vi.fn(async () => [{ id: 'a1', name: 'fatura.pdf', size: 100 }]),
       })
     );
     await expect(service.getFolderStats('finance', 'inbox')).resolves.toMatchObject({
-      totalItems: 10,
+      totalEmails: 10,
     });
     await expect(service.listAttachments('finance', 'm1')).resolves.toHaveLength(1);
   });
