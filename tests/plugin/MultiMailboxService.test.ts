@@ -118,12 +118,27 @@ describe('read expansion methods', () => {
   it('lists folders and redacts failures', async () => {
     const service = new MultiMailboxService(config(), () =>
       stubEmailService({
-        listFolders: vi.fn(async () => {
+        listFoldersDetailed: vi.fn(async () => {
           throw new Error('Graph secret');
         }),
       })
     );
     await expect(service.listFolders('finance')).rejects.toThrow(/folder listing failed/i);
+  });
+
+  it('lists folders and propagates the truncated signal', async () => {
+    const service = new MultiMailboxService(config(), () =>
+      stubEmailService({
+        listFoldersDetailed: vi.fn(async () => ({
+          items: [{ id: 'inbox', displayName: 'Inbox' }],
+          truncated: true,
+        })),
+      })
+    );
+    await expect(service.listFolders('finance')).resolves.toMatchObject({
+      items: [{ id: 'inbox' }],
+      truncated: true,
+    });
   });
 
   it('returns folder stats and attachment metadata from the pinned service', async () => {

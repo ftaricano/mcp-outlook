@@ -46,7 +46,7 @@ export function stubEmailService(
   const methods: (keyof MailboxEmailService)[] = [
     'advancedSearchEmailsDetailed',
     'getEmailById',
-    'listFolders',
+    'listFoldersDetailed',
     'getFolderStatistics',
     'listAttachments',
     'downloadAttachment',

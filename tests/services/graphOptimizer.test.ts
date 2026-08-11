@@ -137,3 +137,88 @@ describe('getOptimizedEmailsDetailed - pagination evidence', () => {
     expect(result.truncated).toBe(false);
   });
 });
+
+describe('getOptimizedFoldersDetailed - pagination evidence', () => {
+  it('follows Graph next links for the top-level folder listing', async () => {
+    const pages = new Map<string, any>([
+      [
+        '/users/user@example.com/mailFolders',
+        {
+          value: [{ id: 'inbox', displayName: 'Inbox' }],
+          '@odata.nextLink': 'https://graph.microsoft.com/v1.0/folders-page-2',
+        },
+      ],
+      [
+        'https://graph.microsoft.com/v1.0/folders-page-2',
+        { value: [{ id: 'archive', displayName: 'Archive' }] },
+      ],
+    ]);
+    const client = {
+      api(url: string) {
+        const chain: any = {
+          select: () => chain,
+          filter: () => chain,
+          orderby: () => chain,
+          top: () => chain,
+          get: async () => pages.get(url),
+        };
+        return chain;
+      },
+    } as never;
+    const cache = new CacheManager();
+    const opt = new GraphOptimizer(client, cache, {}, 'user@example.com');
+
+    const result = await opt.getOptimizedFoldersDetailed({
+      includeSubfolders: false,
+      enableCache: false,
+      maxItems: 10,
+      maxPages: 5,
+    });
+
+    expect(result.items.map((item: any) => item.id)).toEqual(['inbox', 'archive']);
+    expect(result.pagesScanned).toBe(2);
+    expect(result.truncated).toBe(false);
+  });
+
+  it('follows Graph next links for a per-folder childFolders fetch and reports truncation on the folder limit', async () => {
+    const pages = new Map<string, any>([
+      ['/users/user@example.com/mailFolders', { value: [{ id: 'inbox', displayName: 'Inbox' }] }],
+      [
+        '/users/user@example.com/mailFolders/inbox/childFolders',
+        {
+          value: [{ id: 'sub-1', displayName: 'Sub 1' }],
+          '@odata.nextLink': 'https://graph.microsoft.com/v1.0/subfolders-page-2',
+        },
+      ],
+      [
+        'https://graph.microsoft.com/v1.0/subfolders-page-2',
+        { value: [{ id: 'sub-2', displayName: 'Sub 2' }] },
+      ],
+    ]);
+    const client = {
+      api(url: string) {
+        const chain: any = {
+          select: () => chain,
+          filter: () => chain,
+          orderby: () => chain,
+          top: () => chain,
+          get: async () => pages.get(url),
+        };
+        return chain;
+      },
+    } as never;
+    const cache = new CacheManager();
+    const opt = new GraphOptimizer(client, cache, {}, 'user@example.com');
+
+    const result = await opt.getOptimizedFoldersDetailed({
+      includeSubfolders: true,
+      maxDepth: 2,
+      enableCache: false,
+      maxItems: 10,
+      maxPages: 5,
+    });
+
+    expect(result.items.map((item: any) => item.id)).toEqual(['inbox', 'sub-1', 'sub-2']);
+    expect(result.truncated).toBe(false);
+  });
+});

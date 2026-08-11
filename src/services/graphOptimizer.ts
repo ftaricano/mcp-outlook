@@ -205,7 +205,9 @@ export class GraphOptimizer {
   }
 
   /**
-   * Optimized folder listing with caching
+   * Optimized folder listing with caching. Thin wrapper over
+   * getOptimizedFoldersDetailed for callers that only need the array —
+   * mirrors the getOptimizedEmails / getOptimizedEmailsDetailed split above.
    */
   async getOptimizedFolders(
     options: OptimizedQueryOptions & {
@@ -213,10 +215,31 @@ export class GraphOptimizer {
       maxDepth?: number;
     } = {}
   ): Promise<any[]> {
+    const result = await this.getOptimizedFoldersDetailed(options);
+    return result.items;
+  }
+
+  /**
+   * Optimized folder listing with caching and pagination evidence. Follows
+   * @odata.nextLink at both the top-level mailFolders fetch and every
+   * per-folder childFolders fetch instead of trusting a single page, and
+   * reports whether any of those fetches (or a per-folder error) left the
+   * tree incomplete.
+   */
+  async getOptimizedFoldersDetailed(
+    options: OptimizedQueryOptions & {
+      includeSubfolders?: boolean;
+      maxDepth?: number;
+      maxItems?: number;
+      maxPages?: number;
+    } = {}
+  ): Promise<GraphPaginationResult<any>> {
     const {
       includeSubfolders = true,
       maxDepth = 3,
       enableCache = true,
+      maxItems = 1000,
+      maxPages = 20,
       select = ['id', 'displayName', 'totalItemCount', 'unreadItemCount', 'parentFolderId'],
       ...queryOptions
     } = options;
@@ -229,7 +252,7 @@ export class GraphOptimizer {
       const cached = this.cacheManager.get<any[]>(cacheKey);
       if (cached) {
         console.error('⚡ Cache hit: folder structure');
-        return cached;
+        return { items: cached, pagesScanned: 0, itemsScanned: cached.length, truncated: false };
       }
     }
 
@@ -240,14 +263,30 @@ export class GraphOptimizer {
       if (this.config.enableSelectiveFields) {
         query = query.select(select);
       }
+      query = query.top(Math.min(maxItems, 100));
 
-      const folders = await query.get();
+      const firstPage = await query.get();
+      const pagination = await collectGraphPages({
+        firstPage,
+        fetchNext: (nextLink) => this.client.api(validateGraphNextLink(nextLink)).get(),
+        maxItems,
+        maxPages,
+      });
 
-      let folderList = folders.value || [];
+      let folderList = pagination.items;
+      let truncated = pagination.truncated;
 
       // Recursively get subfolders if needed
       if (includeSubfolders && maxDepth > 1) {
-        folderList = await this.getSubfoldersRecursive(folderList, maxDepth - 1, select);
+        const subResult = await this.getSubfoldersRecursive(
+          folderList,
+          maxDepth - 1,
+          select,
+          maxItems,
+          maxPages
+        );
+        folderList = subResult.folders;
+        truncated = truncated || subResult.truncated;
       }
 
       // Cache results with longer TTL for folders
@@ -255,8 +294,17 @@ export class GraphOptimizer {
         this.cacheManager.cacheFolders(cacheKey, folderList);
       }
 
-      console.error(`⚡ Fetched ${folderList.length} folders (optimized, depth: ${maxDepth})`);
-      return folderList;
+      console.error(
+        `⚡ Fetched ${folderList.length} folders (optimized, depth: ${maxDepth})` +
+          (truncated ? ' [truncated]' : '')
+      );
+      return {
+        items: folderList,
+        pagesScanned: pagination.pagesScanned,
+        itemsScanned: pagination.itemsScanned,
+        truncated,
+        nextLink: pagination.nextLink,
+      };
     } catch (error) {
       console.error('❌ Error in optimized folder fetch:', error);
       throw error;
@@ -511,40 +559,60 @@ export class GraphOptimizer {
   }
 
   /**
-   * Recursively get subfolders with depth control
+   * Recursively get subfolders with depth control. Follows @odata.nextLink
+   * per folder's childFolders page and reports truncation — both when a page
+   * limit is hit and when a per-folder fetch errors out (that branch of the
+   * tree is dropped, which is exactly the kind of gap `truncated` exists to
+   * surface rather than hide behind a console.warn).
    */
   private async getSubfoldersRecursive(
     folders: any[],
     remainingDepth: number,
-    selectFields: string[]
-  ): Promise<any[]> {
-    if (remainingDepth <= 0) return folders;
+    selectFields: string[],
+    maxItems: number,
+    maxPages: number
+  ): Promise<{ folders: any[]; truncated: boolean }> {
+    if (remainingDepth <= 0) return { folders, truncated: false };
 
     const allFolders = [...folders];
+    let truncated = false;
 
     const baseEndpoint = this.getBaseEndpoint();
 
     for (const folder of folders) {
       try {
-        const subfolders = await this.client
+        const firstPage = await this.client
           .api(`${baseEndpoint}/mailFolders/${encodeGraphSegment(folder.id)}/childFolders`)
           .select(selectFields)
+          .top(Math.min(maxItems, 100))
           .get();
 
-        if (subfolders.value && subfolders.value.length > 0) {
-          const nestedSubfolders = await this.getSubfoldersRecursive(
-            subfolders.value,
+        const pagination = await collectGraphPages({
+          firstPage,
+          fetchNext: (nextLink) => this.client.api(validateGraphNextLink(nextLink)).get(),
+          maxItems,
+          maxPages,
+        });
+        if (pagination.truncated) truncated = true;
+
+        if (pagination.items.length > 0) {
+          const nested = await this.getSubfoldersRecursive(
+            pagination.items,
             remainingDepth - 1,
-            selectFields
+            selectFields,
+            maxItems,
+            maxPages
           );
-          allFolders.push(...nestedSubfolders);
+          allFolders.push(...nested.folders);
+          if (nested.truncated) truncated = true;
         }
       } catch (error) {
         console.warn(`⚠️ Failed to get subfolders for ${folder.displayName}:`, error);
+        truncated = true;
       }
     }
 
-    return allFolders;
+    return { folders: allFolders, truncated };
   }
 
   /**

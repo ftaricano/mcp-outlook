@@ -15,7 +15,7 @@ export type MailboxEmailService = Pick<
   EmailService,
   | 'advancedSearchEmailsDetailed'
   | 'getEmailById'
-  | 'listFolders'
+  | 'listFoldersDetailed'
   | 'getFolderStatistics'
   | 'listAttachments'
   | 'downloadAttachment'
@@ -156,10 +156,10 @@ export class MultiMailboxService {
     return this.searchResolvedMailbox(mailbox, { ...criteria, query: undefined });
   }
 
-  async listFolders(alias: string): Promise<unknown[]> {
+  async listFolders(alias: string): Promise<{ items: unknown[]; truncated: boolean }> {
     const mailbox = this.resolveMailbox(alias);
     try {
-      return await this.createEmailService(mailbox.address).listFolders(true, 3);
+      return await this.createEmailService(mailbox.address).listFoldersDetailed(true, 3);
     } catch {
       throw new MailboxOperationError('folder listing');
     }

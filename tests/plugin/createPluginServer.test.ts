@@ -90,16 +90,26 @@ function fakeService(overrides: Partial<MultiMailboxService> = {}): MultiMailbox
       canaryMatched: false,
       warnings: [],
     }),
-    listFolders: async () => [
-      {
-        id: 'inbox',
-        displayName: 'Inbox',
-        totalItemCount: 3,
-        unreadItemCount: 1,
-        childFolderCount: 0,
-      },
-    ],
-    getFolderStats: async () => ({ totalItems: 10, unreadItems: 2, sizeInBytes: 1024 }),
+    listFolders: async () => ({
+      items: [
+        {
+          id: 'inbox',
+          displayName: 'Inbox',
+          totalItemCount: 3,
+          unreadItemCount: 1,
+          childFolderCount: 0,
+        },
+      ],
+      truncated: false,
+    }),
+    getFolderStats: async () => ({
+      folderName: 'Inbox',
+      totalEmails: 10,
+      unreadEmails: 2,
+      readEmails: 8,
+      emailsWithAttachments: 3,
+      dateRange: { oldest: '01/01/2026 00:00:00', newest: '02/01/2026 00:00:00' },
+    }),
     listAttachments: async () => [
       { id: 'a1', name: 'fatura.pdf', contentType: 'application/pdf', size: 100, isInline: false },
     ],
@@ -383,7 +393,31 @@ describe('createOutlookPluginServer', () => {
     expect(result.structuredContent).toMatchObject({
       mailbox: 'finance',
       folders: [{ id: 'inbox', displayName: 'Inbox' }],
+      truncated: false,
     });
+  });
+
+  it('signals truncation when the folder tree could not be fully fetched', async () => {
+    // Regression test for JAR-988: list_folders used to return a bare array
+    // with no way to signal that pagination or a per-folder fetch failure
+    // left the tree incomplete.
+    const { client } = await connect(
+      createOutlookPluginServer(
+        fakeService({
+          listFolders: async () => ({
+            items: [{ id: 'inbox', displayName: 'Inbox' }],
+            truncated: true,
+          }),
+        }),
+        pluginConfig()
+      )
+    );
+    const result = await client.callTool({
+      name: 'list_folders',
+      arguments: { mailbox: 'finance' },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({ truncated: true });
   });
 
   it('returns folder stats', async () => {
@@ -392,7 +426,33 @@ describe('createOutlookPluginServer', () => {
       name: 'get_folder_stats',
       arguments: { mailbox: 'finance', folderId: 'inbox' },
     });
-    expect(result.structuredContent).toMatchObject({ folderId: 'inbox', totalItems: 10 });
+    expect(result.structuredContent).toMatchObject({ folderId: 'inbox', totalEmails: 10 });
+  });
+
+  it('maps get_folder_stats fields to the real EmailService.getFolderStatistics shape', async () => {
+    // Regression test for JAR-988: the handler used to read stats.totalItems /
+    // stats.unreadItems / stats.sizeInBytes, fields that never exist on the
+    // real getFolderStatistics() return value, so every call silently
+    // returned undefined for all three with no error.
+    const { client } = await connect(createServer());
+    const result = await client.callTool({
+      name: 'get_folder_stats',
+      arguments: { mailbox: 'finance', folderId: 'inbox' },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      mailbox: 'finance',
+      folderId: 'inbox',
+      folderName: 'Inbox',
+      totalEmails: 10,
+      unreadEmails: 2,
+      readEmails: 8,
+      emailsWithAttachments: 3,
+      dateRange: { oldest: '01/01/2026 00:00:00', newest: '02/01/2026 00:00:00' },
+    });
+    expect(result.structuredContent).not.toHaveProperty('totalItems');
+    expect(result.structuredContent).not.toHaveProperty('unreadItems');
+    expect(result.structuredContent).not.toHaveProperty('sizeInBytes');
   });
 
   it('lists attachment metadata', async () => {
