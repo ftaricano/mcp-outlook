@@ -5,10 +5,11 @@ Guidance for agents working **on this repo**. End-user docs (tool catalog, setup
 ## What this is
 
 MCP server exposing Microsoft Graph email operations as 40 tools over stdio, plus a standalone
-`outlook` CLI wrapper. A separate four-tool read-only plugin supports allowlisted multi-mailbox
-search over stdio and loopback Streamable HTTP. Auth is Azure AD client-credentials (no user
-login). The original server remains single-mailbox per process; plugin services pin mailbox
-identity per instance.
+`outlook` CLI wrapper. A separate multi-mailbox plugin supports allowlisted search, reading, and
+bounded attachment access over stdio and loopback Streamable HTTP. It exposes ten read-only tools
+by default and five additional non-send/non-delete tools only when writes are explicitly enabled.
+Auth is Azure AD client-credentials (no user login). The original server remains single-mailbox
+per process; plugin services pin mailbox identity per instance.
 
 ## Hard invariants
 
@@ -36,6 +37,10 @@ These are enforced by CI or by design. Don't regress them.
     constructor-pinned mailbox services, and cache keys include mailbox identity.
 11. **HTTP is loopback-only in this repo.** Remote ChatGPT use requires a separately reviewed
     HTTPS OAuth 2.1 resource-server layer and a separate Graph `Mail.Read` app registration.
+12. **Graph permissions follow the exposed catalog.** The default ten-tool plugin requires only
+    application `Mail.Read`. Enabling its five write tools requires `Mail.ReadWrite`, but never
+    `Mail.Send`. The original 40-tool server requires `Mail.ReadWrite` and needs `Mail.Send` only
+    for `send_email` and `reply_to_email`.
 
 ## Architecture at a glance
 

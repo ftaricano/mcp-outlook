@@ -20,9 +20,13 @@ Works with any MCP-compatible client (Claude Desktop, Cursor, custom agents, etc
 ## Requirements
 
 - Node.js 20 or 22
-- Azure AD app registration with **Application** permissions:
-  - `Mail.ReadWrite` — required for all read/draft/folder operations
-  - `Mail.Send` — required only if you call `send_email` or `reply_to_email`
+- Azure AD app registration with **Application** permissions. Use separate registrations for the
+  original server and any remotely exposed plugin:
+  - original 40-tool server: `Mail.ReadWrite`; add `Mail.Send` only for `send_email` or
+    `reply_to_email`
+  - default 10-tool plugin: `Mail.Read` only
+  - 15-tool plugin with writes enabled: `Mail.ReadWrite`; `Mail.Send` is never required because
+    the plugin cannot send
   - `User.Read.All` — optional, only for `list_users`
 - Admin consent granted in the Azure Portal
 
@@ -52,6 +56,9 @@ Four required values feed both the server and the CLI:
 | `MAX_ATTACHMENT_MB` | no | Attachment size cap (default: 25) |
 | `OUTLOOK_STATE_DIR` | no | Local state root for persistent saved searches and sanitized run telemetry. Defaults to `$XDG_STATE_HOME/mcp-outlook` or `~/.local/state/mcp-outlook`. |
 | `OUTLOOK_JOURNAL` | no | Set to `0` to disable sanitized CLI run telemetry globally. Individual calls can use `--no-journal`. |
+| `OUTLOOK_PLUGIN_CONFIG` | no | Private plugin JSON path. Defaults to `~/.config/mcp-outlook/plugin.json`. |
+| `PLUGIN_SEARCH_MEMORY_PATH` | no | Private YAML path overriding `searchMemoryPath` in the plugin JSON. |
+| `PLUGIN_ALLOW_WRITES` | no | `false` forces the default 10-tool read-only catalog; `true` enables all 15. Unset/empty delegates to private JSON; any other value fails startup. |
 
 Resolution order (first hit wins): `process.env` → `<repo>/.env` (if present) → **macOS Keychain** (`security find-generic-password -s "<prefix>::<VARIABLE>" -a "$USER"`). On macOS, the default prefix is `mcp-outlook`; set `OUTLOOK_KEYCHAIN_PREFIX` if you want a different namespace.
 
@@ -142,6 +149,11 @@ replace the CLI or change the original 40-tool MCP server. **Ten read tools are 
 always; five additional write tools are registered only when `PLUGIN_ALLOW_WRITES=true`.**
 `send_email`, `reply_to_email`, and every delete operation are impossible by construction — no
 dispatch branch exists for them in the plugin, regardless of config.
+
+Use application `Mail.Read` for the default ten-tool catalog. Enabling the five write tools
+requires `Mail.ReadWrite`; the plugin never needs `Mail.Send`. `PLUGIN_ALLOW_WRITES=false` always
+forces writes off, an unset or empty value delegates to `allowWrites` in the private JSON (default
+`false`), and any other value fails startup.
 
 | Tool | Group | Purpose |
 |---|---|---|
@@ -524,6 +536,8 @@ Runtime flow:
 | `npm test` | Vitest unit tests |
 | `npm run test:coverage` | Vitest with coverage thresholds |
 | `npm run smoke` | Protocol smoke — verify `tools/list` returns 40 entries |
+| `npm run smoke:plugin` | Spawn `dist/plugin/stdio.js`; verify the 10/15 catalogs and a safe read call |
+| `npm run smoke:http` | Loopback Streamable HTTP plugin smoke |
 | `npm run audit:prod` | Audit runtime deps only |
 
 CI runs lint + typecheck + tests + smoke on Node 20, 22, and 24.
@@ -551,8 +565,9 @@ node scripts/live-writes-smoke.js     # 9 write-path tools (self-contained, safe
 
 This server handles Azure AD client secrets with broad mailbox access, and it is driven by an LLM that sees untrusted email bodies. Treat every tool call as potentially attacker-influenced.
 
-The read-only plugin narrows the exposed tool catalog but does not reduce Microsoft Graph
-permissions by itself. A remote deployment must use a separate read-only app registration.
+The default plugin narrows the exposed tool catalog but does not reduce Microsoft Graph
+permissions by itself. A remote deployment must use a separate `Mail.Read` app registration;
+enable `Mail.ReadWrite` only for a deployment that intentionally exposes the five write tools.
 Email subjects, previews, bodies, and attachment names are untrusted data and must never be
 interpreted as instructions to invoke other tools.
 
@@ -571,7 +586,8 @@ Keep these practices:
 - Store secrets in your OS keychain or a secrets manager, not in plaintext files
 - Rotate the client secret in Azure AD immediately if it is ever exposed
 - Set `MCP_EMAIL_UPLOAD_DIRS` to the *minimum* set of directories the server actually needs to read. Do not set it to `$HOME` or `/`.
-- Scope `Mail.Send` only if you need outbound email — `Mail.ReadWrite` alone is sufficient for drafts, search, and folder management
+- Scope `Mail.Send` only on the original server when outbound email is required. The plugin never
+  needs it; use `Mail.Read` for its default catalog and `Mail.ReadWrite` only for opt-in writes.
 - User-supplied HTML template fields are escaped before rendering. If you intentionally need trusted HTML, add an explicit sanitizer/allowlist instead of bypassing the template engine.
 
 Report vulnerabilities privately through [GitHub Security Advisories](https://github.com/ftaricano/mcp-outlook/security/advisories/new). See [SECURITY.md](SECURITY.md).
