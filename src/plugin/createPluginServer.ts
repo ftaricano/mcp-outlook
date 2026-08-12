@@ -1,13 +1,16 @@
 import type { Message } from '@microsoft/microsoft-graph-types';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { PluginConfig } from './config.js';
+import { AttachmentHandoffError } from './attachmentHandoffStore.js';
 import { AttachmentContentError } from './MultiMailboxService.js';
 import type { MultiMailboxService } from './MultiMailboxService.js';
 import {
   copyMessagesSchema,
+  createAttachmentHandoffSchema,
   createDraftSchema,
   downloadAttachmentsSchema,
   getAttachmentContentSchema,
+  getAttachmentHandoffSchema,
   getFolderStatsSchema,
   getMessageSchema,
   listAllowedMailboxesSchema,
@@ -41,6 +44,11 @@ const ADDITIVE_WRITE_ANNOTATIONS = {
 const MUTATING_WRITE_ANNOTATIONS = {
   ...ADDITIVE_WRITE_ANNOTATIONS,
   destructiveHint: true,
+} as const;
+
+const IDEMPOTENT_ADDITIVE_WRITE_ANNOTATIONS = {
+  ...ADDITIVE_WRITE_ANNOTATIONS,
+  idempotentHint: true,
 } as const;
 
 const UNTRUSTED_DATA_MARKER = 'UNTRUSTED_EMAIL_DATA_V1';
@@ -171,6 +179,27 @@ function attachmentProjection(attachment: AttachmentRecord) {
     contentType: bounded(attachment.contentType, 100),
     size: attachment.size ?? undefined,
     isInline: attachment.isInline ?? undefined,
+  };
+}
+
+function handoffProjection(handoff: {
+  handoffId: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  sha256: string;
+  createdAt: string;
+  status: 'ready';
+}) {
+  return {
+    handoffId: handoff.handoffId,
+    filename: handoff.filename,
+    contentType: handoff.contentType,
+    size: handoff.size,
+    sha256: handoff.sha256,
+    createdAt: handoff.createdAt,
+    status: handoff.status,
+    dataTrust: UNTRUSTED_DATA_MARKER,
   };
 }
 
@@ -567,6 +596,70 @@ export function createOutlookPluginServer(
       }
     }
   );
+
+  if (config.allowLocalHandoffs) {
+    server.registerTool(
+      'create_attachment_handoff',
+      {
+        title: 'Create a local Outlook attachment handoff',
+        description:
+          'Materialize one attachment into the private local handoff store and return only an opaque identifier plus integrity metadata.',
+        inputSchema: createAttachmentHandoffSchema,
+        annotations: IDEMPOTENT_ADDITIVE_WRITE_ANNOTATIONS,
+      },
+      async ({ mailbox, messageId, attachmentId, idempotencyKey }) => {
+        try {
+          const handoff = handoffProjection(
+            await service.createAttachmentHandoff(mailbox, messageId, attachmentId, idempotencyKey)
+          );
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Attachment handoff ${handoff.handoffId} is ready. ${UNTRUSTED_FRAMING}`,
+              },
+            ],
+            structuredContent: handoff,
+          };
+        } catch (error) {
+          if (error instanceof AttachmentHandoffError) {
+            return toolError(`Attachment handoff failed: ${error.code}`);
+          }
+          return toolError('Attachment handoff failed.');
+        }
+      }
+    );
+
+    server.registerTool(
+      'get_attachment_handoff',
+      {
+        title: 'Inspect a local Outlook attachment handoff',
+        description:
+          'Validate one opaque handoff and return integrity metadata without returning file content or a local path.',
+        inputSchema: getAttachmentHandoffSchema,
+        annotations: READ_ONLY_ANNOTATIONS,
+      },
+      async ({ handoffId }) => {
+        try {
+          const handoff = handoffProjection(await service.getAttachmentHandoff(handoffId));
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Attachment handoff ${handoff.handoffId} is ${handoff.status}. ${UNTRUSTED_FRAMING}`,
+              },
+            ],
+            structuredContent: handoff,
+          };
+        } catch (error) {
+          if (error instanceof AttachmentHandoffError) {
+            return toolError(`Attachment handoff lookup failed: ${error.code}`);
+          }
+          return toolError('Attachment handoff lookup failed.');
+        }
+      }
+    );
+  }
 
   if (config.allowWrites) {
     server.registerTool(

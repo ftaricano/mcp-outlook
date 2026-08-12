@@ -2,6 +2,11 @@ import type { Message } from '@microsoft/microsoft-graph-types';
 import type { AdvancedSearchOptions, EmailService } from '../services/emailService.js';
 import type { ReliableSearchResult, SearchStatus } from '../services/reliableSearch.js';
 import type { PluginConfig, MailboxConfig } from './config.js';
+import {
+  AttachmentHandoffError,
+  AttachmentHandoffStore,
+  type AttachmentHandoffManifest,
+} from './attachmentHandoffStore.js';
 import type { MailboxSearchResult, MultiMailboxSearchResult } from './schemas.js';
 import {
   ExtractionError,
@@ -135,12 +140,74 @@ export interface AttachmentContentResult {
   readonly hiddenEntries?: number;
 }
 
+interface ListedAttachment {
+  readonly id?: string | null;
+  readonly name?: string | null;
+  readonly contentType?: string | null;
+  readonly size?: number | null;
+}
+
+function decodeGraphBase64(value: string, maxBytes: number): Buffer {
+  const maxEncodedChars = Math.ceil(maxBytes / 3) * 4;
+  if (value.length > maxEncodedChars) {
+    throw new AttachmentHandoffError('ATTACHMENT_TOO_LARGE');
+  }
+  if (
+    value.length % 4 !== 0 ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)
+  ) {
+    throw new AttachmentHandoffError('ATTACHMENT_FETCH_FAILED');
+  }
+  const decoded = Buffer.from(value, 'base64');
+  if (decoded.toString('base64') !== value) {
+    throw new AttachmentHandoffError('ATTACHMENT_FETCH_FAILED');
+  }
+  return decoded;
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  let result = '';
+  for (const character of value) {
+    if (Buffer.byteLength(result + character, 'utf8') > maxBytes) break;
+    result += character;
+  }
+  return result;
+}
+
+function sanitizeHandoffFilename(value: string | null | undefined): string {
+  const normalized = (value ?? '')
+    .normalize('NFKC')
+    .replace(/\.\.+/g, '_')
+    .replace(/[\\/:\0-\x1f\x7f]/g, '_')
+    .replace(/^\.+/, '')
+    .trim();
+  const bounded = truncateUtf8(normalized, 240);
+  return bounded && bounded !== '.' && bounded !== '..' ? bounded : 'attachment.bin';
+}
+
+function sanitizeContentType(value: string | null | undefined): string {
+  const normalized = (value ?? '').replace(/[\0-\x1f\x7f]/g, '').trim();
+  return truncateUtf8(normalized, 255) || 'application/octet-stream';
+}
+
 export class MultiMailboxService {
+  private readonly handoffStore: AttachmentHandoffStore | null;
+
   constructor(
     private readonly config: PluginConfig,
     private readonly createEmailService: EmailServiceFactory,
-    private readonly searchMemory: SearchMemory | null = null
-  ) {}
+    private readonly searchMemory: SearchMemory | null = null,
+    handoffStore?: AttachmentHandoffStore
+  ) {
+    this.handoffStore = config.allowLocalHandoffs
+      ? (handoffStore ??
+        new AttachmentHandoffStore({
+          maxAttachmentBytes: config.maxHandoffAttachmentBytes,
+          maxStoreBytes: config.maxHandoffStoreBytes,
+          maxStoreEntries: config.maxHandoffStoreEntries,
+        }))
+      : null;
+  }
 
   listAllowedMailboxes(): readonly string[] {
     return this.config.mailboxes.map((mailbox) => mailbox.alias);
@@ -329,6 +396,78 @@ export class MultiMailboxService {
       truncated: result.truncated,
       extractor: result.extractor,
     };
+  }
+
+  async createAttachmentHandoff(
+    alias: string,
+    messageId: string,
+    attachmentId: string,
+    idempotencyKey: string
+  ): Promise<AttachmentHandoffManifest> {
+    if (!this.handoffStore) throw new AttachmentHandoffError('HANDOFF_DISABLED');
+    const mailbox = this.resolveMailbox(alias);
+    const replay = await this.handoffStore.findReplay({
+      mailbox: mailbox.alias,
+      messageId,
+      attachmentId,
+      idempotencyKey,
+    });
+    if (replay) return replay;
+    const emailService = this.createEmailService(mailbox.address);
+
+    let listing: { items: unknown[]; truncated: boolean };
+    try {
+      listing = await emailService.listAttachmentsDetailed(messageId, {
+        maxItems: this.config.maxBatchSize,
+        maxPages: 20,
+      });
+    } catch {
+      throw new AttachmentHandoffError('ATTACHMENT_FETCH_FAILED');
+    }
+    if (listing.truncated) {
+      throw new AttachmentHandoffError('ATTACHMENT_LIST_INCOMPLETE');
+    }
+
+    const matches = (listing.items as ListedAttachment[]).filter(
+      (attachment) => attachment.id === attachmentId
+    );
+    if (matches.length === 0) throw new AttachmentHandoffError('ATTACHMENT_NOT_FOUND');
+    if (matches.length !== 1) throw new AttachmentHandoffError('ATTACHMENT_METADATA_INVALID');
+    const metadata = matches[0];
+    if (!Number.isSafeInteger(metadata.size) || (metadata.size ?? -1) < 0) {
+      throw new AttachmentHandoffError('ATTACHMENT_METADATA_INVALID');
+    }
+    if ((metadata.size as number) > this.config.maxHandoffAttachmentBytes) {
+      throw new AttachmentHandoffError('ATTACHMENT_TOO_LARGE');
+    }
+
+    let downloaded: { name: string; contentType: string; content: string };
+    try {
+      downloaded = await emailService.downloadAttachment(messageId, attachmentId);
+    } catch {
+      throw new AttachmentHandoffError('ATTACHMENT_FETCH_FAILED');
+    }
+    const payload = decodeGraphBase64(downloaded.content, this.config.maxHandoffAttachmentBytes);
+    if (payload.length > this.config.maxHandoffAttachmentBytes) {
+      throw new AttachmentHandoffError('ATTACHMENT_TOO_LARGE');
+    }
+
+    return this.handoffStore.create(
+      {
+        mailbox: mailbox.alias,
+        messageId,
+        attachmentId,
+        idempotencyKey,
+        filename: sanitizeHandoffFilename(downloaded.name || metadata.name),
+        contentType: sanitizeContentType(downloaded.contentType || metadata.contentType),
+      },
+      payload
+    );
+  }
+
+  async getAttachmentHandoff(handoffId: string): Promise<AttachmentHandoffManifest> {
+    if (!this.handoffStore) throw new AttachmentHandoffError('HANDOFF_DISABLED');
+    return this.handoffStore.get(handoffId);
   }
 
   private resolveRequestedMailboxes(

@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createAttachmentHandoffSchema,
   createDraftSchema,
   getAttachmentContentSchema,
+  getAttachmentHandoffSchema,
   listMessagesSchema,
   markMessagesSchema,
   searchMailboxSchema,
   searchMailboxesBatchSchema,
 } from '../../src/plugin/schemas.js';
+
+const TEST_IDEMPOTENCY_KEY = ['123e4567', 'e89b', '42d3', 'a456', '426614174000'].join('-');
 
 describe('plugin search date compatibility', () => {
   it.each(['2026-07-26', '2026-07-26T15:00:00Z', '2026-07-26T12:00:00-03:00'])(
@@ -144,5 +148,32 @@ describe('expansion tool schemas', () => {
       body: '<p>corpo</p>',
     });
     expect(parsed.to).toHaveLength(1);
+  });
+
+  it('requires a high-entropy UUIDv4 idempotency key for a local handoff', () => {
+    const valid = createAttachmentHandoffSchema.parse({
+      mailbox: 'finance',
+      messageId: 'message-1',
+      attachmentId: 'attachment-1',
+      idempotencyKey: TEST_IDEMPOTENCY_KEY,
+    });
+    expect(valid.idempotencyKey).toBe(TEST_IDEMPOTENCY_KEY);
+    expect(() =>
+      createAttachmentHandoffSchema.parse({
+        mailbox: 'finance',
+        messageId: 'message-1',
+        attachmentId: 'attachment-1',
+        idempotencyKey: 'human-readable-key',
+      })
+    ).toThrow(/UUIDv4/i);
+  });
+
+  it('accepts only opaque handoff identifiers with the fixed shape', () => {
+    expect(
+      getAttachmentHandoffSchema.parse({ handoffId: `oh_${'A'.repeat(43)}` }).handoffId
+    ).toHaveLength(46);
+    for (const handoffId of ['../payload.bin', '/tmp/bundle', `oh_${'A'.repeat(42)}`]) {
+      expect(() => getAttachmentHandoffSchema.parse({ handoffId })).toThrow();
+    }
   });
 });

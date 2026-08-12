@@ -16,6 +16,17 @@ mark messages read or unread, and download attachments to the configured local d
 Even with those tools enabled, the plugin cannot send or delete email because it exposes no such
 tool or dispatch path.
 
+Operators may independently enable two local attachment-handoff tools. They materialize one
+bounded attachment in a fixed private store under the operator's home directory and return only
+an opaque identifier plus sanitized integrity metadata. The bundle contains a private payload and
+manifest, uses owner-only permissions, is published with the manifest as the final commit marker,
+and is constrained by per-file, aggregate-byte, and entry quotas. The MCP response never includes
+attachment bytes, Base64, an absolute path, or the internal idempotency fingerprint. Enabling this
+local bridge does not enable mailbox writes and does not transmit the attachment to another
+service; any consumer is separately configured and authorized by the operator. The bridge fails
+closed on platforms without the required POSIX ownership, no-follow, fsync, and kernel-lock
+primitives; its metadata lookup does not create or modify the local store.
+
 Microsoft Graph credentials, mailbox configuration, and message data remain in the operator's
 deployment environment. The optional private search-memory file remains local and is never
 included in plugin telemetry. The optional CLI run journal is metadata-only and excludes

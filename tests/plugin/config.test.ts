@@ -149,12 +149,16 @@ describe('expansion config fields', () => {
   it('applies safe defaults for the new limits', () => {
     const config = loadPluginConfig(writeConfig(validConfig()));
     expect(config.allowWrites).toBe(false);
+    expect(config.allowLocalHandoffs).toBe(false);
     expect(config.maxAttachmentInputBytes).toBe(15 * 1024 * 1024);
     expect(config.maxExtractedChars).toBe(200_000);
     expect(config.maxRawAttachmentBytes).toBe(256 * 1024);
     expect(config.maxConcurrentExtractions).toBe(2);
     expect(config.maxBatchSize).toBe(25);
     expect(config.maxDownloadBatchBytes).toBe(50 * 1024 * 1024);
+    expect(config.maxHandoffAttachmentBytes).toBe(25 * 1024 * 1024);
+    expect(config.maxHandoffStoreBytes).toBe(500 * 1024 * 1024);
+    expect(config.maxHandoffStoreEntries).toBe(1_000);
     expect(config.maxQueriesPerBatch).toBe(10);
     expect(config.maxBatchResultMessages).toBe(500);
     expect(config.maxBatchResultBytes).toBe(2 * 1024 * 1024);
@@ -171,6 +175,19 @@ describe('expansion config fields', () => {
     expect(() =>
       loadPluginConfig(writeConfig(validConfig({ maxRawAttachmentBytes: 10 * 1024 * 1024 })))
     ).toThrow(/Invalid Outlook plugin configuration/);
+  });
+
+  it('rejects a handoff store byte budget below the per-attachment cap', () => {
+    expect(() =>
+      loadPluginConfig(
+        writeConfig(
+          validConfig({
+            maxHandoffAttachmentBytes: 2 * 1024 * 1024,
+            maxHandoffStoreBytes: 1024 * 1024,
+          })
+        )
+      )
+    ).toThrow(/maxHandoffStoreBytes/i);
   });
 
   it.each([
@@ -272,6 +289,29 @@ describe('expansion config fields', () => {
       }
     }
   );
+
+  it.each(['TRUE', '1', 'yes', 'on'])(
+    'enables local handoffs only for a recognized PLUGIN_ALLOW_LOCAL_HANDOFFS value %j',
+    (value) => {
+      process.env.PLUGIN_ALLOW_LOCAL_HANDOFFS = value;
+      try {
+        expect(loadPluginConfig(writeConfig(validConfig())).allowLocalHandoffs).toBe(true);
+      } finally {
+        delete process.env.PLUGIN_ALLOW_LOCAL_HANDOFFS;
+      }
+    }
+  );
+
+  it('fails closed on an unrecognized PLUGIN_ALLOW_LOCAL_HANDOFFS value', () => {
+    process.env.PLUGIN_ALLOW_LOCAL_HANDOFFS = 'enabled';
+    try {
+      expect(() => loadPluginConfig(writeConfig(validConfig()))).toThrow(
+        /PLUGIN_ALLOW_LOCAL_HANDOFFS must be a boolean value/
+      );
+    } finally {
+      delete process.env.PLUGIN_ALLOW_LOCAL_HANDOFFS;
+    }
+  });
 
   it('lets PLUGIN_SEARCH_MEMORY_PATH override the file value', () => {
     process.env.PLUGIN_SEARCH_MEMORY_PATH = '/tmp/memory.yaml';

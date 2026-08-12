@@ -48,6 +48,19 @@ const pluginConfigSchema = z
       .min(1024)
       .max(500 * 1024 * 1024)
       .default(50 * 1024 * 1024),
+    maxHandoffAttachmentBytes: z
+      .number()
+      .int()
+      .min(1024)
+      .max(100 * 1024 * 1024)
+      .default(25 * 1024 * 1024),
+    maxHandoffStoreBytes: z
+      .number()
+      .int()
+      .min(1024)
+      .max(5 * 1024 * 1024 * 1024)
+      .default(500 * 1024 * 1024),
+    maxHandoffStoreEntries: z.number().int().min(1).max(10_000).default(1_000),
     maxQueriesPerBatch: z.number().int().min(1).max(25).default(10),
     maxBatchResultMessages: z.number().int().min(1).max(5_000).default(500),
     maxBatchResultBytes: z
@@ -78,7 +91,7 @@ const pluginConfigSchema = z
       .default(100 * 1024 * 1024),
     searchMemoryPath: z.string().min(1).optional(),
   })
-  .superRefine(({ mailboxes }, context) => {
+  .superRefine(({ mailboxes, maxHandoffAttachmentBytes, maxHandoffStoreBytes }, context) => {
     const aliases = new Set<string>();
     const addresses = new Set<string>();
 
@@ -102,6 +115,14 @@ const pluginConfigSchema = z
       }
       addresses.add(address);
     });
+
+    if (maxHandoffStoreBytes < maxHandoffAttachmentBytes) {
+      context.addIssue({
+        code: 'custom',
+        path: ['maxHandoffStoreBytes'],
+        message: 'must be at least maxHandoffAttachmentBytes',
+      });
+    }
   });
 
 export type MailboxConfig = Readonly<z.output<typeof mailboxSchema>>;
@@ -114,12 +135,16 @@ export interface PluginConfig {
   readonly maxResultsPerMailbox: number;
   readonly maxBodyChars: number;
   readonly allowWrites: boolean;
+  readonly allowLocalHandoffs: boolean;
   readonly maxAttachmentInputBytes: number;
   readonly maxExtractedChars: number;
   readonly maxRawAttachmentBytes: number;
   readonly maxConcurrentExtractions: number;
   readonly maxBatchSize: number;
   readonly maxDownloadBatchBytes: number;
+  readonly maxHandoffAttachmentBytes: number;
+  readonly maxHandoffStoreBytes: number;
+  readonly maxHandoffStoreEntries: number;
   readonly maxQueriesPerBatch: number;
   readonly maxBatchResultMessages: number;
   readonly maxBatchResultBytes: number;
@@ -201,15 +226,19 @@ function readPrivateConfigFile(configPath: string): string {
 const TRUTHY_ALLOW_WRITES_VALUES = new Set(['true', '1', 'yes', 'on']);
 const FALSY_ALLOW_WRITES_VALUES = new Set(['false', '0', 'no', 'off']);
 
-function resolveAllowWrites(envValue: string | undefined, fileValue: boolean): boolean {
+function resolveBooleanEnv(
+  name: string,
+  envValue: string | undefined,
+  defaultValue: boolean
+): boolean {
   const normalized = envValue?.trim().toLowerCase();
-  if (!normalized) return fileValue;
+  if (!normalized) return defaultValue;
   if (TRUTHY_ALLOW_WRITES_VALUES.has(normalized)) return true;
   if (FALSY_ALLOW_WRITES_VALUES.has(normalized)) return false;
-  // A kill-switch that fails silently to a default is worse than one that
-  // refuses to start: an operator setting PLUGIN_ALLOW_WRITES=False (or any
-  // other unrecognized spelling) must be told, not have it quietly ignored.
-  throw new PluginConfigError('PLUGIN_ALLOW_WRITES must be a boolean value');
+  // A capability switch that fails silently to a default is worse than one
+  // that refuses to start: an unrecognized spelling must be surfaced rather
+  // than quietly ignored.
+  throw new PluginConfigError(`${name} must be a boolean value`);
 }
 
 export function loadPluginConfig(configPath?: string): PluginConfig {
@@ -231,7 +260,16 @@ export function loadPluginConfig(configPath?: string): PluginConfig {
   }
 
   const mailboxes = Object.freeze([...parsed.data.mailboxes]);
-  const allowWrites = resolveAllowWrites(process.env.PLUGIN_ALLOW_WRITES, parsed.data.allowWrites);
+  const allowWrites = resolveBooleanEnv(
+    'PLUGIN_ALLOW_WRITES',
+    process.env.PLUGIN_ALLOW_WRITES,
+    parsed.data.allowWrites
+  );
+  const allowLocalHandoffs = resolveBooleanEnv(
+    'PLUGIN_ALLOW_LOCAL_HANDOFFS',
+    process.env.PLUGIN_ALLOW_LOCAL_HANDOFFS,
+    false
+  );
   const searchMemoryPath =
     process.env.PLUGIN_SEARCH_MEMORY_PATH?.trim() || parsed.data.searchMemoryPath;
 
@@ -245,12 +283,16 @@ export function loadPluginConfig(configPath?: string): PluginConfig {
     maxResultsPerMailbox: parsed.data.maxResultsPerMailbox,
     maxBodyChars: parsed.data.maxBodyChars,
     allowWrites,
+    allowLocalHandoffs,
     maxAttachmentInputBytes: parsed.data.maxAttachmentInputBytes,
     maxExtractedChars: parsed.data.maxExtractedChars,
     maxRawAttachmentBytes: parsed.data.maxRawAttachmentBytes,
     maxConcurrentExtractions: parsed.data.maxConcurrentExtractions,
     maxBatchSize: parsed.data.maxBatchSize,
     maxDownloadBatchBytes: parsed.data.maxDownloadBatchBytes,
+    maxHandoffAttachmentBytes: parsed.data.maxHandoffAttachmentBytes,
+    maxHandoffStoreBytes: parsed.data.maxHandoffStoreBytes,
+    maxHandoffStoreEntries: parsed.data.maxHandoffStoreEntries,
     maxQueriesPerBatch: parsed.data.maxQueriesPerBatch,
     maxBatchResultMessages: parsed.data.maxBatchResultMessages,
     maxBatchResultBytes: parsed.data.maxBatchResultBytes,
