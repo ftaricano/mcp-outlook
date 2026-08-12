@@ -20,20 +20,24 @@ describe('plugin packaging', () => {
 
     expect(plugin).toMatchObject({
       name: 'outlook-multi-mailbox',
-      version: '2.2.0',
-      description: 'Read-only Outlook search across explicitly allowed mailboxes',
+      version: '2.3.0',
+      description: 'Search and manage Outlook mail across explicitly allowed mailboxes',
       author: { name: 'Fernando Taricano' },
       mcpServers: './.mcp.json',
       interface: {
         displayName: 'Outlook Multi-Mailbox',
-        shortDescription: 'Search allowed Outlook mail',
+        shortDescription: 'Search and manage allowed Outlook mail',
         developerName: 'Fernando Taricano',
         category: 'Productivity',
-        capabilities: ['Read'],
+        capabilities: ['Read', 'Write'],
         composerIcon: './assets/icon.svg',
         logo: './assets/icon.svg',
       },
     });
+    // The manifest must not undersell the mutation surface: ten read tools by
+    // default plus five write tools gated by allowWrites (JAR-782 fix 2).
+    expect(plugin.interface.longDescription).toMatch(/ten bounded, read-only/i);
+    expect(plugin.interface.longDescription).toMatch(/five additional write tools/i);
     expect(plugin).not.toHaveProperty('apps');
     expect(mcp.mcpServers.outlook_multi_mailbox.args).toEqual([
       '${CODEX_PLUGIN_ROOT}/dist/plugin/stdio.js',

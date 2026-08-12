@@ -12,6 +12,19 @@ const config = {
   maxMailboxesPerSearch: 1,
   maxResultsPerMailbox: 5,
   maxBodyChars: 100,
+  allowWrites: false,
+  maxAttachmentInputBytes: 15 * 1024 * 1024,
+  maxExtractedChars: 200_000,
+  maxRawAttachmentBytes: 256 * 1024,
+  maxBatchSize: 25,
+  maxDownloadBatchBytes: 50 * 1024 * 1024,
+  maxQueriesPerBatch: 10,
+  maxBatchResultMessages: 500,
+  maxBatchResultBytes: 2 * 1024 * 1024,
+  maxBatchContextChars: 500_000,
+  maxBatchAttachments: 1_000,
+  maxZipEntries: 200,
+  maxZipUncompressedBytes: 50 * 1024 * 1024,
 };
 const service = {
   listAllowedMailboxes: () => ['test'],
@@ -42,7 +55,7 @@ try {
   });
   await client.close();
 
-  if (tools.length !== 4) throw new Error(`Expected 4 tools, received ${tools.length}`);
+  if (tools.length !== 10) throw new Error(`Expected 10 tools, received ${tools.length}`);
   if (JSON.stringify(result.structuredContent) !== JSON.stringify({ mailboxes: ['test'] })) {
     throw new Error('Unexpected list_allowed_mailboxes result');
   }

@@ -5,18 +5,25 @@ Guidance for agents working **on this repo**. End-user docs (tool catalog, setup
 ## What this is
 
 MCP server exposing Microsoft Graph email operations as 40 tools over stdio, plus a standalone
-`outlook` CLI wrapper. A separate four-tool read-only plugin supports allowlisted multi-mailbox
-search over stdio and loopback Streamable HTTP. Auth is Azure AD client-credentials (no user
-login). The original server remains single-mailbox per process; plugin services pin mailbox
-identity per instance.
+`outlook` CLI wrapper. A separate multi-mailbox plugin supports allowlisted search, reading, and
+bounded attachment access over stdio and loopback Streamable HTTP. It exposes ten read-only tools
+by default and five additional non-send/non-delete tools only when writes are explicitly enabled.
+Auth is Azure AD client-credentials (no user login). The original server remains single-mailbox
+per process; plugin services pin mailbox identity per instance.
 
 ## Hard invariants
 
 These are enforced by CI or by design. Don't regress them.
 
 1. **Two fixed catalogs.** The original server exposes exactly 40 tools and
-   `scripts/smoke-test.js` enforces that count. The plugin exposes exactly four physically
-   read-only tools and `scripts/plugin-smoke-test.js` enforces that count.
+   `scripts/smoke-test.js` enforces that count. The plugin exposes exactly ten physically
+   read-only tools by default and five additional write tools
+   (move/copy/mark/download/create_draft) when writes are enabled — via the plugin.json
+   `allowWrites` field, or via env `PLUGIN_ALLOW_WRITES=true`. The env is the authority:
+   `PLUGIN_ALLOW_WRITES=false` forces writes off regardless of what the file says; only when
+   the env var is absent or empty does the file's `allowWrites` field decide (default `false`).
+   `scripts/plugin-smoke-test.js` enforces both catalogs. Sending email and every delete
+   operation are impossible by construction — no dispatch branch exists for them in the plugin.
 2. **Every tool has a zod schema.** `src/schemas/toolSchemas.ts` is the gate — `HandlerRegistry.handleTool` runs `validateToolInput` before dispatching. No handler method runs on unvalidated args.
 3. **Filesystem access goes through `pathGuard`.** Handlers never call `fs.readFile` / `fs.writeFile` on caller-supplied paths directly; `src/services/fileManager.ts` and `src/services/emailService.ts` already route through `pathGuard.resolveSafe()`. Any new file-touching code must go through the same door.
 4. **Graph calls go through `EmailService`.** No direct `Client.api()` in handlers — that bypasses response caching (`CacheManager`) and the batch helpers. Retry/throttling (429 + `Retry-After`) is **not** custom: it comes from the Graph SDK's default middleware chain (`Client.initWithMiddleware` in `src/auth/graphAuth.ts`), which includes the SDK `RetryHandler`. There is no in-house rate limiter.
@@ -24,12 +31,19 @@ These are enforced by CI or by design. Don't regress them.
 6. **Search negatives are evidence-bearing.** Search code must follow `@odata.nextLink` within explicit limits and distinguish `NOT_FOUND` from `SEARCH_INCOMPLETE`, `SEARCH_FAILED`, and `SEARCH_UNTRUSTED`. Never turn a page-fetch failure or limit hit into a clean empty result.
 7. **Run telemetry is metadata-only.** `scripts/lib/run-journal.js` may store argument names/types, counters, durations, statuses, and normalized error classes. It must never persist argument values, message content/metadata, attachment names, credentials, or raw errors.
 8. **Self-improvement emits proposals only.** `outlook harvest` is observational. It must not edit source, enqueue proposals, mutate skills, or bypass the external autonomy/session-harvest gates.
-9. **This is a public repo — no deployment-specific data.** The code, tests, docs, and fixtures must stay free of any specific tenant's operational data: real mailbox addresses, client / company / person names, sender identities, folder maps, or attachment passwords. Anything deployment-specific is **caller-supplied at runtime** — env vars, or an external config / search-memory file passed by path — never committed here. Tests and examples use fictional data only. Rationale: committed content is world-readable and effectively permanent; a leak of an operator's business data cannot be undone. Capabilities that consume such data (e.g. multi-mailbox search, document confirmation, an index-backed cache) belong here as generic mechanisms; the data they read stays in the caller's private config.
+9. **This is a public repo — no deployment-specific data.** The code, tests, docs, and fixtures must stay free of any specific tenant's operational data: real mailbox addresses, client / company / person names, sender identities, folder maps, or attachment passwords. Anything deployment-specific is **caller-supplied at runtime** — env vars, or an external config / search-memory file passed by path — never committed here. Tests and examples use fictional data only. Rationale: committed content is world-readable and effectively permanent; a leak of an operator's business data cannot be undone. Capabilities that consume such data (e.g. multi-mailbox search, document confirmation, an index-backed cache) belong here as generic mechanisms; the data they read stays in the caller's private config. The optional search-memory file (`PLUGIN_SEARCH_MEMORY_PATH`) and ZIP passwords passed to `get_attachment_content` are caller-supplied at runtime and must never be committed, logged, or persisted by telemetry.
 10. **Mailbox identity is immutable per service.** Never switch `TARGET_USER_EMAIL` or another
     process-global value around an operation. Plugin allowlists resolve opaque aliases to
     constructor-pinned mailbox services, and cache keys include mailbox identity.
 11. **HTTP is loopback-only in this repo.** Remote ChatGPT use requires a separately reviewed
     HTTPS OAuth 2.1 resource-server layer and a separate Graph `Mail.Read` app registration.
+12. **Graph permissions follow the exposed catalog.** The default ten-tool plugin requires only
+    application `Mail.Read`. Enabling its five write tools requires `Mail.ReadWrite`, but never
+    `Mail.Send`. The original 40-tool server requires `Mail.ReadWrite` and needs `Mail.Send` only
+    for `send_email` and `reply_to_email`.
+13. **Plugin downloads have aggregate budgets.** `download_attachments` applies both
+    `maxBatchSize` and `maxDownloadBatchBytes` whether `attachmentIds` is supplied or omitted.
+    No attachment may start writing when its real decoded size exceeds the remaining byte budget.
 
 ## Architecture at a glance
 

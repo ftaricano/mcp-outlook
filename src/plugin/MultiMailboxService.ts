@@ -3,10 +3,30 @@ import type { AdvancedSearchOptions, EmailService } from '../services/emailServi
 import type { ReliableSearchResult, SearchStatus } from '../services/reliableSearch.js';
 import type { PluginConfig, MailboxConfig } from './config.js';
 import type { MailboxSearchResult, MultiMailboxSearchResult } from './schemas.js';
+import {
+  ExtractionError,
+  runAttachmentPipeline,
+  ZipError,
+  type ZipEntryInfo,
+} from './extractors.js';
+import { expandTerm, type SearchMemory } from './searchMemory.js';
 
 export type MailboxEmailService = Pick<
   EmailService,
-  'advancedSearchEmailsDetailed' | 'getEmailById'
+  | 'advancedSearchEmailsDetailed'
+  | 'getEmailById'
+  | 'listFoldersDetailed'
+  | 'getFolderStatistics'
+  | 'listAttachments'
+  | 'listAttachmentsDetailed'
+  | 'downloadAttachment'
+  | 'downloadAttachmentToFile'
+  | 'moveEmailsToFolder'
+  | 'copyEmailsToFolder'
+  | 'batchMarkAsRead'
+  | 'batchMarkAsUnread'
+  | 'createDraft'
+  | 'encodeFileForAttachment'
 >;
 
 export type EmailServiceFactory = (mailboxAddress: string) => MailboxEmailService;
@@ -25,10 +45,101 @@ export class MailboxLimitError extends Error {
   }
 }
 
+export class MailboxOperationError extends Error {
+  constructor(operation: string) {
+    super(`Mailbox ${operation} failed`);
+    this.name = 'MailboxOperationError';
+  }
+}
+
+export class BatchLimitError extends Error {
+  constructor(limit: number) {
+    super(`Requested items exceed the server batch limit of ${limit}`);
+    this.name = 'BatchLimitError';
+  }
+}
+
+export class BatchResourceLimitError extends Error {
+  constructor(resource: string, limit: number) {
+    super(`Batch ${resource} budget exceeded (${limit})`);
+    this.name = 'BatchResourceLimitError';
+  }
+}
+
+export class DownloadLimitError extends Error {
+  constructor(limit: number) {
+    super(`Requested attachments exceed the server download limit of ${limit} bytes`);
+    this.name = 'DownloadLimitError';
+  }
+}
+
+export type AttachmentDownloadErrorCode =
+  'BYTE_BUDGET_EXCEEDED' | 'FILE_WRITE_FAILED' | 'DOWNLOAD_FAILED' | 'INVALID_RESULT';
+
+export interface AttachmentDownloadReceipt {
+  readonly attachmentId: string;
+  readonly status: 'saved' | 'failed';
+  readonly filename?: string;
+  readonly relativePath?: string;
+  readonly sizeBytes: number;
+  readonly errorCode?: AttachmentDownloadErrorCode;
+}
+
+function isSafeDownloadReceiptPath(filename: unknown, relativePath: unknown): boolean {
+  if (typeof filename !== 'string' || filename.length === 0) return false;
+  if (typeof relativePath !== 'string' || relativePath.length === 0) return false;
+  if (relativePath.startsWith('/') || relativePath.includes('\\') || relativePath.includes('\0')) {
+    return false;
+  }
+  const segments = relativePath.split('/');
+  return (
+    segments.every((segment) => segment.length > 0 && segment !== '.' && segment !== '..') &&
+    segments.at(-1) === filename
+  );
+}
+
+export type AttachmentContentErrorCode =
+  | 'ATTACHMENT_TOO_LARGE'
+  | 'RAW_TOO_LARGE'
+  | 'ATTACHMENT_FETCH_FAILED'
+  | ZipError['code']
+  | ExtractionError['code'];
+
+export class AttachmentContentError extends Error {
+  constructor(readonly code: AttachmentContentErrorCode) {
+    super(code);
+    this.name = 'AttachmentContentError';
+  }
+}
+
+export interface AttachmentContentOptions {
+  readonly mode: 'text' | 'raw';
+  readonly entry?: string;
+  readonly password?: string;
+}
+
+export interface AttachmentContentResult {
+  readonly mailbox: string;
+  readonly messageId: string;
+  readonly attachmentId: string;
+  readonly name: string;
+  readonly contentType: string;
+  readonly kind: 'text' | 'raw' | 'zip_listing';
+  readonly entry?: string;
+  readonly text?: string;
+  readonly truncated?: boolean;
+  readonly extractor?: string;
+  readonly base64?: string;
+  readonly sizeBytes?: number;
+  readonly zipEntries?: readonly ZipEntryInfo[];
+  readonly hiddenEntries?: number;
+}
+
 export class MultiMailboxService {
   constructor(
     private readonly config: PluginConfig,
-    private readonly createEmailService: EmailServiceFactory
+    private readonly createEmailService: EmailServiceFactory,
+    private readonly searchMemory: SearchMemory | null = null
   ) {}
 
   listAllowedMailboxes(): readonly string[] {
@@ -37,7 +148,7 @@ export class MultiMailboxService {
 
   async searchMailbox(
     alias: string,
-    criteria: AdvancedSearchOptions
+    criteria: AdvancedSearchOptions & { expandTerms?: boolean }
   ): Promise<MailboxSearchResult> {
     const mailbox = this.resolveMailbox(alias);
     return this.searchResolvedMailbox(mailbox, criteria);
@@ -45,7 +156,7 @@ export class MultiMailboxService {
 
   async searchMailboxes(
     aliases: readonly string[] | undefined,
-    criteria: AdvancedSearchOptions
+    criteria: AdvancedSearchOptions & { expandTerms?: boolean }
   ): Promise<MultiMailboxSearchResult> {
     const mailboxes = this.resolveRequestedMailboxes(aliases);
     if (mailboxes.length > this.config.maxMailboxesPerSearch) {
@@ -79,6 +190,147 @@ export class MultiMailboxService {
     return emailService.getEmailById(messageId);
   }
 
+  async listMessages(alias: string, criteria: AdvancedSearchOptions): Promise<MailboxSearchResult> {
+    const mailbox = this.resolveMailbox(alias);
+    return this.searchResolvedMailbox(mailbox, { ...criteria, query: undefined });
+  }
+
+  async listFolders(alias: string): Promise<{ items: unknown[]; truncated: boolean }> {
+    const mailbox = this.resolveMailbox(alias);
+    try {
+      return await this.createEmailService(mailbox.address).listFoldersDetailed(true, 3);
+    } catch {
+      throw new MailboxOperationError('folder listing');
+    }
+  }
+
+  async getFolderStats(alias: string, folderId: string): Promise<unknown> {
+    const mailbox = this.resolveMailbox(alias);
+    try {
+      return await this.createEmailService(mailbox.address).getFolderStatistics(folderId, false);
+    } catch {
+      throw new MailboxOperationError('folder stats');
+    }
+  }
+
+  async listAttachments(
+    alias: string,
+    messageId: string
+  ): Promise<{ items: unknown[]; pagesScanned: number; truncated: boolean }> {
+    const mailbox = this.resolveMailbox(alias);
+    try {
+      return await this.createEmailService(mailbox.address).listAttachmentsDetailed(messageId);
+    } catch {
+      throw new MailboxOperationError('attachment listing');
+    }
+  }
+
+  async getAttachmentContent(
+    alias: string,
+    messageId: string,
+    attachmentId: string,
+    options: AttachmentContentOptions
+  ): Promise<AttachmentContentResult> {
+    const mailbox = this.resolveMailbox(alias);
+
+    let downloaded: { name: string; contentType: string; content: string };
+    try {
+      downloaded = await this.createEmailService(mailbox.address).downloadAttachment(
+        messageId,
+        attachmentId
+      );
+    } catch {
+      throw new AttachmentContentError('ATTACHMENT_FETCH_FAILED');
+    }
+
+    const buffer = Buffer.from(downloaded.content, 'base64');
+    if (buffer.length > this.config.maxAttachmentInputBytes) {
+      throw new AttachmentContentError('ATTACHMENT_TOO_LARGE');
+    }
+
+    const base = {
+      mailbox: mailbox.alias,
+      messageId,
+      attachmentId,
+      name: downloaded.name,
+      contentType: downloaded.contentType,
+    };
+
+    const zipLimits = {
+      maxEntries: this.config.maxZipEntries,
+      maxUncompressedBytes: this.config.maxZipUncompressedBytes,
+    };
+    // Deliberately not zipLimits: those cap a user-facing .zip attachment,
+    // while these cap the internal parts of an xlsx/docx. Reusing the archive
+    // caps here made a legitimate many-sheet workbook fail the pre-check.
+    const containerLimits = {
+      maxEntries: this.config.maxContainerEntries,
+      maxUncompressedBytes: this.config.maxContainerUncompressedBytes,
+    };
+
+    // Decryption, inflation and document parsing happen only inside the
+    // isolated worker (extractionWorker.ts) — nothing here touches
+    // zipArchive.ts or a parser directly. runAttachmentPipeline resolves a
+    // plain raw attachment in place, since returning bytes we already hold
+    // needs neither. That worker isolation bounds the event loop and one
+    // worker's V8 heap, not native/Buffer memory and not process privileges;
+    // the size guarantees are maxAttachmentInputBytes above, the raw cap
+    // passed below, the ZIP caps, and the concurrency gate (extractors.ts).
+    let result;
+    try {
+      result = await runAttachmentPipeline({
+        buffer,
+        name: downloaded.name,
+        contentType: downloaded.contentType,
+        maxChars: this.config.maxExtractedChars,
+        mode: options.mode,
+        entry: options.entry,
+        password: options.password,
+        zipLimits,
+        containerLimits,
+        maxRawBytes: this.config.maxRawAttachmentBytes,
+        maxConcurrentExtractions: this.config.maxConcurrentExtractions,
+      });
+    } catch (error) {
+      if (error instanceof ZipError || error instanceof ExtractionError) {
+        throw new AttachmentContentError(error.code);
+      }
+      throw error;
+    }
+
+    if (result.kind === 'zip_listing') {
+      return {
+        ...base,
+        kind: 'zip_listing',
+        zipEntries: result.zipEntries,
+        hiddenEntries: result.hiddenEntries,
+      };
+    }
+    if (result.kind === 'raw') {
+      // Redundant, cheap defense-in-depth: runAttachmentPipeline already
+      // enforced this cap where the bytes were produced — in the caller for a
+      // plain attachment, inside the worker for a ZIP entry.
+      if (result.sizeBytes > this.config.maxRawAttachmentBytes) {
+        throw new AttachmentContentError('RAW_TOO_LARGE');
+      }
+      return {
+        ...base,
+        kind: 'raw',
+        entry: options.entry,
+        base64: result.bytes.toString('base64'),
+        sizeBytes: result.sizeBytes,
+      };
+    }
+    return {
+      ...base,
+      kind: 'text',
+      entry: options.entry,
+      text: result.text,
+      truncated: result.truncated,
+      extractor: result.extractor,
+    };
+  }
+
   private resolveRequestedMailboxes(
     aliases: readonly string[] | undefined
   ): readonly MailboxConfig[] {
@@ -102,27 +354,433 @@ export class MultiMailboxService {
     return mailbox;
   }
 
+  private assertBatch(ids: readonly string[]): void {
+    if (ids.length > this.config.maxBatchSize) {
+      throw new BatchLimitError(this.config.maxBatchSize);
+    }
+  }
+
+  async moveMessages(
+    alias: string,
+    messageIds: readonly string[],
+    destinationFolderId: string
+  ): Promise<{ mailbox: string; results: readonly { id: string; success: boolean }[] }> {
+    this.assertBatch(messageIds);
+    const mailbox = this.resolveMailbox(alias);
+    try {
+      const raw = await this.createEmailService(mailbox.address).moveEmailsToFolder(
+        [...messageIds],
+        destinationFolderId
+      );
+      return { mailbox: mailbox.alias, results: redactBatchOutcomes(messageIds, raw) };
+    } catch {
+      throw new MailboxOperationError('message move');
+    }
+  }
+
+  async copyMessages(
+    alias: string,
+    messageIds: readonly string[],
+    destinationFolderId: string
+  ): Promise<{ mailbox: string; results: readonly { id: string; success: boolean }[] }> {
+    this.assertBatch(messageIds);
+    const mailbox = this.resolveMailbox(alias);
+    try {
+      const raw = await this.createEmailService(mailbox.address).copyEmailsToFolder(
+        [...messageIds],
+        destinationFolderId
+      );
+      return { mailbox: mailbox.alias, results: redactBatchOutcomes(messageIds, raw) };
+    } catch {
+      throw new MailboxOperationError('message copy');
+    }
+  }
+
+  async markMessages(
+    alias: string,
+    messageIds: readonly string[],
+    read: boolean
+  ): Promise<{ mailbox: string; results: readonly { id: string; success: boolean }[] }> {
+    this.assertBatch(messageIds);
+    const mailbox = this.resolveMailbox(alias);
+    const emailService = this.createEmailService(mailbox.address);
+    try {
+      const raw = read
+        ? await emailService.batchMarkAsRead([...messageIds])
+        : await emailService.batchMarkAsUnread([...messageIds]);
+      return { mailbox: mailbox.alias, results: redactBatchOutcomes(messageIds, raw) };
+    } catch {
+      throw new MailboxOperationError('message mark');
+    }
+  }
+
+  async downloadAttachments(
+    alias: string,
+    messageId: string,
+    attachmentIds?: readonly string[]
+  ): Promise<{
+    mailbox: string;
+    totalFiles: number;
+    successfulDownloads: number;
+    failedDownloads: number;
+    downloadedBytes: number;
+    byteLimit: number;
+    files: readonly AttachmentDownloadReceipt[];
+  }> {
+    const mailbox = this.resolveMailbox(alias);
+    const emailService = this.createEmailService(mailbox.address);
+
+    try {
+      const listing = await emailService.listAttachmentsDetailed(messageId, {
+        maxItems: this.config.maxBatchSize + 1,
+        maxPages: 20,
+      });
+      const listed = listing.items as {
+        id?: string | null;
+        size?: number | null;
+      }[];
+      if (listing.truncated || listed.length > this.config.maxBatchSize) {
+        throw new BatchLimitError(this.config.maxBatchSize);
+      }
+      const byId = new Map(
+        listed
+          .filter((attachment): attachment is { id: string; size?: number | null } =>
+            Boolean(attachment.id)
+          )
+          .map((attachment) => [attachment.id, attachment] as const)
+      );
+      if (!attachmentIds && byId.size !== listed.length) {
+        throw new DownloadLimitError(this.config.maxDownloadBatchBytes);
+      }
+      const requestedIds = attachmentIds ? [...attachmentIds] : [...byId.keys()];
+      this.assertBatch(requestedIds);
+
+      const requested = requestedIds.map((attachmentId) => {
+        const metadata = byId.get(attachmentId);
+        if (!metadata || !Number.isSafeInteger(metadata.size) || (metadata.size ?? -1) < 0) {
+          throw new DownloadLimitError(this.config.maxDownloadBatchBytes);
+        }
+        return { id: attachmentId, size: metadata.size as number };
+      });
+      const declaredBytes = requested.reduce((total, attachment) => total + attachment.size, 0);
+      if (declaredBytes > this.config.maxDownloadBatchBytes) {
+        throw new DownloadLimitError(this.config.maxDownloadBatchBytes);
+      }
+
+      let downloadedBytes = 0;
+      const files: AttachmentDownloadReceipt[] = [];
+      for (const attachment of requested) {
+        try {
+          const outcome = await emailService.downloadAttachmentToFile(messageId, attachment.id, {
+            maxBytes: this.config.maxDownloadBatchBytes - downloadedBytes,
+          });
+          if (outcome.success) {
+            const remainingBytes = this.config.maxDownloadBatchBytes - downloadedBytes;
+            if (
+              !Number.isSafeInteger(outcome.savedSize) ||
+              outcome.savedSize < 0 ||
+              outcome.savedSize > remainingBytes ||
+              !isSafeDownloadReceiptPath(outcome.filename, outcome.relativePath)
+            ) {
+              files.push({
+                attachmentId: attachment.id,
+                status: 'failed',
+                sizeBytes: 0,
+                errorCode: 'INVALID_RESULT',
+              });
+              continue;
+            }
+            downloadedBytes += outcome.savedSize;
+            files.push({
+              attachmentId: attachment.id,
+              status: 'saved',
+              filename: outcome.filename,
+              relativePath: outcome.relativePath,
+              sizeBytes: outcome.savedSize,
+            });
+          } else {
+            const errorCode =
+              outcome.errorCode === 'BYTE_BUDGET_EXCEEDED' ||
+              outcome.errorCode === 'FILE_WRITE_FAILED'
+                ? outcome.errorCode
+                : 'DOWNLOAD_FAILED';
+            files.push({
+              attachmentId: attachment.id,
+              status: 'failed',
+              sizeBytes: 0,
+              errorCode,
+            });
+          }
+        } catch {
+          files.push({
+            attachmentId: attachment.id,
+            status: 'failed',
+            sizeBytes: 0,
+            errorCode: 'DOWNLOAD_FAILED',
+          });
+        }
+      }
+
+      const successfulDownloads = files.filter((file) => file.status === 'saved').length;
+      const failedDownloads = files.length - successfulDownloads;
+
+      return {
+        mailbox: mailbox.alias,
+        totalFiles: requested.length,
+        successfulDownloads,
+        failedDownloads,
+        downloadedBytes,
+        byteLimit: this.config.maxDownloadBatchBytes,
+        files,
+      };
+    } catch (error) {
+      if (error instanceof BatchLimitError || error instanceof DownloadLimitError) throw error;
+      throw new MailboxOperationError('attachment download');
+    }
+  }
+
+  async createDraftMessage(
+    alias: string,
+    draft: {
+      to: readonly string[];
+      cc?: readonly string[];
+      bcc?: readonly string[];
+      subject: string;
+      body: string;
+      attachmentPaths?: readonly string[];
+    }
+  ): Promise<{ mailbox: string; draftId: string; attachmentsCount: number }> {
+    const mailbox = this.resolveMailbox(alias);
+    const emailService = this.createEmailService(mailbox.address);
+    try {
+      const attachments = draft.attachmentPaths?.length
+        ? await Promise.all(
+            draft.attachmentPaths.map((path) => emailService.encodeFileForAttachment(path))
+          )
+        : undefined;
+      // encodeFileForAttachment resolves with success:false instead of throwing
+      // when the path is rejected, missing, or oversized. Attaching that result
+      // would produce a draft carrying an empty attachment while this tool
+      // reported it as attached.
+      if (attachments?.some((attachment) => !attachment.success)) {
+        throw new MailboxOperationError('draft attachment encoding');
+      }
+      const outcome = await emailService.createDraft(
+        [...draft.to],
+        draft.subject,
+        draft.body,
+        draft.cc ? [...draft.cc] : undefined,
+        draft.bcc ? [...draft.bcc] : undefined,
+        attachments,
+        undefined
+      );
+      return {
+        mailbox: mailbox.alias,
+        draftId: outcome.draftId,
+        attachmentsCount: outcome.attachmentsCount,
+      };
+    } catch (error) {
+      // Keep our own redacted reason; only Graph/encoder failures collapse into
+      // the generic one, so the caller can tell "bad attachment path" apart
+      // from "Graph refused the draft".
+      if (error instanceof MailboxOperationError) throw error;
+      throw new MailboxOperationError('draft creation');
+    }
+  }
+
+  async searchMailboxesBatch(
+    queries: readonly {
+      label: string;
+      mailboxes?: readonly string[];
+      criteria: AdvancedSearchOptions & { expandTerms?: boolean };
+    }[]
+  ): Promise<{
+    results: readonly {
+      label: string;
+      status: SearchStatus;
+      results: readonly MailboxSearchResult[];
+    }[];
+  }> {
+    if (queries.length > this.config.maxQueriesPerBatch) {
+      throw new BatchLimitError(this.config.maxQueriesPerBatch);
+    }
+    const results = [];
+    let totalMessages = 0;
+    let totalBytes = 0;
+    let totalContextChars = 0;
+    let totalAttachments = 0;
+    for (const query of queries) {
+      const outcome = await this.searchMailboxes(query.mailboxes, query.criteria);
+      const entry = { label: query.label, status: outcome.status, results: outcome.results };
+      let serialized: string;
+      try {
+        serialized = JSON.stringify(entry);
+      } catch {
+        throw new BatchResourceLimitError('serialization', 0);
+      }
+
+      totalMessages += outcome.results.reduce((count, result) => count + result.messages.length, 0);
+      totalAttachments += outcome.results.reduce(
+        (count, result) =>
+          count +
+          result.messages.reduce(
+            (messageCount, message) =>
+              messageCount + (Array.isArray(message.attachments) ? message.attachments.length : 0),
+            0
+          ),
+        0
+      );
+      totalContextChars += serialized.length;
+      totalBytes += Buffer.byteLength(serialized, 'utf8');
+
+      if (totalMessages > this.config.maxBatchResultMessages) {
+        throw new BatchResourceLimitError('message', this.config.maxBatchResultMessages);
+      }
+      if (totalAttachments > this.config.maxBatchAttachments) {
+        throw new BatchResourceLimitError('attachment', this.config.maxBatchAttachments);
+      }
+      if (totalContextChars > this.config.maxBatchContextChars) {
+        throw new BatchResourceLimitError('context character', this.config.maxBatchContextChars);
+      }
+      if (totalBytes > this.config.maxBatchResultBytes) {
+        throw new BatchResourceLimitError('byte', this.config.maxBatchResultBytes);
+      }
+
+      results.push(entry);
+    }
+    return { results };
+  }
+
   private async searchResolvedMailbox(
     mailbox: MailboxConfig,
-    criteria: AdvancedSearchOptions
+    criteria: AdvancedSearchOptions & { expandTerms?: boolean }
   ): Promise<MailboxSearchResult> {
-    try {
+    const { expandTerms, ...searchCriteria } = criteria;
+    const deterministic = !searchCriteria.query;
+    const resultCeiling = deterministic ? 100 : 50;
+    const maxResults = Math.min(
+      searchCriteria.maxResults ?? this.config.maxResultsPerMailbox,
+      this.config.maxResultsPerMailbox,
+      resultCeiling
+    );
+    const scanLimit = deterministic ? Math.min(maxResults * 5, 500) : Math.min(maxResults * 3, 100);
+
+    const terms =
+      expandTerms && searchCriteria.query && this.searchMemory
+        ? expandTerm(this.searchMemory, searchCriteria.query)
+        : [searchCriteria.query].filter((term): term is string => Boolean(term));
+
+    const runOne = async (term?: string): Promise<ReliableSearchResult<Message>> => {
       const emailService = this.createEmailService(mailbox.address);
-      const maxResults = Math.min(
-        criteria.maxResults ?? this.config.maxResultsPerMailbox,
-        this.config.maxResultsPerMailbox
-      );
-      const evidence = await emailService.advancedSearchEmailsDetailed({
-        ...criteria,
+      return emailService.advancedSearchEmailsDetailed({
+        ...searchCriteria,
+        query: term,
         maxResults,
-        scanLimit: Math.min(maxResults * 3, 100),
+        scanLimit,
         includeFullContent: false,
       });
-      return { mailbox: mailbox.alias, ...evidence };
+    };
+
+    try {
+      if (terms.length <= 1) {
+        const evidence = await runOne(terms[0]);
+        const warnings =
+          expandTerms && !this.searchMemory
+            ? [...evidence.warnings, 'search_memory_not_configured']
+            : evidence.warnings;
+        return { mailbox: mailbox.alias, ...evidence, warnings };
+      }
+
+      const merged = new Map<string, Message>();
+      let aggregate: ReliableSearchResult<Message> | undefined;
+      for (const term of terms) {
+        const evidence = await runOne(term);
+        for (const message of evidence.messages) {
+          if (message.id) merged.set(String(message.id), message);
+        }
+        aggregate = aggregate ? mergeEvidence(aggregate, evidence) : evidence;
+      }
+      // Order the union before cutting it: Map iteration is insertion order, so
+      // an unsorted slice would silently favour whichever term ran first — the
+      // original query — and discard the alias/group hits that motivated the
+      // expansion. And a cut here is real incompleteness, so it has to show up
+      // in the evidence rather than being reported as a clean full result.
+      const union = sortMessages(
+        [...merged.values()],
+        searchCriteria.sortBy,
+        searchCriteria.sortOrder
+      );
+      const overflowed = union.length > maxResults;
+      return {
+        mailbox: mailbox.alias,
+        ...aggregate!,
+        messages: union.slice(0, maxResults),
+        truncated: aggregate!.truncated || overflowed,
+        // Mirror what advancedSearchEmailsDetailed does when it truncates: a
+        // partial result must not keep claiming high confidence.
+        confidence:
+          overflowed && aggregate!.confidence === 'high' ? 'medium' : aggregate!.confidence,
+        warnings: overflowed
+          ? [...new Set([...aggregate!.warnings, 'expanded_merge_truncated'])]
+          : aggregate!.warnings,
+        expandedTerms: terms,
+      };
     } catch {
       return redactedFailedSearch(mailbox.alias);
     }
   }
+}
+
+// Re-sorts the union of the expanded terms before it is cut: falling back to
+// Map insertion order would put the caller's requested order at the mercy of
+// which term ran first. This deliberately mirrors the comparator in
+// EmailService.sortAdvancedMessages — same key selection, same localeCompare,
+// same direction — so a merged result cannot be ordered differently from a
+// single-term one. Keep the two in step if either changes.
+function sortMessages(
+  messages: Message[],
+  sortBy: string | undefined,
+  sortOrder: string | undefined
+): Message[] {
+  const direction = sortOrder === 'asc' ? 1 : -1;
+  const valueOf = (message: Message): string | null | undefined =>
+    sortBy === 'from'
+      ? message.from?.emailAddress?.address
+      : sortBy === 'subject'
+        ? message.subject
+        : message.receivedDateTime;
+
+  return [...messages].sort(
+    (left, right) =>
+      String(valueOf(left) ?? '').localeCompare(String(valueOf(right) ?? '')) * direction
+  );
+}
+
+function redactBatchOutcomes(
+  ids: readonly string[],
+  raw: readonly { success?: boolean }[]
+): readonly { id: string; success: boolean }[] {
+  return ids.map((id, index) => ({ id, success: raw[index]?.success !== false }));
+}
+
+function mergeEvidence(
+  a: ReliableSearchResult<Message>,
+  b: ReliableSearchResult<Message>
+): ReliableSearchResult<Message> {
+  return {
+    status: aggregateSearchStatus([
+      { mailbox: '', ...a },
+      { mailbox: '', ...b },
+    ]),
+    strategy: a.strategy,
+    confidence: a.confidence === 'high' && b.confidence === 'high' ? 'high' : 'medium',
+    messages: [...a.messages, ...b.messages],
+    pagesScanned: a.pagesScanned + b.pagesScanned,
+    candidatesScanned: a.candidatesScanned + b.candidatesScanned,
+    truncated: a.truncated || b.truncated,
+    canaryMatched: a.canaryMatched || b.canaryMatched,
+    warnings: [...new Set([...a.warnings, ...b.warnings])],
+  };
 }
 
 function aggregateSearchStatus(results: readonly MailboxSearchResult[]): SearchStatus {

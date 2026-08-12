@@ -1,7 +1,7 @@
 {
   "name": "outlook-multi-mailbox",
-  "version": "2.2.0",
-  "description": "Read-only Outlook search across explicitly allowed mailboxes",
+  "version": "2.3.0",
+  "description": "Search and manage Outlook mail across explicitly allowed mailboxes",
   "author": {
     "name": "Fernando Taricano",
     "url": "https://github.com/ftaricano"
@@ -9,15 +9,15 @@
   "homepage": "https://github.com/ftaricano/mcp-outlook",
   "repository": "https://github.com/ftaricano/mcp-outlook",
   "license": "MIT",
-  "keywords": ["outlook", "email", "mcp", "read-only", "multi-mailbox"],
+  "keywords": ["outlook", "email", "mcp", "multi-mailbox", "search"],
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Outlook Multi-Mailbox",
-    "shortDescription": "Search allowed Outlook mail",
-    "longDescription": "Search and read messages across an explicitly allowed set of Microsoft Outlook mailboxes through four bounded, read-only MCP tools.",
+    "shortDescription": "Search and manage allowed Outlook mail",
+    "longDescription": "Search and read messages across an explicitly allowed set of Microsoft Outlook mailboxes through ten bounded, read-only MCP tools by default. Five additional write tools — move, copy, mark read/unread, download attachments, and create drafts — are available only when explicitly enabled in configuration (`allowWrites`). Sending email and deleting messages are impossible by construction: no tool in this plugin exposes either action.",
     "developerName": "Fernando Taricano",
     "category": "Productivity",
-    "capabilities": ["Read"],
+    "capabilities": ["Read", "Write"],
     "websiteURL": "https://github.com/ftaricano/mcp-outlook",
     "privacyPolicyURL": "https://github.com/ftaricano/mcp-outlook/blob/main/PRIVACY.md",
     "termsOfServiceURL": "https://github.com/ftaricano/mcp-outlook/blob/main/LICENSE",

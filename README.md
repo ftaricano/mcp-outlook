@@ -11,7 +11,7 @@ Works with any MCP-compatible client (Claude Desktop, Cursor, custom agents, etc
 
 | Metric | Value |
 |---|---|
-| Tools | 40 operational + 4 read-only plugin tools |
+| Tools | 40 operational + 10 read-only plugin tools (15 with `PLUGIN_ALLOW_WRITES=true`) |
 | Tests | Unit, protocol, CLI, plugin, and HTTP suites |
 | Node | ≥ 20 |
 | MCP SDK | ^1.29.0 |
@@ -20,9 +20,13 @@ Works with any MCP-compatible client (Claude Desktop, Cursor, custom agents, etc
 ## Requirements
 
 - Node.js 20 or 22
-- Azure AD app registration with **Application** permissions:
-  - `Mail.ReadWrite` — required for all read/draft/folder operations
-  - `Mail.Send` — required only if you call `send_email` or `reply_to_email`
+- Azure AD app registration with **Application** permissions. Use separate registrations for the
+  original server and any remotely exposed plugin:
+  - original 40-tool server: `Mail.ReadWrite`; add `Mail.Send` only for `send_email` or
+    `reply_to_email`
+  - default 10-tool plugin: `Mail.Read` only
+  - 15-tool plugin with writes enabled: `Mail.ReadWrite`; `Mail.Send` is never required because
+    the plugin cannot send
   - `User.Read.All` — optional, only for `list_users`
 - Admin consent granted in the Azure Portal
 
@@ -52,6 +56,9 @@ Four required values feed both the server and the CLI:
 | `MAX_ATTACHMENT_MB` | no | Attachment size cap (default: 25) |
 | `OUTLOOK_STATE_DIR` | no | Local state root for persistent saved searches and sanitized run telemetry. Defaults to `$XDG_STATE_HOME/mcp-outlook` or `~/.local/state/mcp-outlook`. |
 | `OUTLOOK_JOURNAL` | no | Set to `0` to disable sanitized CLI run telemetry globally. Individual calls can use `--no-journal`. |
+| `OUTLOOK_PLUGIN_CONFIG` | no | Private plugin JSON path. Defaults to `~/.config/mcp-outlook/plugin.json`. |
+| `PLUGIN_SEARCH_MEMORY_PATH` | no | Private YAML path overriding `searchMemoryPath` in the plugin JSON. |
+| `PLUGIN_ALLOW_WRITES` | no | `false` forces the default 10-tool read-only catalog; `true` enables all 15. Unset/empty delegates to private JSON; any other value fails startup. |
 
 Resolution order (first hit wins): `process.env` → `<repo>/.env` (if present) → **macOS Keychain** (`security find-generic-password -s "<prefix>::<VARIABLE>" -a "$USER"`). On macOS, the default prefix is `mcp-outlook`; set `OUTLOOK_KEYCHAIN_PREFIX` if you want a different namespace.
 
@@ -134,22 +141,178 @@ Output modes:
 
 Every server-backed CLI call appends a sanitized event to `runs.jsonl` unless disabled. The journal stores argument names/types, duration, normalized error class, and search counters. It never stores argument values, message bodies, subjects, addresses, attachment names, credentials, or raw Graph errors.
 
-## Read-only multi-mailbox plugin
+## Multi-mailbox plugin
 
-Version 2.2 adds a separate plugin surface for conversational search across an explicitly
-allowed set of mailboxes. It does not replace the CLI or change the original 40-tool MCP
-server.
+Version 2.3 adds a separate plugin surface for conversational search, attachment reading, and
+(opt-in) light mailbox operations across an explicitly allowed set of mailboxes. It does not
+replace the CLI or change the original 40-tool MCP server. **Ten read tools are registered
+always; five additional write tools are registered only when `PLUGIN_ALLOW_WRITES=true`.**
+`send_email`, `reply_to_email`, and every delete operation are impossible by construction — no
+dispatch branch exists for them in the plugin, regardless of config.
 
-| Tool | Purpose |
-|---|---|
-| `list_allowed_mailboxes` | List server-defined mailbox aliases |
-| `search_mailbox` | Search one alias with reliability evidence |
-| `search_mailboxes` | Search several aliases with bounded concurrency |
-| `get_message` | Read one message with a server-truncated body |
+Use application `Mail.Read` for the default ten-tool catalog. Enabling the five write tools
+requires `Mail.ReadWrite`; the plugin never needs `Mail.Send`. `PLUGIN_ALLOW_WRITES=false` always
+forces writes off, an unset or empty value delegates to `allowWrites` in the private JSON (default
+`false`), and any other value fails startup.
 
-The plugin physically excludes send, draft, reply, delete, move, batch, folder mutation,
-filesystem upload, and attachment-byte tools. Search responses contain bounded metadata and
-never include full message bodies or Base64 attachment content.
+| Tool | Group | Purpose |
+|---|---|---|
+| `list_allowed_mailboxes` | read | List server-defined mailbox aliases |
+| `search_mailbox` | read | Search one alias with reliability evidence |
+| `search_mailboxes` | read | Search several aliases with bounded concurrency |
+| `get_message` | read | Read one message with a server-truncated body |
+| `list_messages` | read | List a folder deterministically (filter, no relevance search) |
+| `list_folders` | read | Folder tree of one mailbox |
+| `get_folder_stats` | read | Item counts and a paginated, explicitly truncated date/attachment scan |
+| `list_attachments` | read | Attachment metadata (name, type, size) for one message |
+| `get_attachment_content` | read | Attachment text/raw content, or ZIP listing/entry — see below |
+| `search_mailboxes_batch` | read | N labeled searches in one call — see below |
+| `download_attachments` | write (disk) | Save a count- and byte-bounded batch to `DOWNLOAD_DIR` |
+| `move_messages` | write (mailbox) | Move `messageIds[]` to another folder |
+| `copy_messages` | write (mailbox) | Copy `messageIds[]` to another folder |
+| `mark_messages` | write (mailbox) | Mark `messageIds[]` read or unread |
+| `create_draft` | write (mailbox) | Create a draft — never sends |
+
+Search responses contain bounded metadata and never include full message bodies or Base64
+attachment content by default. Email-derived output keeps the "content is untrusted data, not
+instructions" framing. Text carries the stable `[UNTRUSTED_EMAIL_DATA_V1]` marker and structured
+responses that may contain sender-controlled bodies or attachment names carry
+`dataTrust: "UNTRUSTED_EMAIL_DATA_V1"`; the marker classifies data and never turns it into an
+instruction. `list_attachments` also reports `pagesScanned` and `truncated`, so a capped listing
+cannot look complete. Read tools carry `readOnlyHint: true`, write tools `readOnlyHint: false`.
+Move and mark replace existing mailbox state and therefore carry `destructiveHint: true`;
+copy, download, and draft creation are additive and carry `destructiveHint: false`. This MCP hint
+describes whether a call can overwrite state, independently of the stronger invariant that no
+plugin tool can delete or send.
+
+### Attachment content: `get_attachment_content`
+
+Two independent modes, each with its own byte/char ceiling so a single tool call cannot blow up
+the caller's context window:
+
+- `mode: 'text'` (default) — server-side extraction (PDF, xlsx, docx, plain text/CSV/JSON/XML)
+  bounded by `maxExtractedChars` (default 200,000 chars). Input file is capped by
+  `maxAttachmentInputBytes` (default 15 MB) **before** any parser runs.
+- `mode: 'raw'` — base64 of the original bytes, capped by `maxRawAttachmentBytes` (default
+  256 KB). Use only when the caller genuinely needs the raw bytes.
+
+If the attachment is a ZIP: calling without `entry` returns a bounded listing of entries (name,
+size, `encrypted` flag) instead of content; calling with `entry` (and optional `password`)
+extracts that one entry and pipes it through the same mode/ceiling logic as a regular
+attachment. Before `unzipper` opens an archive, the server validates a bounded central directory;
+directory records count toward the entry cap (`maxZipEntries`, default 200). ZIP guards also
+include an uncompressed-size cap
+(`maxZipUncompressedBytes`, default 50 MB, anti zip-bomb), and rejection of entry names that are
+not addressable — a `..` path segment, a leading `/`, a backslash (ambiguous between a legacy
+Windows separator and a literal character), or a name over 512 chars. Those entries are **counted
+in `hiddenEntries`** on the listing, never dropped silently: a non-zero `hiddenEntries` means the
+listing is incomplete and "no such document in this archive" is not a supported conclusion.
+Entry names are sender-controlled, so the listing carries the same untrusted-data framing as
+attachment content.
+
+These caps apply to an attached `.zip`. Before ExcelJS or mammoth parses an OOXML document
+(xlsx/docx), every internal entry is streamed through a real aggregate byte budget. Its structure
+is bounded separately by `maxContainerEntries` (default 1,000) and
+`maxContainerUncompressedBytes` (default 100 MB) — a legitimate workbook has one internal part
+per sheet plus styles, shared strings and drawings, so the archive caps are the wrong ruler for
+it. This bounds parser input, not parser RSS: the parser may allocate more memory than the
+decompressed document size.
+
+**ZIP encryption support:** the underlying `unzipper` library decrypts **ZipCrypto**
+(the classic `zip -P` format used by most corporate senders) when `password` is supplied. **AES-256
+encrypted ZIPs are not supported** and return the stable error code `ZIP_UNSUPPORTED_ENCRYPTION`
+— the fallback is the local disk flow via `download_attachments` (write mode) plus a local
+unzip tool.
+
+Errors from this tool are always redacted to a stable code, never a parser stack or the
+password: `Attachment content failed: <CODE>` where `<CODE>` is one of `ATTACHMENT_TOO_LARGE`,
+`RAW_TOO_LARGE`, `ATTACHMENT_FETCH_FAILED`, `UNSUPPORTED_FORMAT`, `EXTRACTION_FAILED`,
+`EXTRACTION_TIMEOUT`, `EXTRACTION_BUSY`, `ZIP_INVALID`, `ZIP_TOO_MANY_ENTRIES`, `ZIP_TOO_LARGE`,
+`ZIP_ENTRY_NOT_FOUND`, `ZIP_ENCRYPTED`, or `ZIP_UNSUPPORTED_ENCRYPTION`. `RAW_TOO_LARGE` is
+raised where the bytes are produced, before they are copied any further. The attachment itself
+has already been fetched and decoded at that point (bounded by `maxAttachmentInputBytes`); what
+the cap prevents is a second copy. A plain (non-archive) attachment is size-checked in place,
+without involving the worker at all; a ZIP entry is checked inside the worker while the entry
+streams, so it fails at the cap rather than after inflating up to
+`maxZipUncompressedBytes`.
+`EXTRACTION_BUSY` means the server already has `maxConcurrentExtractions` extractions in flight
+plus a full backlog queue; retry after a short delay.
+
+**Worker isolation — what it actually guarantees.** Each attachment is parsed inside a dedicated
+`worker_thread` with a wall-clock timeout and a hard `terminate()`, so a hostile or slow file
+cannot block the main process's event loop and cannot outlive the timeout. `worker_threads`
+`resourceLimits` caps that worker's own V8 heap, but **not** its Buffer/ArrayBuffer allocations
+or native-addon memory — it is not a full memory sandbox. The actual size guarantees are
+`maxAttachmentInputBytes` (checked before any parser runs), the ZIP entry/byte caps
+(`maxZipEntries`, plus `maxZipUncompressedBytes` on extracted real bytes), the OOXML aggregate
+real-byte preflight,
+the raw-mode cap above, and `maxConcurrentExtractions` (below), which bounds how many of these
+workers can run at once so per-worker cost can't be multiplied by unbounded parallelism.
+
+Accepted residual risk, stated plainly: a worker thread is an isolation boundary for the event
+loop and for wall-clock time, **not a security boundary**. It shares the process with the server,
+including its credentials, environment, and privileges, so a parser exploited through a malicious
+document is not contained by it. Within the size and concurrency bounds above, the expected
+failure mode is degradation of this one local process; a parser RCE would not be. The mitigations
+that actually apply to that case are operational rather than architectural: this server is
+loopback-only and single-operator, and the parser dependencies must be kept current. Note that
+the mailbox allowlist is *not* one of them — the allowlist bounds which mailboxes are read, not
+who can send a document into them, and processing third-party attachments is the point of the
+feature.
+
+There is also native code in the chain, which is easy to miss: `exceljs`, `mammoth` and
+`unzipper` are plain JavaScript, but `pdfjs-dist` `require`s the optional `@napi-rs/canvas`
+(a Skia binding) at module load on Node, inside a `try`/`catch`, whether or not anything is
+ever rasterized. A default `npm install` therefore puts a `.node` binary in the process that
+parses attachments. This server never rasterizes — it only calls `getTextContent()` — and
+pdfjs degrades gracefully with a warning when the package is absent, so a deployment that
+wants that binary out of the parsing process can install with `--omit=optional`. Assume no
+sandbox beyond that: for a stronger threat model, run the server under an OS-level sandbox or
+in a container.
+
+### Labeled batch search: `search_mailboxes_batch`
+
+Runs several labeled `search_mailboxes` queries in a single call — `{ queries: [{ label,
+mailboxes?, criteria }, ...] }` — capped at `maxQueriesPerBatch` (default 10) per call. Aggregate
+budgets also cap returned messages, attachment metadata, serialized UTF-8 bytes, and context
+characters across every label. Exceeding any aggregate cap fails the whole batch instead of
+returning an apparently complete partial result. The result groups evidence by `label`, so a
+caller matching many external cases (invoices, pending policies) against 2+ mailboxes doesn't
+need one round-trip per case.
+
+### Search criteria extras
+
+`search_mailbox` / `search_mailboxes` / `list_messages` / batch criteria accept two opt-in
+flags:
+
+- `includeAttachmentNames: boolean` — expands the Graph query to include attachment name/type/
+  size in each message summary (bounded, first 30 attachments), so a caller can classify a
+  result by attachment name without a separate `list_attachments` call per candidate.
+- `expandTerms: boolean` — expands `query` into aliases/group members using the external search
+  memory (below). No-op, with a `search_memory_not_configured` warning, when no memory file is
+  configured.
+
+Deterministic criteria (no `query`, i.e. `$filter`-based) accept a higher `maxResults` ceiling
+(100 vs 50 for relevance search) and a wider internal scan limit, because covering a full
+mailbox window requires paginating to the end.
+
+### External search memory (optional, caller-supplied)
+
+Set `PLUGIN_SEARCH_MEMORY_PATH` to a private YAML file (mode `0600`, never committed) with:
+
+```yaml
+apelidos:
+  "Official Company Name": ["KnownAlias"]
+grupos:
+  "Economic Group Name": ["Member Company A", "Member Company B"]
+stopwords: ["LTDA", "SA"]
+```
+
+Only `apelidos`, `grupos`, and `stopwords` are read; configured stopwords are removed from both
+stored names and incoming terms during alias/group matching. Other keys in the same file (e.g.
+an existing private sender map) are ignored. This mechanism is generic — the actual aliases,
+groups, and stopwords are deployment data and must live outside this repository (see Hard
+invariant 9 in `CLAUDE.md`).
 
 ### Private plugin configuration
 
@@ -164,9 +327,52 @@ Create `~/.config/mcp-outlook/plugin.json` with mode `0600`:
   "maxConcurrentMailboxes": 3,
   "maxMailboxesPerSearch": 8,
   "maxResultsPerMailbox": 20,
-  "maxBodyChars": 12000
+  "maxBodyChars": 12000,
+  "allowWrites": false,
+  "maxAttachmentInputBytes": 15728640,
+  "maxExtractedChars": 200000,
+  "maxRawAttachmentBytes": 262144,
+  "maxConcurrentExtractions": 2,
+  "maxBatchSize": 25,
+  "maxDownloadBatchBytes": 52428800,
+  "maxQueriesPerBatch": 10,
+  "maxBatchResultMessages": 500,
+  "maxBatchResultBytes": 2097152,
+  "maxBatchContextChars": 500000,
+  "maxBatchAttachments": 1000,
+  "maxZipEntries": 200,
+  "maxZipUncompressedBytes": 52428800,
+  "maxContainerEntries": 1000,
+  "maxContainerUncompressedBytes": 104857600
 }
 ```
+
+| Field | Default | Purpose |
+|---|---|---|
+| `allowWrites` | `false` | Registers the 5 write tools when `true` (see env override below) |
+| `maxAttachmentInputBytes` | 15 MB | Cap on the attachment file before extraction/raw handling |
+| `maxExtractedChars` | 200,000 | Cap on extracted text returned to the caller |
+| `maxRawAttachmentBytes` | 256 KB | Cap on `mode: 'raw'` base64 output |
+| `maxConcurrentExtractions` | 2 | Max extraction workers running at once (1-8); excess calls queue, then `EXTRACTION_BUSY` |
+| `maxBatchSize` | 25 | Cap on `messageIds[]` / `attachmentIds[]` in move/copy/mark/download |
+| `maxDownloadBatchBytes` | 50 MB | Aggregate cap for one `download_attachments` call, checked before and during writes |
+| `maxQueriesPerBatch` | 10 | Cap on `queries[]` in `search_mailboxes_batch` |
+| `maxBatchResultMessages` | 500 | Aggregate message cap across all batch labels and mailboxes |
+| `maxBatchResultBytes` | 2 MB | Aggregate UTF-8 byte cap for serialized batch entries |
+| `maxBatchContextChars` | 500,000 | Aggregate serialized context-character cap for the batch |
+| `maxBatchAttachments` | 1,000 | Aggregate attachment-metadata cap across returned messages |
+| `maxZipEntries` | 200 | Cap on all central-directory records, including directories |
+| `maxZipUncompressedBytes` | 50 MB | Real-byte cap while extracting one ZIP entry; listings also reject oversized declared totals |
+| `maxContainerEntries` | 1,000 | Cap on internal parts of an OOXML document (xlsx/docx) |
+| `maxContainerUncompressedBytes` | 100 MB | Aggregate real-byte cap streamed before parsing an OOXML document |
+| `searchMemoryPath` | — | Path to the external search-memory YAML (see above) |
+
+Environment overrides (useful for deploy-time toggles without editing the private config file):
+`PLUGIN_SEARCH_MEMORY_PATH=<path>` always takes precedence over the file when set. Writes are
+enabled via the `allowWrites` field in `plugin.json` **or** `PLUGIN_ALLOW_WRITES=true` — the env
+var is the authority: `PLUGIN_ALLOW_WRITES=false` forces writes off even if the file has
+`allowWrites: true`; leaving the env var unset or empty falls back to the file's `allowWrites`
+value (default `false`).
 
 ```bash
 chmod 600 ~/.config/mcp-outlook/plugin.json
@@ -183,7 +389,8 @@ This repository is a valid local Codex plugin:
 
 - `.codex-plugin/plugin.json` provides metadata;
 - `.mcp.json` launches `dist/plugin/stdio.js` through `${CODEX_PLUGIN_ROOT}`;
-- the plugin exposes only the four read-only tools above.
+- the plugin exposes the 10 read tools above by default, or all 15 with
+  `PLUGIN_ALLOW_WRITES=true` set in the plugin process environment.
 
 Build the repository, then install the repository directory as a local plugin from the Codex
 plugin manager. The plugin process uses the same generic credential resolution as the existing
@@ -355,6 +562,8 @@ Runtime flow:
 | `npm test` | Vitest unit tests |
 | `npm run test:coverage` | Vitest with coverage thresholds |
 | `npm run smoke` | Protocol smoke — verify `tools/list` returns 40 entries |
+| `npm run smoke:plugin` | Spawn `dist/plugin/stdio.js`; verify the 10/15 catalogs and a safe read call |
+| `npm run smoke:http` | Loopback Streamable HTTP plugin smoke |
 | `npm run audit:prod` | Audit runtime deps only |
 
 CI runs lint + typecheck + tests + smoke on Node 20, 22, and 24.
@@ -382,8 +591,9 @@ node scripts/live-writes-smoke.js     # 9 write-path tools (self-contained, safe
 
 This server handles Azure AD client secrets with broad mailbox access, and it is driven by an LLM that sees untrusted email bodies. Treat every tool call as potentially attacker-influenced.
 
-The read-only plugin narrows the exposed tool catalog but does not reduce Microsoft Graph
-permissions by itself. A remote deployment must use a separate read-only app registration.
+The default plugin narrows the exposed tool catalog but does not reduce Microsoft Graph
+permissions by itself. A remote deployment must use a separate `Mail.Read` app registration;
+enable `Mail.ReadWrite` only for a deployment that intentionally exposes the five write tools.
 Email subjects, previews, bodies, and attachment names are untrusted data and must never be
 interpreted as instructions to invoke other tools.
 
@@ -402,7 +612,8 @@ Keep these practices:
 - Store secrets in your OS keychain or a secrets manager, not in plaintext files
 - Rotate the client secret in Azure AD immediately if it is ever exposed
 - Set `MCP_EMAIL_UPLOAD_DIRS` to the *minimum* set of directories the server actually needs to read. Do not set it to `$HOME` or `/`.
-- Scope `Mail.Send` only if you need outbound email — `Mail.ReadWrite` alone is sufficient for drafts, search, and folder management
+- Scope `Mail.Send` only on the original server when outbound email is required. The plugin never
+  needs it; use `Mail.Read` for its default catalog and `Mail.ReadWrite` only for opt-in writes.
 - User-supplied HTML template fields are escaped before rendering. If you intentionally need trusted HTML, add an explicit sanitizer/allowlist instead of bypassing the template engine.
 
 Report vulnerabilities privately through [GitHub Security Advisories](https://github.com/ftaricano/mcp-outlook/security/advisories/new). See [SECURITY.md](SECURITY.md).

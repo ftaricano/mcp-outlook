@@ -27,7 +27,7 @@ const EnvSchema = z.object({
   LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).optional().default('info'),
   NODE_ENV: z.enum(['production', 'development', 'test']).optional().default('production'),
   MCP_SERVER_NAME: z.string().optional().default('mcp-outlook'),
-  MCP_SERVER_VERSION: z.string().optional().default('2.2.0'),
+  MCP_SERVER_VERSION: z.string().optional().default('2.3.0'),
   DOWNLOAD_DIR: z.string().optional(),
   MAX_ATTACHMENT_MB: z.coerce.number().int().positive().max(150).optional().default(25),
 });

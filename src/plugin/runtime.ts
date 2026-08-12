@@ -4,6 +4,7 @@ import { createPathGuard } from '../security/pathGuard.js';
 import { EmailService } from '../services/emailService.js';
 import { loadPluginConfig, type PluginConfig } from './config.js';
 import { MultiMailboxService } from './MultiMailboxService.js';
+import { loadSearchMemory } from './searchMemory.js';
 
 export interface OutlookPluginRuntime {
   readonly config: PluginConfig;
@@ -19,19 +20,24 @@ export function createOutlookPluginRuntime(
   const authProvider = new GraphAuthProvider(env);
   const pathGuard = createPathGuard();
   const services = new Map<string, EmailService>();
+  const searchMemory = loadSearchMemory(config.searchMemoryPath);
 
-  const service = new MultiMailboxService(config, (mailboxAddress) => {
-    const existing = services.get(mailboxAddress);
-    if (existing) return existing;
+  const service = new MultiMailboxService(
+    config,
+    (mailboxAddress) => {
+      const existing = services.get(mailboxAddress);
+      if (existing) return existing;
 
-    const created = new EmailService(authProvider, pathGuard, {
-      targetUserEmail: mailboxAddress,
-      preloadCache: false,
-      ensureDownloadDirectory: false,
-    });
-    services.set(mailboxAddress, created);
-    return created;
-  });
+      const created = new EmailService(authProvider, pathGuard, {
+        targetUserEmail: mailboxAddress,
+        preloadCache: false,
+        ensureDownloadDirectory: false,
+      });
+      services.set(mailboxAddress, created);
+      return created;
+    },
+    searchMemory
+  );
 
   return {
     config,
