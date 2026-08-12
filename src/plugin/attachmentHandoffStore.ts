@@ -5,14 +5,18 @@ import {
   type SpawnOptionsWithoutStdio,
 } from 'node:child_process';
 import { constants as fsConstants, type Stats } from 'node:fs';
-import { mkdir, open, readdir, rename, type FileHandle } from 'node:fs/promises';
+import { mkdir, open, readdir, rename, unlink, type FileHandle } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 const HANDOFF_ID_RE = /^oh_[A-Za-z0-9_-]{43}$/;
 const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const TEMP_PAYLOAD_RE = /^\.payload-[0-9a-f-]{36}\.tmp$/i;
-const TEMP_MANIFEST_RE = /^\.manifest-[0-9a-f-]{36}\.tmp$/i;
+const LEGACY_TEMP_PAYLOAD_RE =
+  /^\.payload-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/i;
+const LEGACY_TEMP_MANIFEST_RE =
+  /^\.manifest-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/i;
+const TEMP_FILE_RE =
+  /^\.(payload|manifest)-([a-f0-9]{64})-([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.tmp$/;
 const MANIFEST_MAX_BYTES = 64 * 1024;
 const STORE_LOCK_NAME = '.store.lock';
 const LOCK_ATTEMPTS = 50;
@@ -96,6 +100,7 @@ export type AttachmentHandoffErrorCode =
   | 'HANDOFF_DISABLED'
   | 'HANDOFF_IDEMPOTENCY_MISMATCH'
   | 'HANDOFF_INVALID'
+  | 'HANDOFF_LOCK_FAILURE'
   | 'HANDOFF_NOT_FOUND'
   | 'HANDOFF_QUOTA_EXCEEDED'
   | 'HANDOFF_STORAGE_FAILED'
@@ -144,6 +149,10 @@ export interface AttachmentHandoffStoreLimits {
 export interface AttachmentHandoffStoreHooks {
   readonly afterPayloadPublished?: () => Promise<void> | void;
   readonly afterStoreRootSynced?: () => Promise<void> | void;
+  readonly temporaryFileFault?: (
+    kind: 'payload' | 'manifest',
+    stage: 'afterPartialWrite' | 'beforeSync' | 'afterSync'
+  ) => Promise<void> | void;
 }
 
 export interface PosixFlockOptions {
@@ -161,6 +170,8 @@ export interface PosixFlockOptions {
 }
 
 export interface PosixFlock {
+  readonly exited: Promise<void>;
+  run<T>(operation: () => Promise<T>): Promise<T>;
   release(): Promise<void>;
   terminate(): Promise<void>;
 }
@@ -182,12 +193,40 @@ interface PreparedPartial {
   readonly manifestTemporary?: string;
 }
 
+interface TemporaryFile {
+  readonly kind: 'payload' | 'manifest';
+  readonly fingerprint: string | null;
+  readonly name: string;
+}
+
 export function defaultAttachmentHandoffRoot(): string {
   return join(homedir(), '.jarvishub-mcp', 'outlook-handoffs');
 }
 
 function sha256(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
+}
+
+function parseTemporaryFile(name: string): TemporaryFile | null {
+  const current = TEMP_FILE_RE.exec(name);
+  if (current) {
+    return {
+      kind: current[1] as 'payload' | 'manifest',
+      fingerprint: current[2],
+      name,
+    };
+  }
+  if (LEGACY_TEMP_PAYLOAD_RE.test(name)) {
+    return { kind: 'payload', fingerprint: null, name };
+  }
+  if (LEGACY_TEMP_MANIFEST_RE.test(name)) {
+    return { kind: 'manifest', fingerprint: null, name };
+  }
+  return null;
+}
+
+function temporaryFileName(kind: 'payload' | 'manifest', fingerprint: string): string {
+  return `.${kind}-${fingerprint}-${randomUUID()}.tmp`;
 }
 
 function normalizeIdentity<T extends AttachmentHandoffIdentity>(identity: T): T {
@@ -383,19 +422,34 @@ async function readSecureFile(
   }
 }
 
-async function writePrivateFile(path: string, contents: string | Buffer): Promise<Stats> {
+async function writePrivateFile(
+  path: string,
+  contents: string | Buffer,
+  kind: 'payload' | 'manifest',
+  hooks: AttachmentHandoffStoreHooks,
+  lock: PosixFlock
+): Promise<Stats> {
   let handle: FileHandle;
   try {
-    handle = await open(path, CREATE_FILE_FLAGS, 0o600);
-  } catch {
+    handle = await lock.run(() => open(path, CREATE_FILE_FLAGS, 0o600));
+  } catch (error) {
+    if (error instanceof AttachmentHandoffError && error.code === 'HANDOFF_LOCK_FAILURE') {
+      throw error;
+    }
     throw new AttachmentHandoffError('HANDOFF_STORAGE_FAILED');
   }
   try {
-    const before = await handle.stat();
+    const before = await lock.run(() => handle.stat());
     validateFileStats(before, Number.MAX_SAFE_INTEGER, 'HANDOFF_STORAGE_FAILED');
-    await handle.writeFile(contents);
-    await handle.sync();
-    const after = await handle.stat();
+    const bytes = Buffer.isBuffer(contents) ? contents : Buffer.from(contents);
+    const split = bytes.length > 1 ? Math.ceil(bytes.length / 2) : bytes.length;
+    if (split > 0) await lock.run(() => handle.write(bytes.subarray(0, split)));
+    await lock.run(async () => hooks.temporaryFileFault?.(kind, 'afterPartialWrite'));
+    if (split < bytes.length) await lock.run(() => handle.write(bytes.subarray(split)));
+    await lock.run(async () => hooks.temporaryFileFault?.(kind, 'beforeSync'));
+    await lock.run(() => handle.sync());
+    await lock.run(async () => hooks.temporaryFileFault?.(kind, 'afterSync'));
+    const after = await lock.run(() => handle.stat());
     validateFileStats(after, Number.MAX_SAFE_INTEGER, 'HANDOFF_STORAGE_FAILED');
     if (
       !sameInode(before, after) ||
@@ -414,6 +468,13 @@ async function delay(milliseconds: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+async function runWithLock<T>(
+  lock: PosixFlock | undefined,
+  operation: () => Promise<T>
+): Promise<T> {
+  return lock ? lock.run(operation) : operation();
+}
+
 function boundedAppend(current: string, chunk: Buffer): string {
   if (Buffer.byteLength(current) >= LOCK_OUTPUT_MAX_BYTES) return current;
   return Buffer.concat([Buffer.from(current), chunk])
@@ -424,21 +485,21 @@ function boundedAppend(current: string, chunk: Buffer): string {
 async function waitForExit(
   child: ChildProcessWithoutNullStreams,
   timeoutMs: number
-): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  await new Promise<void>((resolve) => {
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
+): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return true;
+  return new Promise<boolean>((resolve) => {
+    const finish = (exited: boolean) => {
       clearTimeout(timer);
-      resolve();
+      child.off('exit', onExit);
+      child.off('error', onExit);
+      resolve(exited);
     };
-    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
+    const onExit = () => finish(true);
+    const timer = setTimeout(() => finish(false), timeoutMs);
     timer.unref();
-    child.once('exit', finish);
-    child.once('error', finish);
-    if (child.exitCode !== null || child.signalCode !== null) finish();
+    child.once('exit', onExit);
+    child.once('error', onExit);
+    if (child.exitCode !== null || child.signalCode !== null) finish(true);
   });
 }
 
@@ -449,7 +510,15 @@ async function stopLockHelper(
 ): Promise<void> {
   if (terminate) child.kill('SIGKILL');
   else child.stdin.end();
-  await waitForExit(child, timeoutMs);
+  if (await waitForExit(child, timeoutMs)) return;
+  child.kill('SIGKILL');
+  if (await waitForExit(child, timeoutMs)) return;
+  child.stdin.destroy();
+  child.stdout.destroy();
+  child.stderr.destroy();
+  child.removeAllListeners();
+  child.unref();
+  throw new AttachmentHandoffError('HANDOFF_LOCK_FAILURE');
 }
 
 async function startLockHelper(
@@ -529,15 +598,49 @@ async function startLockHelper(
     throw new AttachmentHandoffError('HANDOFF_STORAGE_FAILED');
   }
 
+  let alive = true;
+  let stopping = false;
+  let resolveExited!: () => void;
+  const exited = new Promise<void>((resolve) => {
+    resolveExited = resolve;
+  });
+  const markExited = () => {
+    alive = false;
+    resolveExited();
+  };
+  child.once('exit', markExited);
+  child.once('error', markExited);
+  if (child.exitCode !== null || child.signalCode !== null) markExited();
+
+  const assertAlive = () => {
+    if (!alive && !stopping) {
+      throw new AttachmentHandoffError('HANDOFF_LOCK_FAILURE');
+    }
+  };
+  const run = async <T>(operation: () => Promise<T>): Promise<T> => {
+    assertAlive();
+    const result = await Promise.race([
+      operation(),
+      exited.then<never>(() => {
+        throw new AttachmentHandoffError('HANDOFF_LOCK_FAILURE');
+      }),
+    ]);
+    assertAlive();
+    return result;
+  };
+
   let stopped = false;
   const stop = async (terminate: boolean) => {
     if (stopped) return;
     stopped = true;
+    stopping = true;
     await stopLockHelper(child, releaseTimeoutMs, terminate);
   };
   return {
     kind: 'locked',
     lock: {
+      exited,
+      run,
       release: async () => stop(false),
       terminate: async () => stop(true),
     },
@@ -568,7 +671,8 @@ export class AttachmentHandoffStore {
   constructor(
     private readonly limits: AttachmentHandoffStoreLimits,
     private readonly root = defaultAttachmentHandoffRoot(),
-    hooks: AttachmentHandoffStoreHooks = {}
+    hooks: AttachmentHandoffStoreHooks = {},
+    private readonly lockOptions: PosixFlockOptions = {}
   ) {
     currentEuid();
     this.hooks = hooks;
@@ -585,17 +689,17 @@ export class AttachmentHandoffStore {
     const candidateManifest = this.createManifest(normalized, payload);
     await this.ensureWritableRoot();
 
-    return this.withStoreLock(async () => {
-      const state = await this.inspectBundle(candidateManifest.handoffId, true);
+    return this.withStoreLock(async (lock) => {
+      const state = await lock.run(() => this.inspectBundle(candidateManifest.handoffId, true));
       if (state.kind === 'ready') {
         return this.acceptReplay(state.manifest, candidateManifest.requestFingerprint);
       }
 
       const prepared =
         state.kind === 'partial'
-          ? await this.preparePartial(state.snapshot, candidateManifest, payload)
+          ? await this.preparePartial(state.snapshot, candidateManifest, payload, lock)
           : null;
-      const usage = await this.storeUsage(candidateManifest.handoffId);
+      const usage = await lock.run(() => this.storeUsage(candidateManifest.handoffId));
       if (
         usage.entries + 1 > this.limits.maxStoreEntries ||
         usage.bytes + payload.length > this.limits.maxStoreBytes
@@ -604,17 +708,17 @@ export class AttachmentHandoffStore {
       }
 
       const publication =
-        prepared ?? (await this.createBundleDirectory(candidateManifest.handoffId));
-      return this.publish(publication, candidateManifest, payload);
+        prepared ?? (await this.createBundleDirectory(candidateManifest.handoffId, lock));
+      return this.publish(publication, candidateManifest, payload, lock);
     });
   }
 
   async findReplay(identity: AttachmentHandoffIdentity): Promise<AttachmentHandoffManifest | null> {
     const normalized = normalizeIdentity(identity);
     await this.ensureWritableRoot();
-    return this.withStoreLock(async () => {
+    return this.withStoreLock(async (lock) => {
       const handoffId = handoffIdFor(normalized.idempotencyKey);
-      const state = await this.inspectBundle(handoffId, true);
+      const state = await lock.run(() => this.inspectBundle(handoffId, true));
       if (state.kind !== 'ready') return null;
       return this.acceptReplay(state.manifest, requestFingerprint(normalized));
     });
@@ -718,6 +822,14 @@ export class AttachmentHandoffStore {
       const after = await opened.handle.stat();
       validateDirectoryStats(after, expectedMode, code);
       if (!sameInode(opened.stats, after)) throw new AttachmentHandoffError(code);
+      const current = await openSecureDirectory(path, expectedMode, code);
+      try {
+        if (!sameInode(opened.stats, current.stats)) {
+          throw new AttachmentHandoffError(code);
+        }
+      } finally {
+        await current.handle.close();
+      }
       return { stats: after, entries };
     } finally {
       await opened.handle.close();
@@ -737,14 +849,20 @@ export class AttachmentHandoffStore {
     }
   }
 
-  private async syncPrivateDirectory(path: string, expected: Stats): Promise<void> {
-    const current = await openSecureDirectory(path, 0o700, 'HANDOFF_STORAGE_FAILED');
+  private async syncPrivateDirectory(
+    path: string,
+    expected: Stats,
+    lock?: PosixFlock
+  ): Promise<void> {
+    const current = await runWithLock(lock, () =>
+      openSecureDirectory(path, 0o700, 'HANDOFF_STORAGE_FAILED')
+    );
     try {
       if (!sameInode(expected, current.stats)) {
         throw new AttachmentHandoffError('HANDOFF_STORAGE_FAILED');
       }
-      await current.handle.sync();
-      const after = await current.handle.stat();
+      await runWithLock(lock, () => current.handle.sync());
+      const after = await runWithLock(lock, () => current.handle.stat());
       validateDirectoryStats(after, 0o700, 'HANDOFF_STORAGE_FAILED');
       if (!sameInode(expected, after)) {
         throw new AttachmentHandoffError('HANDOFF_STORAGE_FAILED');
@@ -811,63 +929,171 @@ export class AttachmentHandoffStore {
   private async preparePartial(
     snapshot: DirectorySnapshot,
     manifest: AttachmentHandoffManifest,
-    payload: Buffer
+    payload: Buffer,
+    lock: PosixFlock
   ): Promise<PreparedPartial> {
-    const payloadTemporaries = snapshot.entries.filter((entry) => TEMP_PAYLOAD_RE.test(entry));
-    const manifestTemporaries = snapshot.entries.filter((entry) => TEMP_MANIFEST_RE.test(entry));
-    const allowed = new Set(['payload.bin', ...payloadTemporaries, ...manifestTemporaries]);
+    const temporaryFiles = snapshot.entries
+      .map(parseTemporaryFile)
+      .filter((value): value is TemporaryFile => value !== null);
+    const payloadTemporaries = temporaryFiles.filter((entry) => entry.kind === 'payload');
+    const manifestTemporaries = temporaryFiles.filter((entry) => entry.kind === 'manifest');
+    const allowed = new Set(['payload.bin', ...temporaryFiles.map((entry) => entry.name)]);
     if (
       snapshot.entries.some((entry) => !allowed.has(entry)) ||
       payloadTemporaries.length > 1 ||
       manifestTemporaries.length > 1 ||
       (snapshot.entries.includes('payload.bin') && payloadTemporaries.length > 0) ||
-      (manifestTemporaries.length > 0 && !snapshot.entries.includes('payload.bin'))
+      (manifestTemporaries.length > 0 &&
+        !snapshot.entries.includes('payload.bin') &&
+        payloadTemporaries.length === 0)
     ) {
       throw new AttachmentHandoffError('HANDOFF_INVALID');
+    }
+
+    for (const temporary of temporaryFiles) {
+      if (temporary.fingerprint !== null && temporary.fingerprint !== manifest.requestFingerprint) {
+        throw new AttachmentHandoffError('HANDOFF_IDEMPOTENCY_MISMATCH');
+      }
     }
 
     const bundlePath = join(this.root, manifest.handoffId);
     const payloadName = snapshot.entries.includes('payload.bin')
       ? 'payload.bin'
-      : payloadTemporaries[0];
+      : payloadTemporaries[0]?.name;
+    let payloadState: PreparedPartial['payloadState'] = snapshot.entries.includes('payload.bin')
+      ? 'published'
+      : payloadName
+        ? 'temporary'
+        : 'missing';
     if (payloadName) {
-      const existingPayload = await readSecureFile(
-        join(bundlePath, payloadName),
-        this.limits.maxAttachmentBytes,
-        'HANDOFF_INVALID'
-      );
-      if (!existingPayload.buffer.equals(payload)) {
-        throw new AttachmentHandoffError('HANDOFF_INVALID');
+      let existingPayload: { buffer: Buffer; stats: Stats } | null = null;
+      try {
+        existingPayload = await lock.run(() =>
+          readSecureFile(
+            join(bundlePath, payloadName),
+            this.limits.maxAttachmentBytes,
+            'HANDOFF_INVALID'
+          )
+        );
+      } catch (error) {
+        if (error instanceof AttachmentHandoffError && error.code === 'HANDOFF_LOCK_FAILURE') {
+          throw error;
+        }
+        if (payloadName === 'payload.bin') throw error;
+      }
+      if (!existingPayload?.buffer.equals(payload)) {
+        if (payloadName === 'payload.bin' || payloadTemporaries[0]?.fingerprint === null) {
+          throw new AttachmentHandoffError('HANDOFF_INVALID');
+        }
+        await this.removeTemporary(
+          bundlePath,
+          snapshot.stats,
+          payloadTemporaries[0],
+          manifest.requestFingerprint,
+          lock
+        );
+        payloadState = 'missing';
       }
     }
 
-    const manifestTemporary = manifestTemporaries[0];
+    let manifestTemporary: TemporaryFile | undefined = manifestTemporaries[0];
+    const publicationProven = manifestTemporary?.fingerprint === manifest.requestFingerprint;
     if (manifestTemporary) {
-      const recovered = parseManifest(
-        (
-          await readSecureFile(
-            join(bundlePath, manifestTemporary),
-            MANIFEST_MAX_BYTES,
-            'HANDOFF_INVALID'
-          )
-        ).buffer
-      );
-      if (!this.manifestMatches(recovered, manifest)) {
+      let recovered: AttachmentHandoffManifest | null = null;
+      try {
+        recovered = parseManifest(
+          (
+            await lock.run(() =>
+              readSecureFile(
+                join(bundlePath, manifestTemporary!.name),
+                MANIFEST_MAX_BYTES,
+                'HANDOFF_INVALID'
+              )
+            )
+          ).buffer
+        );
+      } catch (error) {
+        if (error instanceof AttachmentHandoffError && error.code === 'HANDOFF_LOCK_FAILURE') {
+          throw error;
+        }
+        if (manifestTemporary.fingerprint === null) throw error;
+      }
+      if (recovered && recovered.requestFingerprint !== manifest.requestFingerprint) {
+        throw new AttachmentHandoffError('HANDOFF_IDEMPOTENCY_MISMATCH');
+      }
+      if (recovered && !this.manifestMatches(recovered, manifest)) {
         throw new AttachmentHandoffError('HANDOFF_INVALID');
       }
+      if (!recovered) {
+        await this.removeTemporary(
+          bundlePath,
+          snapshot.stats,
+          manifestTemporary,
+          manifest.requestFingerprint,
+          lock
+        );
+        manifestTemporary = undefined;
+      }
     }
-    await this.assertDirectoryIdentity(bundlePath, snapshot.stats, 'HANDOFF_INVALID');
+    if (payloadState === 'published' && !manifestTemporary && !publicationProven) {
+      throw new AttachmentHandoffError('HANDOFF_INVALID');
+    }
+    await lock.run(() =>
+      this.assertDirectoryIdentity(bundlePath, snapshot.stats, 'HANDOFF_INVALID')
+    );
 
     return {
       bundleStats: snapshot.stats,
-      payloadState: snapshot.entries.includes('payload.bin')
-        ? 'published'
-        : payloadTemporaries.length > 0
-          ? 'temporary'
-          : 'missing',
-      payloadTemporary: payloadTemporaries[0],
-      manifestTemporary,
+      payloadState,
+      payloadTemporary: payloadState === 'temporary' ? payloadTemporaries[0]?.name : undefined,
+      manifestTemporary: manifestTemporary?.name,
     };
+  }
+
+  private async removeTemporary(
+    bundlePath: string,
+    bundleStats: Stats,
+    temporary: TemporaryFile,
+    expectedFingerprint: string,
+    lock: PosixFlock
+  ): Promise<void> {
+    const reparsed = parseTemporaryFile(temporary.name);
+    if (
+      !reparsed ||
+      reparsed.name !== temporary.name ||
+      reparsed.kind !== temporary.kind ||
+      reparsed.fingerprint === null ||
+      reparsed.fingerprint !== expectedFingerprint
+    ) {
+      throw new AttachmentHandoffError('HANDOFF_INVALID');
+    }
+    const path = join(bundlePath, temporary.name);
+    const handle = await lock.run(() => open(path, READ_FILE_FLAGS));
+    try {
+      const opened = await lock.run(() => handle.stat());
+      validateFileStats(opened, Number.MAX_SAFE_INTEGER, 'HANDOFF_INVALID');
+      await lock.run(() =>
+        this.assertDirectoryIdentity(bundlePath, bundleStats, 'HANDOFF_INVALID')
+      );
+      const current = await lock.run(() => open(path, READ_FILE_FLAGS));
+      try {
+        const currentStats = await lock.run(() => current.stat());
+        validateFileStats(currentStats, Number.MAX_SAFE_INTEGER, 'HANDOFF_INVALID');
+        if (!sameInode(opened, currentStats)) {
+          throw new AttachmentHandoffError('HANDOFF_INVALID');
+        }
+        await lock.run(() => unlink(path));
+        const removed = await lock.run(() => handle.stat());
+        if (!sameInode(opened, removed) || removed.nlink !== 0) {
+          throw new AttachmentHandoffError('HANDOFF_STORAGE_FAILED');
+        }
+      } finally {
+        await current.close();
+      }
+    } finally {
+      await handle.close();
+    }
+    await this.syncPrivateDirectory(bundlePath, bundleStats, lock);
   }
 
   private manifestMatches(
@@ -889,19 +1115,29 @@ export class AttachmentHandoffStore {
     );
   }
 
-  private async createBundleDirectory(handoffId: string): Promise<PreparedPartial> {
+  private async createBundleDirectory(
+    handoffId: string,
+    lock: PosixFlock
+  ): Promise<PreparedPartial> {
     const bundlePath = join(this.root, handoffId);
     try {
-      await mkdir(bundlePath, { mode: 0o700 });
-    } catch {
+      await lock.run(() => mkdir(bundlePath, { mode: 0o700 }));
+    } catch (error) {
+      if (error instanceof AttachmentHandoffError && error.code === 'HANDOFF_LOCK_FAILURE') {
+        throw error;
+      }
       throw new AttachmentHandoffError('HANDOFF_STORAGE_FAILED');
     }
-    const bundle = await openSecureDirectory(bundlePath, 0o700, 'HANDOFF_STORAGE_FAILED');
+    const bundle = await lock.run(() =>
+      openSecureDirectory(bundlePath, 0o700, 'HANDOFF_STORAGE_FAILED')
+    );
     await bundle.handle.close();
-    const root = await openSecureDirectory(this.root, 0o700, 'HANDOFF_STORAGE_FAILED');
+    const root = await lock.run(() =>
+      openSecureDirectory(this.root, 0o700, 'HANDOFF_STORAGE_FAILED')
+    );
     try {
-      await root.handle.sync();
-      const after = await root.handle.stat();
+      await lock.run(() => root.handle.sync());
+      const after = await lock.run(() => root.handle.stat());
       validateDirectoryStats(after, 0o700, 'HANDOFF_STORAGE_FAILED');
       if (!sameInode(root.stats, after)) {
         throw new AttachmentHandoffError('HANDOFF_STORAGE_FAILED');
@@ -909,51 +1145,70 @@ export class AttachmentHandoffStore {
     } finally {
       await root.handle.close();
     }
-    await this.hooks.afterStoreRootSynced?.();
+    await lock.run(async () => this.hooks.afterStoreRootSynced?.());
     return { bundleStats: bundle.stats, payloadState: 'missing' };
   }
 
   private async publish(
     prepared: PreparedPartial,
     manifest: AttachmentHandoffManifest,
-    payload: Buffer
+    payload: Buffer,
+    lock: PosixFlock
   ): Promise<AttachmentHandoffManifest> {
     const bundlePath = join(this.root, manifest.handoffId);
     let payloadState = prepared.payloadState;
     let payloadTemporary = prepared.payloadTemporary;
     if (payloadState === 'missing') {
-      payloadTemporary = `.payload-${randomUUID()}.tmp`;
-      await writePrivateFile(join(bundlePath, payloadTemporary), payload);
+      payloadTemporary = temporaryFileName('payload', manifest.requestFingerprint);
+      await writePrivateFile(
+        join(bundlePath, payloadTemporary),
+        payload,
+        'payload',
+        this.hooks,
+        lock
+      );
       payloadState = 'temporary';
     }
-    if (payloadState === 'temporary') {
-      await this.assertDirectoryIdentity(
-        bundlePath,
-        prepared.bundleStats,
-        'HANDOFF_STORAGE_FAILED'
+    let manifestTemporary = prepared.manifestTemporary;
+    if (!manifestTemporary) {
+      manifestTemporary = temporaryFileName('manifest', manifest.requestFingerprint);
+      await writePrivateFile(
+        join(bundlePath, manifestTemporary),
+        `${JSON.stringify(manifest)}\n`,
+        'manifest',
+        this.hooks,
+        lock
       );
-      await rename(join(bundlePath, payloadTemporary!), join(bundlePath, 'payload.bin'));
-      await this.syncPrivateDirectory(bundlePath, prepared.bundleStats);
     }
-    const publishedPayload = await readSecureFile(
-      join(bundlePath, 'payload.bin'),
-      this.limits.maxAttachmentBytes,
-      'HANDOFF_STORAGE_FAILED'
+    if (payloadState === 'temporary') {
+      await lock.run(() =>
+        this.assertDirectoryIdentity(bundlePath, prepared.bundleStats, 'HANDOFF_STORAGE_FAILED')
+      );
+      await lock.run(() =>
+        rename(join(bundlePath, payloadTemporary!), join(bundlePath, 'payload.bin'))
+      );
+      await this.syncPrivateDirectory(bundlePath, prepared.bundleStats, lock);
+    }
+    const publishedPayload = await lock.run(() =>
+      readSecureFile(
+        join(bundlePath, 'payload.bin'),
+        this.limits.maxAttachmentBytes,
+        'HANDOFF_STORAGE_FAILED'
+      )
     );
     if (!publishedPayload.buffer.equals(payload)) {
       throw new AttachmentHandoffError('HANDOFF_STORAGE_FAILED');
     }
-    await this.hooks.afterPayloadPublished?.();
+    await lock.run(async () => this.hooks.afterPayloadPublished?.());
 
-    let manifestTemporary = prepared.manifestTemporary;
-    if (!manifestTemporary) {
-      manifestTemporary = `.manifest-${randomUUID()}.tmp`;
-      await writePrivateFile(join(bundlePath, manifestTemporary), `${JSON.stringify(manifest)}\n`);
-    }
-    await this.assertDirectoryIdentity(bundlePath, prepared.bundleStats, 'HANDOFF_STORAGE_FAILED');
-    await rename(join(bundlePath, manifestTemporary), join(bundlePath, 'manifest.json'));
-    await this.syncPrivateDirectory(bundlePath, prepared.bundleStats);
-    const committed = await this.inspectBundle(manifest.handoffId, true);
+    await lock.run(() =>
+      this.assertDirectoryIdentity(bundlePath, prepared.bundleStats, 'HANDOFF_STORAGE_FAILED')
+    );
+    await lock.run(() =>
+      rename(join(bundlePath, manifestTemporary), join(bundlePath, 'manifest.json'))
+    );
+    await this.syncPrivateDirectory(bundlePath, prepared.bundleStats, lock);
+    const committed = await lock.run(() => this.inspectBundle(manifest.handoffId, true));
     if (committed.kind !== 'ready') throw new AttachmentHandoffError('HANDOFF_STORAGE_FAILED');
     return committed.manifest;
   }
@@ -974,10 +1229,10 @@ export class AttachmentHandoffStore {
     return { entries, bytes };
   }
 
-  private async withStoreLock<T>(operation: () => Promise<T>): Promise<T> {
-    const lock = await acquirePosixFlock(join(this.root, STORE_LOCK_NAME));
+  private async withStoreLock<T>(operation: (lock: PosixFlock) => Promise<T>): Promise<T> {
+    const lock = await acquirePosixFlock(join(this.root, STORE_LOCK_NAME), this.lockOptions);
     try {
-      return await operation();
+      return await lock.run(() => operation(lock));
     } finally {
       await lock.release();
     }

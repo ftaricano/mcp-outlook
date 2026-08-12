@@ -216,6 +216,12 @@ requires POSIX ownership/mode checks, `O_NOFOLLOW`, directory fsync, and `/usr/b
 `fcntl.flock` (macOS and Linux); unsupported platforms fail closed. The three bounded quotas are
 per-attachment bytes, aggregate payload bytes, and bundle count.
 
+Payload and manifest temporary files are fingerprint-bound and never count as published state.
+After an interrupted write or fsync, a same-request retry validates and removes only the exact
+owner-only temporary residue before reconstructing it; a different request fingerprint still
+fails closed. The kernel-lock helper is monitored throughout the critical section, so unexpected
+helper exit stops publication before the next filesystem effect.
+
 Neither handoff tool returns Base64, attachment content, the internal request fingerprint, or an
 absolute/local path. The response contains only the opaque handoff ID, sanitized display metadata,
 status, real size, SHA-256, and creation time. `get_attachment_handoff` revalidates the bundle

@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import {
   chmod,
   link,
   lstat,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rename,
   rm,
@@ -15,12 +17,15 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   acquirePosixFlock,
   AttachmentHandoffError,
   AttachmentHandoffStore,
   type AttachmentHandoffStoreHooks,
+  type PosixFlockOptions,
 } from '../../src/plugin/attachmentHandoffStore.js';
 
 const roots: string[] = [];
@@ -33,7 +38,8 @@ async function makeStore(
     maxStoreBytes: number;
     maxStoreEntries: number;
   }> = {},
-  hooks: AttachmentHandoffStoreHooks = {}
+  hooks: AttachmentHandoffStoreHooks = {},
+  lockOptions: PosixFlockOptions = {}
 ) {
   const temporary = await mkdtemp(join(tmpdir(), 'outlook-handoff-store-'));
   roots.push(temporary);
@@ -48,7 +54,8 @@ async function makeStore(
         ...overrides,
       },
       root,
-      hooks
+      hooks,
+      lockOptions
     ),
   };
 }
@@ -187,6 +194,61 @@ describe('AttachmentHandoffStore', () => {
     expect(await store.get(recovered.handoffId)).toEqual(recovered);
   });
 
+  it.each([
+    ['payload', 'afterPartialWrite'],
+    ['payload', 'beforeSync'],
+    ['payload', 'afterSync'],
+    ['manifest', 'afterPartialWrite'],
+    ['manifest', 'beforeSync'],
+    ['manifest', 'afterSync'],
+  ] as const)(
+    'cleans a failed %s temporary file at %s and reconstructs on retry',
+    async (failedKind, failedStage) => {
+      let failOnce = true;
+      const { root, store } = await makeStore(
+        {},
+        {
+          temporaryFileFault: (kind, stage) => {
+            if (failOnce && kind === failedKind && stage === failedStage) {
+              failOnce = false;
+              throw new Error(`injected ${kind} ${stage} failure`);
+            }
+          },
+        }
+      );
+      const payload = Buffer.from('reconstruct after temporary failure');
+      const bundle = join(root, handoffId(KEY_ONE));
+
+      await expect(store.create(request(), payload)).rejects.toThrow('injected');
+      await expect(lstat(join(bundle, 'manifest.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(lstat(join(bundle, 'payload.bin'))).rejects.toMatchObject({ code: 'ENOENT' });
+
+      const recovered = await store.create(request(), payload);
+      expect(await store.get(recovered.handoffId)).toEqual(recovered);
+      expect((await readdir(bundle)).sort()).toEqual(['manifest.json', 'payload.bin']);
+    }
+  );
+
+  it('preserves idempotency mismatch when a fingerprint-bound temporary is incomplete', async () => {
+    let failOnce = true;
+    const { store } = await makeStore(
+      {},
+      {
+        temporaryFileFault: (kind, stage) => {
+          if (failOnce && kind === 'payload' && stage === 'afterPartialWrite') {
+            failOnce = false;
+            throw new Error('injected partial payload');
+          }
+        },
+      }
+    );
+
+    await expect(store.create(request(), Buffer.from('original'))).rejects.toThrow('injected');
+    await expect(
+      store.create(request(KEY_ONE, 'different-attachment'), Buffer.from('different'))
+    ).rejects.toMatchObject({ code: 'HANDOFF_IDEMPOTENCY_MISMATCH' });
+  });
+
   it('fsyncs the store root after creating a bundle entry before publication', async () => {
     let observedBundle = false;
     const { root, store } = await makeStore(
@@ -244,6 +306,27 @@ describe('AttachmentHandoffStore', () => {
     await expect(store.get(created.handoffId)).rejects.toMatchObject({
       code: 'HANDOFF_INVALID',
     });
+  });
+
+  it('never removes committed files while rejecting an unexpected temporary residue', async () => {
+    const { root, store } = await makeStore();
+    const payload = Buffer.from('committed payload');
+    const created = await store.create(request(), payload);
+    const bundle = join(root, created.handoffId);
+    await writeFile(
+      join(
+        bundle,
+        `.payload-${created.requestFingerprint}-${['123e4567', 'e89b', '42d3', 'a456', '426614174099'].join('-')}.tmp`
+      ),
+      'residue',
+      { mode: 0o600 }
+    );
+
+    await expect(store.create(request(), payload)).rejects.toMatchObject({
+      code: 'HANDOFF_INVALID',
+    });
+    expect(await readFile(join(bundle, 'payload.bin'))).toEqual(payload);
+    expect(JSON.parse(await readFile(join(bundle, 'manifest.json'), 'utf8'))).toEqual(created);
   });
 
   it('never overwrites an existing partial or hostile bundle', async () => {
@@ -356,6 +439,102 @@ describe('AttachmentHandoffStore', () => {
 
     const healthy = await acquirePosixFlock(lock, { attempts: 1 });
     await healthy.release();
+  });
+
+  it('bounds cleanup when a mocked child ignores SIGKILL and never emits exit', async () => {
+    class StubbornChild extends EventEmitter {
+      readonly stdin = new PassThrough();
+      readonly stdout = new PassThrough();
+      readonly stderr = new PassThrough();
+      readonly exitCode = null;
+      readonly signalCode = null;
+      killCalls = 0;
+      unrefCalls = 0;
+
+      constructor() {
+        super();
+        let request = '';
+        this.stdin.on('data', (chunk: Buffer) => {
+          request += chunk.toString('utf8');
+          if (request.includes('\n') && !request.includes('ACK\n')) {
+            this.stdout.write('LOCKED 1 1\n');
+          }
+          if (request.includes('ACK\n')) this.stdout.write('READY\n');
+        });
+      }
+
+      kill(): boolean {
+        this.killCalls += 1;
+        return true;
+      }
+
+      unref(): this {
+        this.unrefCalls += 1;
+        return this;
+      }
+    }
+    const child = new StubbornChild();
+    const started = Date.now();
+    const lock = await acquirePosixFlock('/private/opaque-lock', {
+      attempts: 1,
+      handshakeTimeoutMs: 100,
+      releaseTimeoutMs: 20,
+      spawnProcess: () => child as unknown as ChildProcessWithoutNullStreams,
+    });
+    await expect(lock.terminate()).rejects.toMatchObject({ code: 'HANDOFF_LOCK_FAILURE' });
+
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(child.killCalls).toBeGreaterThanOrEqual(2);
+    expect(child.unrefCalls).toBe(1);
+  });
+
+  it('aborts publication when the flock helper dies during the critical section', async () => {
+    const DYING_FLOCK_HELPER = String.raw`
+import fcntl, json, os, sys, time
+path = json.loads(sys.stdin.buffer.readline().decode("utf-8"))["path"]
+fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+opened = os.fstat(fd)
+sys.stdout.write("LOCKED %d %d\n" % (opened.st_dev, opened.st_ino))
+sys.stdout.flush()
+if sys.stdin.buffer.readline(5) != b"ACK\n":
+    raise SystemExit(64)
+sys.stdout.write("READY\n")
+sys.stdout.flush()
+time.sleep(0.08)
+raise SystemExit(70)
+`;
+    let criticalSectionEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      criticalSectionEntered = resolve;
+    });
+    const temporary = await mkdtemp(join(tmpdir(), 'outlook-handoff-lock-death-'));
+    roots.push(temporary);
+    const root = join(temporary, 'private', 'outlook-handoffs');
+    const limits = { maxAttachmentBytes: 1024, maxStoreBytes: 4096, maxStoreEntries: 10 };
+    const first = new AttachmentHandoffStore(
+      limits,
+      root,
+      {
+        afterStoreRootSynced: async () => {
+          criticalSectionEntered();
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        },
+      },
+      { helperCode: DYING_FLOCK_HELPER, attempts: 1 }
+    );
+    const second = new AttachmentHandoffStore(limits, root);
+
+    const failedPublication = first.create(request(), Buffer.from('first'));
+    await entered;
+    const winningPublication = second.create(request(), Buffer.from('second'));
+
+    await expect(failedPublication).rejects.toMatchObject({ code: 'HANDOFF_LOCK_FAILURE' });
+    const created = await winningPublication;
+    expect(await readFile(join(root, created.handoffId, 'payload.bin'))).toEqual(
+      Buffer.from('second')
+    );
+    expect(await second.get(created.handoffId)).toEqual(created);
   });
 
   it('rejects hostile root, bundle, file modes, symlinks, and hard links', async () => {
