@@ -23,7 +23,9 @@ manifest, uses owner-only permissions, is published with the manifest as the fin
 and is constrained by per-file, aggregate-byte, and entry quotas. The MCP response never includes
 attachment bytes, Base64, an absolute path, or the internal idempotency fingerprint. Enabling this
 local bridge does not enable mailbox writes and does not transmit the attachment to another
-service; any consumer is separately configured and authorized by the operator.
+service; any consumer is separately configured and authorized by the operator. The bridge fails
+closed on platforms without the required POSIX ownership, no-follow, fsync, and kernel-lock
+primitives; its metadata lookup does not create or modify the local store.
 
 Microsoft Graph credentials, mailbox configuration, and message data remain in the operator's
 deployment environment. The optional private search-memory file remains local and is never

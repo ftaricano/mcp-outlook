@@ -208,15 +208,20 @@ decoded-size cap. It publishes a private bundle under
 
 `manifest.json` is renamed into place last and acts as the commit marker. Replay validates the
 request fingerprint, manifest, permissions, payload size, and SHA-256; reuse of one idempotency
-key for a different attachment fails closed. A global private lock serializes quota checks and
-publication, and an old lock is recovered only when its recorded owner process no longer exists.
-The three bounded quotas are per-attachment bytes, aggregate payload bytes, and bundle count.
+key for a different attachment fails closed. UUIDv4 keys are canonicalized to lowercase before
+deriving the opaque ID and fingerprint. A persistent owner-only lock file plus a kernel advisory
+lock serializes replay lookup, quota checks, and publication. The lock file is never deleted;
+process exit releases the kernel lock, avoiding stale-lock deletion races. This optional feature
+requires POSIX ownership/mode checks, `O_NOFOLLOW`, directory fsync, and `/usr/bin/python3` with
+`fcntl.flock` (macOS and Linux); unsupported platforms fail closed. The three bounded quotas are
+per-attachment bytes, aggregate payload bytes, and bundle count.
 
 Neither handoff tool returns Base64, attachment content, the internal request fingerprint, or an
 absolute/local path. The response contains only the opaque handoff ID, sanitized display metadata,
 status, real size, SHA-256, and creation time. `get_attachment_handoff` revalidates the bundle
-before returning that metadata. The consumer must independently constrain where it imports the
-payload; this producer grants no arbitrary filesystem path.
+through read-only file descriptors before returning that metadata; a missing store is reported
+without creating or changing local directories. The consumer must independently constrain where
+it imports the payload; this producer grants no arbitrary filesystem path.
 
 ### Attachment content: `get_attachment_content`
 
