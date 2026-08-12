@@ -2,11 +2,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createOutlookPluginServer } from '../../src/plugin/createPluginServer.js';
+import { AttachmentHandoffError } from '../../src/plugin/attachmentHandoffStore.js';
 import { AttachmentContentError } from '../../src/plugin/MultiMailboxService.js';
 import type { PluginConfig } from '../../src/plugin/config.js';
 import type { MultiMailboxService } from '../../src/plugin/MultiMailboxService.js';
 
 const openClients: Client[] = [];
+const TEST_IDEMPOTENCY_KEY = ['123e4567', 'e89b', '42d3', 'a456', '426614174000'].join('-');
 
 function pluginConfig(overrides: Partial<PluginConfig> = {}): PluginConfig {
   const mailbox = { alias: 'finance', address: 'finance@example.com' } as const;
@@ -18,12 +20,16 @@ function pluginConfig(overrides: Partial<PluginConfig> = {}): PluginConfig {
     maxResultsPerMailbox: 20,
     maxBodyChars: 12,
     allowWrites: false,
+    allowLocalHandoffs: false,
     maxAttachmentInputBytes: 15 * 1024 * 1024,
     maxExtractedChars: 200_000,
     maxRawAttachmentBytes: 256 * 1024,
     maxConcurrentExtractions: 2,
     maxBatchSize: 25,
     maxDownloadBatchBytes: 50 * 1024 * 1024,
+    maxHandoffAttachmentBytes: 25 * 1024 * 1024,
+    maxHandoffStoreBytes: 500 * 1024 * 1024,
+    maxHandoffStoreEntries: 1_000,
     maxQueriesPerBatch: 10,
     maxBatchResultMessages: 500,
     maxBatchResultBytes: 2 * 1024 * 1024,
@@ -141,6 +147,34 @@ function fakeService(overrides: Partial<MultiMailboxService> = {}): MultiMailbox
       text: 'FATURA 12345',
       truncated: false,
       extractor: 'pdf',
+    }),
+    createAttachmentHandoff: async () => ({
+      version: 1 as const,
+      handoffId: `oh_${'A'.repeat(43)}`,
+      requestFingerprint: 'b'.repeat(64),
+      mailbox: 'finance',
+      messageId: 'm1',
+      attachmentId: 'a1',
+      filename: 'fatura.pdf',
+      contentType: 'application/pdf',
+      size: 12,
+      sha256: 'a'.repeat(64),
+      createdAt: '2026-08-11T12:00:00.000Z',
+      status: 'ready' as const,
+    }),
+    getAttachmentHandoff: async () => ({
+      version: 1 as const,
+      handoffId: `oh_${'A'.repeat(43)}`,
+      requestFingerprint: 'b'.repeat(64),
+      mailbox: 'finance',
+      messageId: 'm1',
+      attachmentId: 'a1',
+      filename: 'fatura.pdf',
+      contentType: 'application/pdf',
+      size: 12,
+      sha256: 'a'.repeat(64),
+      createdAt: '2026-08-11T12:00:00.000Z',
+      status: 'ready' as const,
     }),
     searchMailboxesBatch: async () => ({
       results: [
@@ -281,6 +315,102 @@ describe('createOutlookPluginServer', () => {
       ]) {
         expect(names).toContain(name);
       }
+    });
+
+    it('composes the handoff and mailbox-write gates independently', async () => {
+      const handoffsOnly = await connect(
+        createServer({ allowWrites: false, allowLocalHandoffs: true })
+      );
+      const handoffTools = (await handoffsOnly.client.listTools()).tools;
+      expect(handoffTools).toHaveLength(12);
+      expect(handoffTools.map((tool) => tool.name)).toEqual(
+        expect.arrayContaining(['create_attachment_handoff', 'get_attachment_handoff'])
+      );
+      expect(handoffTools.map((tool) => tool.name)).not.toContain('move_messages');
+
+      const both = await connect(createServer({ allowWrites: true, allowLocalHandoffs: true }));
+      const bothTools = (await both.client.listTools()).tools;
+      expect(bothTools).toHaveLength(17);
+      expect(bothTools.map((tool) => tool.name)).toEqual(
+        expect.arrayContaining([
+          'create_attachment_handoff',
+          'get_attachment_handoff',
+          'move_messages',
+        ])
+      );
+
+      const create = bothTools.find((tool) => tool.name === 'create_attachment_handoff');
+      const get = bothTools.find((tool) => tool.name === 'get_attachment_handoff');
+      expect(create?.annotations).toMatchObject({
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      });
+      expect(get?.annotations).toMatchObject({
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      });
+    });
+
+    it('returns handoff integrity metadata without content, paths, or internal fingerprints', async () => {
+      const { client } = await connect(createServer({ allowLocalHandoffs: true }));
+      const created = await client.callTool({
+        name: 'create_attachment_handoff',
+        arguments: {
+          mailbox: 'finance',
+          messageId: 'm1',
+          attachmentId: 'a1',
+          idempotencyKey: TEST_IDEMPOTENCY_KEY,
+        },
+      });
+      expect(created.isError).not.toBe(true);
+      expect(created.structuredContent).toMatchObject({
+        handoffId: `oh_${'A'.repeat(43)}`,
+        filename: 'fatura.pdf',
+        size: 12,
+        sha256: 'a'.repeat(64),
+        status: 'ready',
+        dataTrust: 'UNTRUSTED_EMAIL_DATA_V1',
+      });
+      const serialized = JSON.stringify(created);
+      expect(serialized).not.toContain('requestFingerprint');
+      expect(serialized).not.toContain('base64');
+      expect(serialized).not.toContain('payload.bin');
+      expect(serialized).not.toMatch(/\/Users\//);
+
+      const fetched = await client.callTool({
+        name: 'get_attachment_handoff',
+        arguments: { handoffId: `oh_${'A'.repeat(43)}` },
+      });
+      expect(fetched.structuredContent).toEqual(created.structuredContent);
+    });
+
+    it('redacts handoff failures without leaking paths, content, or raw errors', async () => {
+      const { client } = await connect(
+        createOutlookPluginServer(
+          fakeService({
+            createAttachmentHandoff: async () => {
+              throw new AttachmentHandoffError('HANDOFF_QUOTA_EXCEEDED');
+            },
+          }),
+          pluginConfig({ allowLocalHandoffs: true })
+        )
+      );
+      const result = await client.callTool({
+        name: 'create_attachment_handoff',
+        arguments: {
+          mailbox: 'finance',
+          messageId: 'm1',
+          attachmentId: 'a1',
+          idempotencyKey: TEST_IDEMPOTENCY_KEY,
+        },
+      });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toContain('HANDOFF_QUOTA_EXCEEDED');
+      expect(JSON.stringify(result)).not.toMatch(/base64|payload\.bin|\/Users\//i);
     });
 
     it('marks state-replacing writes destructive and additive writes non-destructive', async () => {

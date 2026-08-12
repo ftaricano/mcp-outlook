@@ -7,7 +7,8 @@ Guidance for agents working **on this repo**. End-user docs (tool catalog, setup
 MCP server exposing Microsoft Graph email operations as 40 tools over stdio, plus a standalone
 `outlook` CLI wrapper. A separate multi-mailbox plugin supports allowlisted search, reading, and
 bounded attachment access over stdio and loopback Streamable HTTP. It exposes ten read-only tools
-by default and five additional non-send/non-delete tools only when writes are explicitly enabled.
+by default, two local handoff tools only when that separate gate is enabled, and five additional
+non-send/non-delete tools only when mailbox writes are explicitly enabled.
 Auth is Azure AD client-credentials (no user login). The original server remains single-mailbox
 per process; plugin services pin mailbox identity per instance.
 
@@ -15,14 +16,17 @@ per process; plugin services pin mailbox identity per instance.
 
 These are enforced by CI or by design. Don't regress them.
 
-1. **Two fixed catalogs.** The original server exposes exactly 40 tools and
+1. **Two fixed catalog families.** The original server exposes exactly 40 tools and
    `scripts/smoke-test.js` enforces that count. The plugin exposes exactly ten physically
-   read-only tools by default and five additional write tools
+   read-only tools by default, two independently gated local handoff tools, and five additional
+   mailbox-write tools
    (move/copy/mark/download/create_draft) when writes are enabled — via the plugin.json
    `allowWrites` field, or via env `PLUGIN_ALLOW_WRITES=true`. The env is the authority:
    `PLUGIN_ALLOW_WRITES=false` forces writes off regardless of what the file says; only when
    the env var is absent or empty does the file's `allowWrites` field decide (default `false`).
-   `scripts/plugin-smoke-test.js` enforces both catalogs. Sending email and every delete
+   Local handoffs are absent unless `PLUGIN_ALLOW_LOCAL_HANDOFFS=true`; there is no config-file
+   fallback. `scripts/plugin-smoke-test.js` enforces exactly 10 default, 12 handoff-only, 15
+   mailbox-write-only, and 17 tools with both gates. Sending email and every delete
    operation are impossible by construction — no dispatch branch exists for them in the plugin.
 2. **Every tool has a zod schema.** `src/schemas/toolSchemas.ts` is the gate — `HandlerRegistry.handleTool` runs `validateToolInput` before dispatching. No handler method runs on unvalidated args.
 3. **Filesystem access goes through `pathGuard`.** Handlers never call `fs.readFile` / `fs.writeFile` on caller-supplied paths directly; `src/services/fileManager.ts` and `src/services/emailService.ts` already route through `pathGuard.resolveSafe()`. Any new file-touching code must go through the same door.
@@ -44,6 +48,12 @@ These are enforced by CI or by design. Don't regress them.
 13. **Plugin downloads have aggregate budgets.** `download_attachments` applies both
     `maxBatchSize` and `maxDownloadBatchBytes` whether `attachmentIds` is supplied or omitted.
     No attachment may start writing when its real decoded size exceeds the remaining byte budget.
+14. **Local handoffs are opaque, private, and fail closed.** They use only the fixed
+    `~/.jarvishub-mcp/outlook-handoffs` root, never a caller-supplied path. A `0700` bundle contains
+    only `0600` `payload.bin` plus `manifest.json`; the manifest is the final commit marker. Replay
+    revalidates request fingerprint, exact manifest shape, modes, size, and SHA-256. The MCP never
+    returns bytes, Base64, internal paths, or the request fingerprint. Quotas bound one payload,
+    aggregate payload bytes, and committed bundle count.
 
 ## Architecture at a glance
 

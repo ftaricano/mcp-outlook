@@ -11,7 +11,7 @@ Works with any MCP-compatible client (Claude Desktop, Cursor, custom agents, etc
 
 | Metric | Value |
 |---|---|
-| Tools | 40 operational + 10 read-only plugin tools (15 with `PLUGIN_ALLOW_WRITES=true`) |
+| Tools | 40 operational + 10 plugin tools by default (12 with local handoffs, 15 with mailbox writes, 17 with both) |
 | Tests | Unit, protocol, CLI, plugin, and HTTP suites |
 | Node | ≥ 20 |
 | MCP SDK | ^1.29.0 |
@@ -58,7 +58,8 @@ Four required values feed both the server and the CLI:
 | `OUTLOOK_JOURNAL` | no | Set to `0` to disable sanitized CLI run telemetry globally. Individual calls can use `--no-journal`. |
 | `OUTLOOK_PLUGIN_CONFIG` | no | Private plugin JSON path. Defaults to `~/.config/mcp-outlook/plugin.json`. |
 | `PLUGIN_SEARCH_MEMORY_PATH` | no | Private YAML path overriding `searchMemoryPath` in the plugin JSON. |
-| `PLUGIN_ALLOW_WRITES` | no | `false` forces the default 10-tool read-only catalog; `true` enables all 15. Unset/empty delegates to private JSON; any other value fails startup. |
+| `PLUGIN_ALLOW_WRITES` | no | `false` forces mailbox writes off; `true` enables the 5 mailbox-write tools. Unset/empty delegates to private JSON; any other value fails startup. |
+| `PLUGIN_ALLOW_LOCAL_HANDOFFS` | no | Explicit opt-in for the 2 local attachment-handoff tools. Defaults to `false`; any unrecognized value fails startup. |
 
 Resolution order (first hit wins): `process.env` → `<repo>/.env` (if present) → **macOS Keychain** (`security find-generic-password -s "<prefix>::<VARIABLE>" -a "$USER"`). On macOS, the default prefix is `mcp-outlook`; set `OUTLOOK_KEYCHAIN_PREFIX` if you want a different namespace.
 
@@ -146,7 +147,8 @@ Every server-backed CLI call appends a sanitized event to `runs.jsonl` unless di
 Version 2.3 adds a separate plugin surface for conversational search, attachment reading, and
 (opt-in) light mailbox operations across an explicitly allowed set of mailboxes. It does not
 replace the CLI or change the original 40-tool MCP server. **Ten read tools are registered
-always; five additional write tools are registered only when `PLUGIN_ALLOW_WRITES=true`.**
+always; two local handoff tools are registered only when `PLUGIN_ALLOW_LOCAL_HANDOFFS=true`, and
+five mailbox-write tools are registered independently when `PLUGIN_ALLOW_WRITES=true`.**
 `send_email`, `reply_to_email`, and every delete operation are impossible by construction — no
 dispatch branch exists for them in the plugin, regardless of config.
 
@@ -167,6 +169,8 @@ forces writes off, an unset or empty value delegates to `allowWrites` in the pri
 | `list_attachments` | read | Attachment metadata (name, type, size) for one message |
 | `get_attachment_content` | read | Attachment text/raw content, or ZIP listing/entry — see below |
 | `search_mailboxes_batch` | read | N labeled searches in one call — see below |
+| `create_attachment_handoff` | local write | Atomically materialize one attachment in the private local handoff store |
+| `get_attachment_handoff` | local read | Validate an opaque handoff and return integrity metadata only |
 | `download_attachments` | write (disk) | Save a count- and byte-bounded batch to `DOWNLOAD_DIR` |
 | `move_messages` | write (mailbox) | Move `messageIds[]` to another folder |
 | `copy_messages` | write (mailbox) | Copy `messageIds[]` to another folder |
@@ -184,6 +188,35 @@ Move and mark replace existing mailbox state and therefore carry `destructiveHin
 copy, download, and draft creation are additive and carry `destructiveHint: false`. This MCP hint
 describes whether a call can overwrite state, independently of the stronger invariant that no
 plugin tool can delete or send.
+
+### Local attachment handoffs
+
+`PLUGIN_ALLOW_LOCAL_HANDOFFS=true` adds an intentionally narrow bridge for another local,
+separately authorized service. It is independent of `PLUGIN_ALLOW_WRITES`: enabling handoffs does
+not enable draft, move, copy, mark, or download tools and still requires only Graph `Mail.Read`.
+
+`create_attachment_handoff` requires an opaque mailbox alias, message/attachment IDs, and a UUIDv4
+idempotency key. The server requires a complete, non-truncated attachment listing, enforces the
+configured declared-size and Base64-character bounds before decoding, then enforces the real
+decoded-size cap. It publishes a private bundle under
+`~/.jarvishub-mcp/outlook-handoffs/<opaque-id>/` with directory mode `0700` and file mode `0600`:
+
+- `payload.bin` — the bounded attachment bytes;
+- `manifest.json` — version, opaque ID, request fingerprint, mailbox/message/attachment
+  provenance, sanitized filename/content type, real byte size, SHA-256, creation time, and
+  `status: "ready"`.
+
+`manifest.json` is renamed into place last and acts as the commit marker. Replay validates the
+request fingerprint, manifest, permissions, payload size, and SHA-256; reuse of one idempotency
+key for a different attachment fails closed. A global private lock serializes quota checks and
+publication, and an old lock is recovered only when its recorded owner process no longer exists.
+The three bounded quotas are per-attachment bytes, aggregate payload bytes, and bundle count.
+
+Neither handoff tool returns Base64, attachment content, the internal request fingerprint, or an
+absolute/local path. The response contains only the opaque handoff ID, sanitized display metadata,
+status, real size, SHA-256, and creation time. `get_attachment_handoff` revalidates the bundle
+before returning that metadata. The consumer must independently constrain where it imports the
+payload; this producer grants no arbitrary filesystem path.
 
 ### Attachment content: `get_attachment_content`
 
@@ -335,6 +368,9 @@ Create `~/.config/mcp-outlook/plugin.json` with mode `0600`:
   "maxConcurrentExtractions": 2,
   "maxBatchSize": 25,
   "maxDownloadBatchBytes": 52428800,
+  "maxHandoffAttachmentBytes": 26214400,
+  "maxHandoffStoreBytes": 524288000,
+  "maxHandoffStoreEntries": 1000,
   "maxQueriesPerBatch": 10,
   "maxBatchResultMessages": 500,
   "maxBatchResultBytes": 2097152,
@@ -356,6 +392,9 @@ Create `~/.config/mcp-outlook/plugin.json` with mode `0600`:
 | `maxConcurrentExtractions` | 2 | Max extraction workers running at once (1-8); excess calls queue, then `EXTRACTION_BUSY` |
 | `maxBatchSize` | 25 | Cap on `messageIds[]` / `attachmentIds[]` in move/copy/mark/download |
 | `maxDownloadBatchBytes` | 50 MB | Aggregate cap for one `download_attachments` call, checked before and during writes |
+| `maxHandoffAttachmentBytes` | 25 MB | Declared and real decoded byte cap for one local handoff |
+| `maxHandoffStoreBytes` | 500 MB | Aggregate payload-byte cap across committed handoff bundles |
+| `maxHandoffStoreEntries` | 1,000 | Maximum number of committed handoff bundles |
 | `maxQueriesPerBatch` | 10 | Cap on `queries[]` in `search_mailboxes_batch` |
 | `maxBatchResultMessages` | 500 | Aggregate message cap across all batch labels and mailboxes |
 | `maxBatchResultBytes` | 2 MB | Aggregate UTF-8 byte cap for serialized batch entries |
@@ -374,6 +413,10 @@ var is the authority: `PLUGIN_ALLOW_WRITES=false` forces writes off even if the 
 `allowWrites: true`; leaving the env var unset or empty falls back to the file's `allowWrites`
 value (default `false`).
 
+Local handoffs have no JSON enable switch. Set `PLUGIN_ALLOW_LOCAL_HANDOFFS=true` explicitly in
+the plugin process to register them; false/unset keeps them absent, and any unrecognized spelling
+fails startup. Their quota fields remain bounded server-side configuration.
+
 ```bash
 chmod 600 ~/.config/mcp-outlook/plugin.json
 npm run build
@@ -389,8 +432,8 @@ This repository is a valid local Codex plugin:
 
 - `.codex-plugin/plugin.json` provides metadata;
 - `.mcp.json` launches `dist/plugin/stdio.js` through `${CODEX_PLUGIN_ROOT}`;
-- the plugin exposes the 10 read tools above by default, or all 15 with
-  `PLUGIN_ALLOW_WRITES=true` set in the plugin process environment.
+- the plugin exposes 10 tools by default, 12 with `PLUGIN_ALLOW_LOCAL_HANDOFFS=true`, 15 with
+  `PLUGIN_ALLOW_WRITES=true`, or 17 when both independent gates are enabled.
 
 Build the repository, then install the repository directory as a local plugin from the Codex
 plugin manager. The plugin process uses the same generic credential resolution as the existing
@@ -562,7 +605,7 @@ Runtime flow:
 | `npm test` | Vitest unit tests |
 | `npm run test:coverage` | Vitest with coverage thresholds |
 | `npm run smoke` | Protocol smoke — verify `tools/list` returns 40 entries |
-| `npm run smoke:plugin` | Spawn `dist/plugin/stdio.js`; verify the 10/15 catalogs and a safe read call |
+| `npm run smoke:plugin` | Spawn `dist/plugin/stdio.js`; verify the 10/12/15/17 catalogs and a safe read call |
 | `npm run smoke:http` | Loopback Streamable HTTP plugin smoke |
 | `npm run audit:prod` | Audit runtime deps only |
 

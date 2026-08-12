@@ -93,6 +93,28 @@ export const getAttachmentContentSchema = z
   })
   .strict();
 
+export const createAttachmentHandoffSchema = z
+  .object({
+    mailbox: mailboxAliasSchema,
+    messageId: messageIdSchema,
+    attachmentId: z.string().min(1).max(512),
+    idempotencyKey: z
+      .string()
+      .regex(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+        'idempotencyKey must be a UUIDv4'
+      ),
+  })
+  .strict();
+
+export const getAttachmentHandoffSchema = z
+  .object({
+    handoffId: z
+      .string()
+      .regex(/^oh_[A-Za-z0-9_-]{43}$/, 'handoffId is not a valid opaque handoff identifier'),
+  })
+  .strict();
+
 const batchQuerySchema = z
   .object({
     label: z.string().min(1).max(120),
@@ -165,6 +187,8 @@ export type ListFoldersInput = z.output<typeof listFoldersSchema>;
 export type GetFolderStatsInput = z.output<typeof getFolderStatsSchema>;
 export type ListAttachmentsInput = z.output<typeof listAttachmentsSchema>;
 export type GetAttachmentContentInput = z.output<typeof getAttachmentContentSchema>;
+export type CreateAttachmentHandoffInput = z.output<typeof createAttachmentHandoffSchema>;
+export type GetAttachmentHandoffInput = z.output<typeof getAttachmentHandoffSchema>;
 export type SearchMailboxesBatchInput = z.output<typeof searchMailboxesBatchSchema>;
 export type MoveMessagesInput = z.output<typeof moveMessagesSchema>;
 export type MarkMessagesInput = z.output<typeof markMessagesSchema>;

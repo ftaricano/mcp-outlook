@@ -34,10 +34,12 @@ describe('plugin packaging', () => {
         logo: './assets/icon.svg',
       },
     });
-    // The manifest must not undersell the mutation surface: ten read tools by
-    // default plus five write tools gated by allowWrites (JAR-782 fix 2).
+    // The manifest must not undersell either independently gated local or
+    // mailbox mutation surface.
     expect(plugin.interface.longDescription).toMatch(/ten bounded, read-only/i);
-    expect(plugin.interface.longDescription).toMatch(/five additional write tools/i);
+    expect(plugin.interface.longDescription).toMatch(/two local attachment-handoff tools/i);
+    expect(plugin.interface.longDescription).toMatch(/PLUGIN_ALLOW_LOCAL_HANDOFFS/i);
+    expect(plugin.interface.longDescription).toMatch(/five additional mailbox-write tools/i);
     expect(plugin).not.toHaveProperty('apps');
     expect(mcp.mcpServers.outlook_multi_mailbox.args).toEqual([
       '${CODEX_PLUGIN_ROOT}/dist/plugin/stdio.js',

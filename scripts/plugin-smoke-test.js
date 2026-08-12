@@ -26,6 +26,8 @@ const WRITE_TOOLS = [
   'mark_messages',
   'create_draft',
 ];
+const HANDOFF_TOOLS = ['create_attachment_handoff', 'get_attachment_handoff'];
+const READ_ONLY_TOOLS = [...READ_TOOLS, 'get_attachment_handoff'];
 const DESTRUCTIVE_TOOLS = ['move_messages', 'mark_messages'];
 const FORBIDDEN_TOOLS = ['send_email', 'reply_to_email', 'delete_email', 'batch_delete_emails'];
 
@@ -43,7 +45,7 @@ writeFileSync(
 );
 chmodSync(configPath, 0o600);
 
-async function checkScenario(allowWrites, expected) {
+async function checkScenario(allowWrites, allowLocalHandoffs, expected) {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [serverEntry],
@@ -59,6 +61,7 @@ async function checkScenario(allowWrites, expected) {
       TARGET_USER_EMAIL: 'test@example.com',
       OUTLOOK_PLUGIN_CONFIG: configPath,
       PLUGIN_ALLOW_WRITES: String(allowWrites),
+      PLUGIN_ALLOW_LOCAL_HANDOFFS: String(allowLocalHandoffs),
       DOWNLOAD_DIR: downloadRoot,
     },
   });
@@ -70,17 +73,20 @@ async function checkScenario(allowWrites, expected) {
     const wanted = [...expected].sort();
     if (JSON.stringify(actual) !== JSON.stringify(wanted)) {
       throw new Error(
-        `allowWrites=${allowWrites}: unexpected plugin tools (${actual.length}): ${actual.join(', ')}`
+        `allowWrites=${allowWrites}, allowLocalHandoffs=${allowLocalHandoffs}: unexpected plugin tools (${actual.length}): ${actual.join(', ')}`
       );
     }
     for (const tool of tools) {
-      const shouldBeReadOnly = READ_TOOLS.includes(tool.name);
+      const shouldBeReadOnly = READ_ONLY_TOOLS.includes(tool.name);
       if (tool.annotations?.readOnlyHint !== shouldBeReadOnly) {
         throw new Error(`${tool.name}: incorrect readOnlyHint`);
       }
       const shouldBeDestructive = DESTRUCTIVE_TOOLS.includes(tool.name);
       if (tool.annotations?.destructiveHint !== shouldBeDestructive) {
         throw new Error(`${tool.name}: incorrect destructiveHint`);
+      }
+      if (tool.name === 'create_attachment_handoff' && tool.annotations?.idempotentHint !== true) {
+        throw new Error(`${tool.name}: incorrect idempotentHint`);
       }
     }
     if (FORBIDDEN_TOOLS.some((name) => actual.includes(name))) {
@@ -90,15 +96,19 @@ async function checkScenario(allowWrites, expected) {
     if (JSON.stringify(result.structuredContent) !== JSON.stringify({ mailboxes: ['test'] })) {
       throw new Error('Plugin safe read call returned unexpected output');
     }
-    process.stdout.write(`Plugin smoke OK (allowWrites=${allowWrites}): ${actual.length} tools\n`);
+    process.stdout.write(
+      `Plugin smoke OK (allowWrites=${allowWrites}, allowLocalHandoffs=${allowLocalHandoffs}): ${actual.length} tools\n`
+    );
   } finally {
     await client.close();
   }
 }
 
 try {
-  await checkScenario(false, READ_TOOLS);
-  await checkScenario(true, [...READ_TOOLS, ...WRITE_TOOLS]);
+  await checkScenario(false, false, READ_TOOLS);
+  await checkScenario(false, true, [...READ_TOOLS, ...HANDOFF_TOOLS]);
+  await checkScenario(true, false, [...READ_TOOLS, ...WRITE_TOOLS]);
+  await checkScenario(true, true, [...READ_TOOLS, ...WRITE_TOOLS, ...HANDOFF_TOOLS]);
 } finally {
   rmSync(temporaryRoot, { recursive: true, force: true });
 }
