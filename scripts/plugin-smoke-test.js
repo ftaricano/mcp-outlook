@@ -26,6 +26,7 @@ const WRITE_TOOLS = [
   'mark_messages',
   'create_draft',
 ];
+const DESTRUCTIVE_TOOLS = ['move_messages', 'mark_messages'];
 const FORBIDDEN_TOOLS = ['send_email', 'reply_to_email', 'delete_email', 'batch_delete_emails'];
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -77,8 +78,9 @@ async function checkScenario(allowWrites, expected) {
       if (tool.annotations?.readOnlyHint !== shouldBeReadOnly) {
         throw new Error(`${tool.name}: incorrect readOnlyHint`);
       }
-      if (tool.annotations?.destructiveHint !== false) {
-        throw new Error(`${tool.name}: destructiveHint must be false`);
+      const shouldBeDestructive = DESTRUCTIVE_TOOLS.includes(tool.name);
+      if (tool.annotations?.destructiveHint !== shouldBeDestructive) {
+        throw new Error(`${tool.name}: incorrect destructiveHint`);
       }
     }
     if (FORBIDDEN_TOOLS.some((name) => actual.includes(name))) {

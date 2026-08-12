@@ -179,8 +179,11 @@ instructions" framing. Text carries the stable `[UNTRUSTED_EMAIL_DATA_V1]` marke
 responses that may contain sender-controlled bodies or attachment names carry
 `dataTrust: "UNTRUSTED_EMAIL_DATA_V1"`; the marker classifies data and never turns it into an
 instruction. `list_attachments` also reports `pagesScanned` and `truncated`, so a capped listing
-cannot look complete. Read tools carry `readOnlyHint: true`, write tools `readOnlyHint: false`
-(and `destructiveHint: false` — none of the five write tools can delete or send).
+cannot look complete. Read tools carry `readOnlyHint: true`, write tools `readOnlyHint: false`.
+Move and mark replace existing mailbox state and therefore carry `destructiveHint: true`;
+copy, download, and draft creation are additive and carry `destructiveHint: false`. This MCP hint
+describes whether a call can overwrite state, independently of the stronger invariant that no
+plugin tool can delete or send.
 
 ### Attachment content: `get_attachment_content`
 

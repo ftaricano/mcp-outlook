@@ -31,11 +31,16 @@ const READ_ONLY_ANNOTATIONS = {
   openWorldHint: false,
 } as const;
 
-const WRITE_ANNOTATIONS = {
+const ADDITIVE_WRITE_ANNOTATIONS = {
   readOnlyHint: false,
   destructiveHint: false,
   idempotentHint: false,
   openWorldHint: false,
+} as const;
+
+const MUTATING_WRITE_ANNOTATIONS = {
+  ...ADDITIVE_WRITE_ANNOTATIONS,
+  destructiveHint: true,
 } as const;
 
 const UNTRUSTED_DATA_MARKER = 'UNTRUSTED_EMAIL_DATA_V1';
@@ -167,6 +172,13 @@ function attachmentProjection(attachment: AttachmentRecord) {
     size: attachment.size ?? undefined,
     isInline: attachment.isInline ?? undefined,
   };
+}
+
+function batchWriteSummary<T extends { results: readonly { success: boolean }[] }>(result: T) {
+  const successfulItems = result.results.filter((item) => item.success).length;
+  const failedItems = result.results.length - successfulItems;
+  const status = failedItems === 0 ? 'complete' : successfulItems === 0 ? 'failed' : 'partial';
+  return { ...result, status, successfulItems, failedItems };
 }
 
 function toolError(message: string) {
@@ -563,16 +575,18 @@ export function createOutlookPluginServer(
         title: 'Move Outlook messages',
         description: 'Move one or more messages in an allowed mailbox to another folder.',
         inputSchema: moveMessagesSchema,
-        annotations: WRITE_ANNOTATIONS,
+        annotations: MUTATING_WRITE_ANNOTATIONS,
       },
       async ({ mailbox, messageIds, destinationFolderId }) => {
         try {
-          const result = await service.moveMessages(mailbox, messageIds, destinationFolderId);
+          const result = batchWriteSummary(
+            await service.moveMessages(mailbox, messageIds, destinationFolderId)
+          );
           return {
             content: [
               {
                 type: 'text',
-                text: `Moved ${result.results.length} message(s) in mailbox ${mailbox}.`,
+                text: `Move in mailbox ${mailbox}: ${result.successfulItems} succeeded, ${result.failedItems} failed.`,
               },
             ],
             structuredContent: result,
@@ -589,16 +603,18 @@ export function createOutlookPluginServer(
         title: 'Copy Outlook messages',
         description: 'Copy one or more messages in an allowed mailbox to another folder.',
         inputSchema: copyMessagesSchema,
-        annotations: WRITE_ANNOTATIONS,
+        annotations: ADDITIVE_WRITE_ANNOTATIONS,
       },
       async ({ mailbox, messageIds, destinationFolderId }) => {
         try {
-          const result = await service.copyMessages(mailbox, messageIds, destinationFolderId);
+          const result = batchWriteSummary(
+            await service.copyMessages(mailbox, messageIds, destinationFolderId)
+          );
           return {
             content: [
               {
                 type: 'text',
-                text: `Copied ${result.results.length} message(s) in mailbox ${mailbox}.`,
+                text: `Copy in mailbox ${mailbox}: ${result.successfulItems} succeeded, ${result.failedItems} failed.`,
               },
             ],
             structuredContent: result,
@@ -615,16 +631,16 @@ export function createOutlookPluginServer(
         title: 'Mark Outlook messages read or unread',
         description: 'Mark one or more messages in an allowed mailbox as read or unread.',
         inputSchema: markMessagesSchema,
-        annotations: WRITE_ANNOTATIONS,
+        annotations: MUTATING_WRITE_ANNOTATIONS,
       },
       async ({ mailbox, messageIds, read }) => {
         try {
-          const result = await service.markMessages(mailbox, messageIds, read);
+          const result = batchWriteSummary(await service.markMessages(mailbox, messageIds, read));
           return {
             content: [
               {
                 type: 'text',
-                text: `Marked ${result.results.length} message(s) as ${read ? 'read' : 'unread'}.`,
+                text: `Mark as ${read ? 'read' : 'unread'}: ${result.successfulItems} succeeded, ${result.failedItems} failed.`,
               },
             ],
             structuredContent: result,
@@ -642,7 +658,7 @@ export function createOutlookPluginServer(
         description:
           'Download one or more attachments from a message to the server download directory.',
         inputSchema: downloadAttachmentsSchema,
-        annotations: WRITE_ANNOTATIONS,
+        annotations: ADDITIVE_WRITE_ANNOTATIONS,
       },
       async ({ mailbox, messageId, attachmentIds }) => {
         try {
@@ -670,7 +686,7 @@ export function createOutlookPluginServer(
         title: 'Create an Outlook draft',
         description: 'Create a draft message in an allowed mailbox. Never sends the message.',
         inputSchema: createDraftSchema,
-        annotations: WRITE_ANNOTATIONS,
+        annotations: ADDITIVE_WRITE_ANNOTATIONS,
       },
       async ({ mailbox, to, cc, bcc, subject, body, attachmentPaths }) => {
         try {

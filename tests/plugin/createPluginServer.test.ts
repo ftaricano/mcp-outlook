@@ -283,13 +283,17 @@ describe('createOutlookPluginServer', () => {
       }
     });
 
-    it('marks read tools readOnlyHint=true and write tools readOnlyHint=false', async () => {
+    it('marks state-replacing writes destructive and additive writes non-destructive', async () => {
       const { client } = await connect(createServer({ allowWrites: true }));
       const { tools } = await client.listTools();
       const byName = new Map(tools.map((tool) => [tool.name, tool]));
       expect(byName.get('search_mailbox')?.annotations?.readOnlyHint).toBe(true);
       expect(byName.get('move_messages')?.annotations?.readOnlyHint).toBe(false);
-      expect(byName.get('move_messages')?.annotations?.destructiveHint).toBe(false);
+      expect(byName.get('move_messages')?.annotations?.destructiveHint).toBe(true);
+      expect(byName.get('mark_messages')?.annotations?.destructiveHint).toBe(true);
+      expect(byName.get('copy_messages')?.annotations?.destructiveHint).toBe(false);
+      expect(byName.get('download_attachments')?.annotations?.destructiveHint).toBe(false);
+      expect(byName.get('create_draft')?.annotations?.destructiveHint).toBe(false);
     });
 
     it('keeps the untrusted-data framing on attachment text output', async () => {
@@ -535,6 +539,44 @@ describe('createOutlookPluginServer', () => {
     });
     expect(result.isError).not.toBe(true);
     expect(result.structuredContent).toMatchObject({ mailbox: 'finance' });
+  });
+
+  it.each([
+    ['move_messages', { mailbox: 'finance', messageIds: ['ok', 'bad'], destinationFolderId: 'f1' }],
+    ['copy_messages', { mailbox: 'finance', messageIds: ['ok', 'bad'], destinationFolderId: 'f1' }],
+    ['mark_messages', { mailbox: 'finance', messageIds: ['ok', 'bad'], read: true }],
+  ])('%s reports mixed per-item outcomes without claiming total success', async (name, args) => {
+    const mixed = {
+      mailbox: 'finance',
+      results: [
+        { id: 'ok', success: true },
+        { id: 'bad', success: false },
+      ],
+    };
+    const { client } = await connect(
+      createOutlookPluginServer(
+        fakeService({
+          moveMessages: async () => mixed,
+          copyMessages: async () => mixed,
+          markMessages: async () => mixed,
+        }),
+        pluginConfig({ allowWrites: true })
+      )
+    );
+
+    const result = await client.callTool({ name, arguments: args });
+    const text = (result.content as Array<{ text: string }>).map((block) => block.text).join(' ');
+
+    expect(text).toMatch(/1 succeeded, 1 failed/i);
+    expect(result.structuredContent).toMatchObject({
+      status: 'partial',
+      successfulItems: 1,
+      failedItems: 1,
+      results: [
+        { id: 'ok', success: true },
+        { id: 'bad', success: false },
+      ],
+    });
   });
 
   it('downloads attachments to server disk when allowWrites is true', async () => {
