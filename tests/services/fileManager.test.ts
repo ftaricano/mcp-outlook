@@ -99,4 +99,24 @@ describe('FileManager.saveAttachmentToDisk atomic publication', () => {
     expect(result.success).toBe(false);
     expect(fs.readdirSync(tmp)).toEqual([]);
   });
+
+  it.each([
+    ['ASCII', `${'a'.repeat(300)}.pdf`],
+    ['Unicode', `${'📄'.repeat(150)}.xlsx`],
+  ])(
+    'reserves the temp suffix byte budget for long %s names and preserves the extension',
+    async (_label, name) => {
+      const extension = path.extname(name);
+      const result = await fm.saveAttachmentToDisk({ ...attachment, name });
+
+      expect(result.success).toBe(true);
+      expect(result.filename.endsWith(extension)).toBe(true);
+      expect(result.filename).not.toContain('\ufffd');
+      expect(
+        Buffer.byteLength(`.${result.filename}.${process.pid}.${'0'.repeat(36)}.tmp`, 'utf8')
+      ).toBeLessThanOrEqual(255);
+      expect(fs.readFileSync(result.filePath, 'utf8')).toBe('complete');
+      expect(fs.readdirSync(tmp).some((entry) => entry.endsWith('.tmp'))).toBe(false);
+    }
+  );
 });

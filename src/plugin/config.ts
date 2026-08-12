@@ -49,6 +49,15 @@ const pluginConfigSchema = z
       .max(500 * 1024 * 1024)
       .default(50 * 1024 * 1024),
     maxQueriesPerBatch: z.number().int().min(1).max(25).default(10),
+    maxBatchResultMessages: z.number().int().min(1).max(5_000).default(500),
+    maxBatchResultBytes: z
+      .number()
+      .int()
+      .min(1024)
+      .max(10 * 1024 * 1024)
+      .default(2 * 1024 * 1024),
+    maxBatchContextChars: z.number().int().min(1_000).max(5_000_000).default(500_000),
+    maxBatchAttachments: z.number().int().min(1).max(10_000).default(1_000),
     maxZipEntries: z.number().int().min(1).max(1_000).default(200),
     maxZipUncompressedBytes: z
       .number()
@@ -112,6 +121,10 @@ export interface PluginConfig {
   readonly maxBatchSize: number;
   readonly maxDownloadBatchBytes: number;
   readonly maxQueriesPerBatch: number;
+  readonly maxBatchResultMessages: number;
+  readonly maxBatchResultBytes: number;
+  readonly maxBatchContextChars: number;
+  readonly maxBatchAttachments: number;
   readonly maxZipEntries: number;
   readonly maxZipUncompressedBytes: number;
   readonly maxContainerEntries: number;
@@ -239,6 +252,10 @@ export function loadPluginConfig(configPath?: string): PluginConfig {
     maxBatchSize: parsed.data.maxBatchSize,
     maxDownloadBatchBytes: parsed.data.maxDownloadBatchBytes,
     maxQueriesPerBatch: parsed.data.maxQueriesPerBatch,
+    maxBatchResultMessages: parsed.data.maxBatchResultMessages,
+    maxBatchResultBytes: parsed.data.maxBatchResultBytes,
+    maxBatchContextChars: parsed.data.maxBatchContextChars,
+    maxBatchAttachments: parsed.data.maxBatchAttachments,
     maxZipEntries: parsed.data.maxZipEntries,
     maxZipUncompressedBytes: parsed.data.maxZipUncompressedBytes,
     maxContainerEntries: parsed.data.maxContainerEntries,

@@ -145,13 +145,21 @@ describe('read expansion methods', () => {
     const service = new MultiMailboxService(config(), () =>
       stubEmailService({
         getFolderStatistics: vi.fn(async () => ({ totalEmails: 10, unreadEmails: 2 })),
-        listAttachments: vi.fn(async () => [{ id: 'a1', name: 'fatura.pdf', size: 100 }]),
+        listAttachmentsDetailed: vi.fn(async () => ({
+          items: [{ id: 'a1', name: 'fatura.pdf', size: 100 }],
+          pagesScanned: 2,
+          truncated: true,
+        })),
       })
     );
     await expect(service.getFolderStats('finance', 'inbox')).resolves.toMatchObject({
       totalEmails: 10,
     });
-    await expect(service.listAttachments('finance', 'm1')).resolves.toHaveLength(1);
+    await expect(service.listAttachments('finance', 'm1')).resolves.toMatchObject({
+      items: [{ id: 'a1' }],
+      pagesScanned: 2,
+      truncated: true,
+    });
   });
 });
 
@@ -328,6 +336,64 @@ describe('searchMailboxesBatch', () => {
         { label: 'c', criteria: {} },
       ])
     ).rejects.toThrow(/batch limit/i);
+  });
+
+  it('fails closed when aggregate messages exceed the configured batch budget', async () => {
+    const search = vi.fn(async () => searchResult('FOUND'));
+    const service = new MultiMailboxService(config({ maxBatchResultMessages: 1 }), () =>
+      stubEmailService({ advancedSearchEmailsDetailed: search })
+    );
+
+    await expect(
+      service.searchMailboxesBatch([
+        { label: 'one', mailboxes: ['finance'], criteria: { query: 'a' } },
+        { label: 'two', mailboxes: ['finance'], criteria: { query: 'b' } },
+      ])
+    ).rejects.toThrow(/message budget/i);
+    expect(search).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails closed when aggregate attachment metadata exceeds the configured batch budget', async () => {
+    const result = searchResult('FOUND');
+    result.messages[0].attachments = [{ id: 'a1' }, { id: 'a2' }];
+    const service = new MultiMailboxService(config({ maxBatchAttachments: 1 }), () =>
+      stubEmailService({ advancedSearchEmailsDetailed: vi.fn(async () => result) })
+    );
+
+    await expect(
+      service.searchMailboxesBatch([
+        {
+          label: 'attachments',
+          mailboxes: ['finance'],
+          criteria: { query: 'a', includeAttachmentNames: true },
+        },
+      ])
+    ).rejects.toThrow(/attachment budget/i);
+  });
+
+  it('enforces aggregate context-character and UTF-8 byte budgets independently', async () => {
+    const result = searchResult('FOUND');
+    result.messages[0].subject = 'é'.repeat(100);
+
+    const contextLimited = new MultiMailboxService(
+      config({ maxBatchContextChars: 10, maxBatchResultBytes: 10_000 }),
+      () => stubEmailService({ advancedSearchEmailsDetailed: vi.fn(async () => result) })
+    );
+    await expect(
+      contextLimited.searchMailboxesBatch([
+        { label: 'chars', mailboxes: ['finance'], criteria: { query: 'a' } },
+      ])
+    ).rejects.toThrow(/context character budget/i);
+
+    const bytesLimited = new MultiMailboxService(
+      config({ maxBatchContextChars: 10_000, maxBatchResultBytes: 100 }),
+      () => stubEmailService({ advancedSearchEmailsDetailed: vi.fn(async () => result) })
+    );
+    await expect(
+      bytesLimited.searchMailboxesBatch([
+        { label: 'bytes', mailboxes: ['finance'], criteria: { query: 'a' } },
+      ])
+    ).rejects.toThrow(/byte budget/i);
   });
 });
 

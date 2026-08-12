@@ -3,6 +3,21 @@ import path from 'path';
 import { randomUUID } from 'node:crypto';
 import { PathGuard } from '../security/pathGuard.js';
 
+const MAX_FILESYSTEM_NAME_BYTES = 255;
+const TEMP_UUID_CHARS = 36;
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  let result = '';
+  let bytes = 0;
+  for (const character of value) {
+    const characterBytes = Buffer.byteLength(character, 'utf8');
+    if (bytes + characterBytes > maxBytes) break;
+    result += character;
+    bytes += characterBytes;
+  }
+  return result;
+}
+
 /**
  * FileManager - Gerencia downloads e salvamento de arquivos grandes
  * Otimizado para trabalhar com anexos do Microsoft Graph via MCP
@@ -257,12 +272,31 @@ export class FileManager {
    * Sanitiza nome do arquivo removendo caracteres inválidos
    */
   private sanitizeFilename(filename: string): string {
-    return filename
-      .replace(/[<>:"/\\|?*]/g, '_') // Caracteres inválidos
-      .replace(/\s+/g, '_') // Espaços múltiplos
-      .replace(/_{2,}/g, '_') // Underscores múltiplos
-      .replace(/^_+|_+$/g, '') // Underscores no início/fim
-      .slice(0, 255); // Limitar tamanho
+    const sanitized =
+      filename
+        .replace(/[<>:"/\\|?*]/g, '_') // Caracteres inválidos
+        .replace(/\s+/g, '_') // Espaços múltiplos
+        .replace(/_{2,}/g, '_') // Underscores múltiplos
+        .replace(/^_+|_+$/g, '') || 'attachment';
+
+    // Temp format: .<filename>.<pid>.<uuid>.tmp. Reserve that exact UTF-8
+    // overhead so both the final and private temp basename fit NAME_MAX.
+    const tempOverheadBytes = Buffer.byteLength(
+      `..${process.pid}.${'0'.repeat(TEMP_UUID_CHARS)}.tmp`,
+      'utf8'
+    );
+    const maxFilenameBytes = MAX_FILESYSTEM_NAME_BYTES - tempOverheadBytes;
+    const extension = path.extname(sanitized);
+    const extensionBytes = Buffer.byteLength(extension, 'utf8');
+
+    if (extension && extensionBytes < maxFilenameBytes) {
+      const stem = path.basename(sanitized, extension);
+      const stemBudget = maxFilenameBytes - extensionBytes;
+      const boundedStem = truncateUtf8(stem, stemBudget);
+      return `${boundedStem || truncateUtf8('attachment', stemBudget)}${extension}`;
+    }
+
+    return truncateUtf8(sanitized, maxFilenameBytes) || 'attachment';
   }
 
   /**

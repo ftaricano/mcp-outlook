@@ -19,6 +19,10 @@ const config = {
   maxBatchSize: 25,
   maxDownloadBatchBytes: 50 * 1024 * 1024,
   maxQueriesPerBatch: 10,
+  maxBatchResultMessages: 500,
+  maxBatchResultBytes: 2 * 1024 * 1024,
+  maxBatchContextChars: 500_000,
+  maxBatchAttachments: 1_000,
   maxZipEntries: 200,
   maxZipUncompressedBytes: 50 * 1024 * 1024,
 };

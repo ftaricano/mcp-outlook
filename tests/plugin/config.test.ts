@@ -156,6 +156,10 @@ describe('expansion config fields', () => {
     expect(config.maxBatchSize).toBe(25);
     expect(config.maxDownloadBatchBytes).toBe(50 * 1024 * 1024);
     expect(config.maxQueriesPerBatch).toBe(10);
+    expect(config.maxBatchResultMessages).toBe(500);
+    expect(config.maxBatchResultBytes).toBe(2 * 1024 * 1024);
+    expect(config.maxBatchContextChars).toBe(500_000);
+    expect(config.maxBatchAttachments).toBe(1_000);
     expect(config.maxZipEntries).toBe(200);
     expect(config.maxZipUncompressedBytes).toBe(50 * 1024 * 1024);
     expect(config.maxContainerEntries).toBe(1_000);
@@ -167,6 +171,17 @@ describe('expansion config fields', () => {
     expect(() =>
       loadPluginConfig(writeConfig(validConfig({ maxRawAttachmentBytes: 10 * 1024 * 1024 })))
     ).toThrow(/Invalid Outlook plugin configuration/);
+  });
+
+  it.each([
+    ['maxBatchResultMessages', 5_001],
+    ['maxBatchResultBytes', 10 * 1024 * 1024 + 1],
+    ['maxBatchContextChars', 5_000_001],
+    ['maxBatchAttachments', 10_001],
+  ])('rejects an out-of-range %s aggregate budget', (field, value) => {
+    expect(() => loadPluginConfig(writeConfig(validConfig({ [field]: value })))).toThrow(
+      /Invalid Outlook plugin configuration/
+    );
   });
 
   it('accepts maxConcurrentExtractions within [1, 8] and rejects outside it', () => {

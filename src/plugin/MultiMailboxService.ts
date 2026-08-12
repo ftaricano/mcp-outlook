@@ -59,6 +59,13 @@ export class BatchLimitError extends Error {
   }
 }
 
+export class BatchResourceLimitError extends Error {
+  constructor(resource: string, limit: number) {
+    super(`Batch ${resource} budget exceeded (${limit})`);
+    this.name = 'BatchResourceLimitError';
+  }
+}
+
 export class DownloadLimitError extends Error {
   constructor(limit: number) {
     super(`Requested attachments exceed the server download limit of ${limit} bytes`);
@@ -206,10 +213,13 @@ export class MultiMailboxService {
     }
   }
 
-  async listAttachments(alias: string, messageId: string): Promise<unknown[]> {
+  async listAttachments(
+    alias: string,
+    messageId: string
+  ): Promise<{ items: unknown[]; pagesScanned: number; truncated: boolean }> {
     const mailbox = this.resolveMailbox(alias);
     try {
-      return await this.createEmailService(mailbox.address).listAttachments(messageId);
+      return await this.createEmailService(mailbox.address).listAttachmentsDetailed(messageId);
     } catch {
       throw new MailboxOperationError('attachment listing');
     }
@@ -595,9 +605,48 @@ export class MultiMailboxService {
       throw new BatchLimitError(this.config.maxQueriesPerBatch);
     }
     const results = [];
+    let totalMessages = 0;
+    let totalBytes = 0;
+    let totalContextChars = 0;
+    let totalAttachments = 0;
     for (const query of queries) {
       const outcome = await this.searchMailboxes(query.mailboxes, query.criteria);
-      results.push({ label: query.label, status: outcome.status, results: outcome.results });
+      const entry = { label: query.label, status: outcome.status, results: outcome.results };
+      let serialized: string;
+      try {
+        serialized = JSON.stringify(entry);
+      } catch {
+        throw new BatchResourceLimitError('serialization', 0);
+      }
+
+      totalMessages += outcome.results.reduce((count, result) => count + result.messages.length, 0);
+      totalAttachments += outcome.results.reduce(
+        (count, result) =>
+          count +
+          result.messages.reduce(
+            (messageCount, message) =>
+              messageCount + (Array.isArray(message.attachments) ? message.attachments.length : 0),
+            0
+          ),
+        0
+      );
+      totalContextChars += serialized.length;
+      totalBytes += Buffer.byteLength(serialized, 'utf8');
+
+      if (totalMessages > this.config.maxBatchResultMessages) {
+        throw new BatchResourceLimitError('message', this.config.maxBatchResultMessages);
+      }
+      if (totalAttachments > this.config.maxBatchAttachments) {
+        throw new BatchResourceLimitError('attachment', this.config.maxBatchAttachments);
+      }
+      if (totalContextChars > this.config.maxBatchContextChars) {
+        throw new BatchResourceLimitError('context character', this.config.maxBatchContextChars);
+      }
+      if (totalBytes > this.config.maxBatchResultBytes) {
+        throw new BatchResourceLimitError('byte', this.config.maxBatchResultBytes);
+      }
+
+      results.push(entry);
     }
     return { results };
   }
