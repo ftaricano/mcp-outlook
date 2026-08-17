@@ -81,7 +81,7 @@
     "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "mammoth": "^1.12.0",
-    "pdfjs-dist": "^4.10.38",
+    "pdfjs-dist": "^6.2.108",
     "unzipper": "^0.12.5",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
