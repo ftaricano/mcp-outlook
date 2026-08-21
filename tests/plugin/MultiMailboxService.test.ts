@@ -153,7 +153,6 @@ describe('read expansion methods', () => {
     expect(advancedSearch).toHaveBeenCalledWith(
       expect.objectContaining({
         query: undefined,
-        hasAttachments: true,
         includeFullContent: false,
         maxPages: 10,
         maxResults: 100,
@@ -204,8 +203,46 @@ describe('read expansion methods', () => {
     );
   });
 
+  it('does not trust hasAttachments false to exclude inline document attachments', async () => {
+    const listAttachmentsDetailed = vi.fn(async () => ({
+      items: [{ id: 'attachment-inline', name: 'proposal-PROP-1001.pdf', size: 100 }],
+      pagesScanned: 1,
+      truncated: false,
+    }));
+    const service = new MultiMailboxService(config(), () =>
+      stubEmailService({
+        advancedSearchEmailsDetailed: vi.fn(async () => ({
+          ...searchResult('FOUND'),
+          messages: [{ id: 'message-inline', hasAttachments: false }] as Message[],
+        })),
+        listAttachmentsDetailed,
+      })
+    );
+
+    const result = await service.investigateDocuments('finance', {
+      proposalIds: ['PROP-1001'],
+      clients: [],
+      insurers: [],
+      attachmentNames: [],
+      folders: ['inbox'],
+      maxPagesPerFolder: 10,
+      maxMessagesPerFolder: 100,
+      maxAttachmentPagesPerMessage: 5,
+      maxAttachmentsPerMessage: 50,
+      maxResults: 25,
+    });
+
+    expect(result.status).toBe('CONFIRMED');
+    expect(result.matches[0]).toMatchObject({
+      classification: 'CONFIRMED',
+      confirmationReasons: ['PROPOSAL_ID_IN_ATTACHMENT_NAME'],
+    });
+    expect(listAttachmentsDetailed).toHaveBeenCalledOnce();
+  });
+
   it('keeps multi-signal matching bounded for a large metadata field', async () => {
     const repeatedText = 'aa-'.repeat(333_333);
+    const signal = (prefix: string, index: number) => `${prefix}-${index}-${'x'.repeat(180)}`;
     const service = new MultiMailboxService(config(), () =>
       stubEmailService({
         advancedSearchEmailsDetailed: vi.fn(async () => ({
@@ -228,10 +265,10 @@ describe('read expansion methods', () => {
 
     const startedAt = Date.now();
     const result = await service.investigateDocuments('finance', {
-      proposalIds: Array.from({ length: 25 }, () => 'a'),
-      clients: Array.from({ length: 25 }, () => 'a'),
-      insurers: Array.from({ length: 25 }, () => 'a'),
-      attachmentNames: [],
+      proposalIds: Array.from({ length: 25 }, (_, index) => signal('proposal', index)),
+      clients: Array.from({ length: 25 }, (_, index) => signal('client', index)),
+      insurers: Array.from({ length: 25 }, (_, index) => signal('insurer', index)),
+      attachmentNames: Array.from({ length: 25 }, (_, index) => signal('attachment', index)),
       folders: ['inbox'],
       maxPagesPerFolder: 10,
       maxMessagesPerFolder: 200,
@@ -672,6 +709,11 @@ describe('read expansion methods', () => {
               hasAttachments: false,
             },
           ] as Message[],
+        })),
+        listAttachmentsDetailed: vi.fn(async () => ({
+          items: [],
+          pagesScanned: 1,
+          truncated: false,
         })),
       })
     );

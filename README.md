@@ -195,7 +195,8 @@ plugin tool can delete or send.
 
 `investigate_documents` is a read-only, alias-scoped search over the closed folder set
 `inbox`, `sentitems`, and `archive`. It scans messages deterministically with bounded page and
-message limits, then lists attachments with independent page and item limits. The response
+message limits without trusting Graph's `hasAttachments` flag as an exclusion, then lists
+attachments for every scanned message with independent page and item limits. The response
 contains only bounded message/attachment metadata, matched signals, per-folder coverage, and
 one of `CONFIRMED`, `CANDIDATE_REVIEW`, `NOT_FOUND`, or `SEARCH_INCOMPLETE`. A `NOT_FOUND`
 result is emitted only when all three canonical folders were scanned and every attempted

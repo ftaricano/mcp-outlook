@@ -341,13 +341,20 @@ interface CompactMatcherNode {
   readonly outputs: string[];
 }
 
-function findAhoPatternMatches(
-  text: string,
-  patterns: readonly string[],
-  boundaryOffsets?: Uint8Array
-): ReadonlySet<string> {
+interface InvestigationAhoAutomaton {
+  readonly nodes: readonly CompactMatcherNode[];
+  readonly patternCount: number;
+}
+
+interface InvestigationSignalAutomata {
+  readonly separator: string;
+  readonly token: InvestigationAhoAutomaton | undefined;
+  readonly compact: InvestigationAhoAutomaton | undefined;
+}
+
+function buildAhoAutomaton(patterns: readonly string[]): InvestigationAhoAutomaton | undefined {
   const uniquePatterns = [...new Set(patterns)].filter(Boolean);
-  if (uniquePatterns.length === 0 || text.length === 0) return new Set();
+  if (uniquePatterns.length === 0) return undefined;
 
   const nodes: CompactMatcherNode[] = [
     {
@@ -388,7 +395,18 @@ function findAhoPatternMatches(
     }
   }
 
+  return { nodes, patternCount: uniquePatterns.length };
+}
+
+function scanAhoAutomaton(
+  automaton: InvestigationAhoAutomaton | undefined,
+  text: string,
+  boundaryOffsets?: Uint8Array
+): ReadonlySet<string> {
+  if (!automaton || text.length === 0) return new Set();
+
   const matches = new Set<string>();
+  const { nodes } = automaton;
   let nodeIndex = 0;
   for (let offset = 0; offset < text.length; offset += 1) {
     const character = text[offset];
@@ -405,17 +423,37 @@ function findAhoPatternMatches(
         matches.add(pattern);
       }
     }
-    if (matches.size === uniquePatterns.length) break;
+    if (matches.size === automaton.patternCount) break;
   }
   return matches;
 }
 
+function compileInvestigationSignalAutomata(
+  signals: readonly string[]
+): InvestigationSignalAutomata {
+  const separator = '\u0001';
+  const tokenSignalKeys = signals
+    .map((signal) => {
+      const signalTokens = investigationTokens(signal);
+      return signalTokens.length > 0
+        ? `${separator}${signalTokens.join(separator)}${separator}`
+        : '';
+    })
+    .filter(Boolean);
+  const compactSignalPatterns = signals.map(normalizeInvestigationSignal).filter(Boolean);
+  return {
+    separator,
+    token: buildAhoAutomaton(tokenSignalKeys),
+    compact: buildAhoAutomaton(compactSignalPatterns),
+  };
+}
+
 function createInvestigationTextMatcher(
   haystack: string,
-  compactSignals: readonly string[] = []
+  automata: InvestigationSignalAutomata
 ): InvestigationTextMatcher {
   const tokens = investigationTokens(haystack);
-  const separator = '\u0001';
+  const { separator } = automata;
   const tokenKey = `${separator}${tokens.join(separator)}${separator}`;
   const compactText = tokens.join('');
   const boundaryOffsets = new Uint8Array(compactText.length + 1);
@@ -425,17 +463,8 @@ function createInvestigationTextMatcher(
     offset += token.length;
     boundaryOffsets[offset] = 1;
   }
-  const tokenSignalKeys = compactSignals
-    .map((signal) => {
-      const signalTokens = investigationTokens(signal);
-      return signalTokens.length > 0
-        ? `${separator}${signalTokens.join(separator)}${separator}`
-        : '';
-    })
-    .filter(Boolean);
-  const compactSignalPatterns = compactSignals.map(normalizeInvestigationSignal).filter(Boolean);
-  const tokenMatches = findAhoPatternMatches(tokenKey, tokenSignalKeys);
-  const compactMatches = findAhoPatternMatches(compactText, compactSignalPatterns, boundaryOffsets);
+  const tokenMatches = scanAhoAutomaton(automata.token, tokenKey);
+  const compactMatches = scanAhoAutomaton(automata.compact, compactText, boundaryOffsets);
 
   return {
     includes(signal: string): boolean {
@@ -452,7 +481,10 @@ function createInvestigationTextMatcher(
 }
 
 function investigationTokenSequenceIncludes(haystack: string, signal: string): boolean {
-  return createInvestigationTextMatcher(haystack, [signal]).includes(signal);
+  return createInvestigationTextMatcher(
+    haystack,
+    compileInvestigationSignalAutomata([signal])
+  ).includes(signal);
 }
 
 function investigationAttachmentContainsSignal(name: string, signal: string): boolean {
@@ -680,6 +712,7 @@ export class MultiMailboxService {
       ...criteria.insurers,
       ...criteria.attachmentNames,
     ];
+    const investigationSignalAutomata = compileInvestigationSignalAutomata(investigationSignals);
 
     for (const folder of criteria.folders) {
       const reasons: InvestigationCoverageReason[] = [];
@@ -694,7 +727,6 @@ export class MultiMailboxService {
         searchResult = await emailService.advancedSearchEmailsDetailed({
           folder,
           query: undefined,
-          hasAttachments: true,
           includeFullContent: false,
           maxPages: criteria.maxPagesPerFolder,
           maxResults: criteria.maxMessagesPerFolder,
@@ -734,7 +766,7 @@ export class MultiMailboxService {
 
         let listedAttachments: ListedAttachment[] = [];
         let attachmentsTruncated = false;
-        if (message.hasAttachments !== false) {
+        {
           attachmentListsAttempted += 1;
           try {
             const listing = await emailService.listAttachmentsDetailed(messageId, {
@@ -801,12 +833,12 @@ export class MultiMailboxService {
             return value.slice(0, MAX_INVESTIGATION_MATCH_TEXT_CHARS);
           });
         const metadataMatchers = metadataFields.map((field) =>
-          createInvestigationTextMatcher(field, investigationSignals)
+          createInvestigationTextMatcher(field, investigationSignalAutomata)
         );
         const attachmentMatchers = attachmentNames.map((name) =>
           createInvestigationTextMatcher(
             name.slice(0, MAX_INVESTIGATION_MATCH_NAME_CHARS),
-            investigationSignals
+            investigationSignalAutomata
           )
         );
         const matchesMetadataSignal = (signal: string): boolean =>
@@ -1181,11 +1213,14 @@ export class MultiMailboxService {
     extractionCoverage.complete = true;
     metadata = { ...metadata, extractor: extracted.extractor };
 
-    const textMatcher = createInvestigationTextMatcher(extracted.text, [
-      ...criteria.proposalIds,
-      ...criteria.clients,
-      ...criteria.insurers,
-    ]);
+    const textMatcher = createInvestigationTextMatcher(
+      extracted.text,
+      compileInvestigationSignalAutomata([
+        ...criteria.proposalIds,
+        ...criteria.clients,
+        ...criteria.insurers,
+      ])
+    );
     const proposalIdsInName = criteria.proposalIds.filter((signal) =>
       investigationAttachmentContainsSignal(name, signal)
     );
