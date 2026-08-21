@@ -201,10 +201,11 @@ one of `CONFIRMED`, `CANDIDATE_REVIEW`, `NOT_FOUND`, or `SEARCH_INCOMPLETE`. A `
 result is emitted only when all three canonical folders were scanned and every attempted
 attachment listing completed; omitted folders are reported as `FOLDER_NOT_SCANNED` and keep the
 aggregate search incomplete. Attachment-name bounds are explicit through
-`ATTACHMENT_NAME_TRUNCATED`, so evidence is never silently cut. A proposal ID in an attachment
-name can produce a strong confirmation; an exact requested attachment-name match is strong only
-when paired with a proposal, client, or insurer identity hit. Other identity hits remain
-candidates for review. Message bodies are never returned.
+`ATTACHMENT_NAME_INVALID` or `ATTACHMENT_NAME_TRUNCATED`, so evidence is never silently cut;
+long message metadata is likewise reported as `MESSAGE_TEXT_TRUNCATED`. A proposal ID in an
+attachment name can produce a strong confirmation; an exact requested attachment-name match is
+strong only when paired with a proposal, client, or insurer identity hit. Other identity hits
+remain candidates for review. Message bodies are never returned.
 
 ### Attachment evidence: `inspect_attachment_evidence`
 

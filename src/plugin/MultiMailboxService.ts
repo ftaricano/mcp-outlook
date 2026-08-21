@@ -163,8 +163,10 @@ export type InvestigationFolderStatus = 'COMPLETE' | 'INCOMPLETE' | 'FAILED';
 export type InvestigationCoverageReason =
   | 'MESSAGE_SCAN_LIMIT_REACHED'
   | 'MESSAGE_SCAN_FAILED'
+  | 'MESSAGE_TEXT_TRUNCATED'
   | 'ATTACHMENT_SCAN_LIMIT_REACHED'
   | 'ATTACHMENT_SCAN_FAILED'
+  | 'ATTACHMENT_NAME_INVALID'
   | 'ATTACHMENT_NAME_TRUNCATED'
   | 'MESSAGE_ID_MISSING'
   | 'FOLDER_NOT_SCANNED';
@@ -289,6 +291,8 @@ export interface AttachmentEvidenceResult {
 const INVESTIGATION_FOLDER_ORDER = ['inbox', 'sentitems', 'archive'] as const;
 const INVESTIGATION_FOLDERS = new Set<InvestigationFolder>(INVESTIGATION_FOLDER_ORDER);
 const MAX_INVESTIGATION_ATTACHMENT_NAME_CHARS = 300;
+const MAX_INVESTIGATION_MATCH_TEXT_CHARS = 65_536;
+const MAX_INVESTIGATION_MATCH_NAME_CHARS = 4_096;
 const FILE_ATTACHMENT_TYPE = '#microsoft.graph.fileAttachment';
 const MAX_ATTACHMENT_EVIDENCE_PAGES = 20;
 
@@ -298,9 +302,12 @@ function isInvestigationFolder(value: string): value is InvestigationFolder {
 
 function boundedInvestigationText(value: unknown, maxChars: number): string | undefined {
   if (typeof value !== 'string') return undefined;
-  const normalized = value.replace(/\s+/g, ' ').trim();
+  const input = value.length > maxChars * 4 ? value.slice(0, maxChars * 4) : value;
+  const normalized = input.replace(/\s+/g, ' ').trim();
   if (!normalized) return undefined;
-  return normalized.length <= maxChars ? normalized : `${normalized.slice(0, maxChars)}...`;
+  return normalized.length <= maxChars && input.length === value.length
+    ? normalized
+    : `${normalized.slice(0, maxChars)}...`;
 }
 
 function safeCount(value: unknown, fallback = 0): number {
@@ -334,13 +341,13 @@ interface CompactMatcherNode {
   readonly outputs: string[];
 }
 
-function findCompactSignalMatches(
-  compactText: string,
-  boundaryOffsets: Uint8Array,
-  signals: readonly string[]
+function findAhoPatternMatches(
+  text: string,
+  patterns: readonly string[],
+  boundaryOffsets?: Uint8Array
 ): ReadonlySet<string> {
-  const patterns = [...new Set(signals.map(normalizeInvestigationSignal))].filter(Boolean);
-  if (patterns.length === 0 || compactText.length === 0) return new Set();
+  const uniquePatterns = [...new Set(patterns)].filter(Boolean);
+  if (uniquePatterns.length === 0 || text.length === 0) return new Set();
 
   const nodes: CompactMatcherNode[] = [
     {
@@ -349,7 +356,7 @@ function findCompactSignalMatches(
       outputs: [],
     },
   ];
-  for (const pattern of patterns) {
+  for (const pattern of uniquePatterns) {
     let nodeIndex = 0;
     for (let characterIndex = 0; characterIndex < pattern.length; characterIndex += 1) {
       const character = pattern[characterIndex];
@@ -383,19 +390,22 @@ function findCompactSignalMatches(
 
   const matches = new Set<string>();
   let nodeIndex = 0;
-  for (let offset = 0; offset < compactText.length; offset += 1) {
-    const character = compactText[offset];
+  for (let offset = 0; offset < text.length; offset += 1) {
+    const character = text[offset];
     while (nodeIndex !== 0 && !nodes[nodeIndex].next.has(character)) {
       nodeIndex = nodes[nodeIndex].fail;
     }
     nodeIndex = nodes[nodeIndex].next.get(character) ?? 0;
     for (const pattern of nodes[nodeIndex].outputs) {
       const start = offset - pattern.length + 1;
-      if (start >= 0 && boundaryOffsets[start] === 1 && boundaryOffsets[offset + 1] === 1) {
+      if (
+        start >= 0 &&
+        (!boundaryOffsets || (boundaryOffsets[start] === 1 && boundaryOffsets[offset + 1] === 1))
+      ) {
         matches.add(pattern);
       }
     }
-    if (matches.size === patterns.length) break;
+    if (matches.size === uniquePatterns.length) break;
   }
   return matches;
 }
@@ -415,7 +425,17 @@ function createInvestigationTextMatcher(
     offset += token.length;
     boundaryOffsets[offset] = 1;
   }
-  const compactMatches = findCompactSignalMatches(compactText, boundaryOffsets, compactSignals);
+  const tokenSignalKeys = compactSignals
+    .map((signal) => {
+      const signalTokens = investigationTokens(signal);
+      return signalTokens.length > 0
+        ? `${separator}${signalTokens.join(separator)}${separator}`
+        : '';
+    })
+    .filter(Boolean);
+  const compactSignalPatterns = compactSignals.map(normalizeInvestigationSignal).filter(Boolean);
+  const tokenMatches = findAhoPatternMatches(tokenKey, tokenSignalKeys);
+  const compactMatches = findAhoPatternMatches(compactText, compactSignalPatterns, boundaryOffsets);
 
   return {
     includes(signal: string): boolean {
@@ -423,7 +443,7 @@ function createInvestigationTextMatcher(
       if (signalTokens.length === 0) return false;
 
       const signalKey = `${separator}${signalTokens.join(separator)}${separator}`;
-      if (tokenKey.includes(signalKey)) return true;
+      if (tokenMatches.has(signalKey)) return true;
 
       const compactSignal = normalizeInvestigationSignal(signal);
       return compactSignal.length > 0 && compactMatches.has(compactSignal);
@@ -435,15 +455,12 @@ function investigationTokenSequenceIncludes(haystack: string, signal: string): b
   return createInvestigationTextMatcher(haystack, [signal]).includes(signal);
 }
 
-function includesInvestigationSignal(haystack: string, signal: string): boolean {
-  return investigationTokenSequenceIncludes(haystack, signal);
-}
-
 function investigationAttachmentContainsSignal(name: string, signal: string): boolean {
   return investigationTokenSequenceIncludes(name, signal);
 }
 
 function investigationAttachmentEqualsSignal(name: string, signal: string): boolean {
+  if (name.length > MAX_INVESTIGATION_MATCH_NAME_CHARS) return false;
   const normalizedName = name.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
   const normalizedSignal = signal.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
   return normalizedName.length > 0 && normalizedName === normalizedSignal;
@@ -657,6 +674,12 @@ export class MultiMailboxService {
     const emailService = this.createEmailService(mailbox.address);
     const coverage: InvestigationFolderCoverage[] = [];
     const matches: InvestigationMatch[] = [];
+    const investigationSignals = [
+      ...criteria.proposalIds,
+      ...criteria.clients,
+      ...criteria.insurers,
+      ...criteria.attachmentNames,
+    ];
 
     for (const folder of criteria.folders) {
       const reasons: InvestigationCoverageReason[] = [];
@@ -719,25 +742,41 @@ export class MultiMailboxService {
               maxPages: criteria.maxAttachmentPagesPerMessage,
             });
             const rawItems = Array.isArray(listing.items) ? listing.items : [];
-            listedAttachments = rawItems.slice(
-              0,
-              criteria.maxAttachmentsPerMessage
-            ) as ListedAttachment[];
-            attachmentPagesScanned += safeCount(listing.pagesScanned);
-            if (
-              rawItems.some(
-                (attachment) =>
-                  typeof attachment?.name === 'string' &&
-                  attachment.name.length > MAX_INVESTIGATION_ATTACHMENT_NAME_CHARS
+            const invalidAttachmentName = rawItems.some((attachment) => {
+              if (!attachment || typeof attachment !== 'object') return true;
+              const name = (attachment as { name?: unknown }).name;
+              return typeof name !== 'string' || name.trim().length === 0;
+            });
+            const attachmentNameTruncated = rawItems.some(
+              (attachment) =>
+                Boolean(attachment) &&
+                typeof attachment === 'object' &&
+                typeof (attachment as { name?: unknown }).name === 'string' &&
+                (attachment as { name: string }).name.length >
+                  MAX_INVESTIGATION_ATTACHMENT_NAME_CHARS
+            );
+            listedAttachments = rawItems
+              .filter(
+                (attachment): attachment is ListedAttachment =>
+                  Boolean(attachment) && typeof attachment === 'object'
               )
-            ) {
+              .slice(0, criteria.maxAttachmentsPerMessage);
+            attachmentPagesScanned += safeCount(listing.pagesScanned);
+            if (invalidAttachmentName) reasons.push('ATTACHMENT_NAME_INVALID');
+            if (attachmentNameTruncated) {
               reasons.push('ATTACHMENT_NAME_TRUNCATED');
             }
             if (listing.truncated || rawItems.length > criteria.maxAttachmentsPerMessage) {
               reasons.push('ATTACHMENT_SCAN_LIMIT_REACHED');
               attachmentsTruncated = true;
             }
-            if (!listing.truncated && rawItems.length <= criteria.maxAttachmentsPerMessage) {
+            if (invalidAttachmentName) attachmentsTruncated = true;
+            if (
+              !listing.truncated &&
+              rawItems.length <= criteria.maxAttachmentsPerMessage &&
+              !invalidAttachmentName &&
+              !attachmentNameTruncated
+            ) {
               attachmentListsCompleted += 1;
             }
           } catch {
@@ -755,11 +794,25 @@ export class MultiMailboxService {
           message.from?.emailAddress?.address,
         ]
           .filter((value): value is string => typeof value === 'string')
-          .filter((value) => value.length > 0);
+          .filter((value) => value.length > 0)
+          .map((value) => {
+            if (value.length <= MAX_INVESTIGATION_MATCH_TEXT_CHARS) return value;
+            reasons.push('MESSAGE_TEXT_TRUNCATED');
+            return value.slice(0, MAX_INVESTIGATION_MATCH_TEXT_CHARS);
+          });
+        const metadataMatchers = metadataFields.map((field) =>
+          createInvestigationTextMatcher(field, investigationSignals)
+        );
+        const attachmentMatchers = attachmentNames.map((name) =>
+          createInvestigationTextMatcher(
+            name.slice(0, MAX_INVESTIGATION_MATCH_NAME_CHARS),
+            investigationSignals
+          )
+        );
         const matchesMetadataSignal = (signal: string): boolean =>
-          metadataFields.some((field) => includesInvestigationSignal(field, signal));
+          metadataMatchers.some((matcher) => matcher.includes(signal));
         const matchesAttachmentSignal = (signal: string): boolean =>
-          attachmentNames.some((name) => includesInvestigationSignal(name, signal));
+          attachmentMatchers.some((matcher) => matcher.includes(signal));
         const matchesAnySignal = (signal: string): boolean =>
           matchesMetadataSignal(signal) || matchesAttachmentSignal(signal);
         const matchedSignals = {
@@ -772,7 +825,7 @@ export class MultiMailboxService {
         };
 
         const proposalInAttachment = criteria.proposalIds.some((proposalId) =>
-          attachmentNames.some((name) => investigationAttachmentContainsSignal(name, proposalId))
+          attachmentMatchers.some((matcher) => matcher.includes(proposalId))
         );
         const requestedAttachmentMatches = matchedSignals.attachmentNames.length > 0;
         const hasMatchedSignal =

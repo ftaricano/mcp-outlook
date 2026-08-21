@@ -162,6 +162,94 @@ describe('read expansion methods', () => {
     );
   });
 
+  it('does not report NOT_FOUND when an attachment name is missing', async () => {
+    const service = new MultiMailboxService(config(), () =>
+      stubEmailService({
+        advancedSearchEmailsDetailed: vi.fn(async () => ({
+          ...searchResult('FOUND'),
+          messages: [{ id: 'message-1', hasAttachments: true }] as Message[],
+        })),
+        listAttachmentsDetailed: vi.fn(async () => ({
+          items: [{ id: 'attachment-1', name: null, size: 100 }],
+          pagesScanned: 1,
+          truncated: false,
+        })),
+      })
+    );
+
+    const result = await service.investigateDocuments('finance', {
+      proposalIds: ['PROP-1001'],
+      clients: [],
+      insurers: [],
+      attachmentNames: [],
+      folders: ['inbox'],
+      maxPagesPerFolder: 10,
+      maxMessagesPerFolder: 100,
+      maxAttachmentPagesPerMessage: 5,
+      maxAttachmentsPerMessage: 50,
+      maxResults: 25,
+    });
+
+    expect(result.status).toBe('SEARCH_INCOMPLETE');
+    expect(result.coverage.complete).toBe(false);
+    expect(result.coverage.folders).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          folder: 'inbox',
+          status: 'INCOMPLETE',
+          attachmentListsCompleted: 0,
+          reasons: ['ATTACHMENT_NAME_INVALID'],
+        }),
+      ])
+    );
+  });
+
+  it('keeps multi-signal matching bounded for a large metadata field', async () => {
+    const repeatedText = 'aa-'.repeat(333_333);
+    const service = new MultiMailboxService(config(), () =>
+      stubEmailService({
+        advancedSearchEmailsDetailed: vi.fn(async () => ({
+          ...searchResult('FOUND'),
+          messages: [
+            { id: 'message-1', bodyPreview: repeatedText, hasAttachments: true },
+          ] as Message[],
+        })),
+        listAttachmentsDetailed: vi.fn(async () => ({
+          items: Array.from({ length: 50 }, (_, index) => ({
+            id: `attachment-${index}`,
+            name: `aa-${index}.pdf`,
+            size: 100,
+          })),
+          pagesScanned: 1,
+          truncated: false,
+        })),
+      })
+    );
+
+    const startedAt = Date.now();
+    const result = await service.investigateDocuments('finance', {
+      proposalIds: Array.from({ length: 25 }, () => 'a'),
+      clients: Array.from({ length: 25 }, () => 'a'),
+      insurers: Array.from({ length: 25 }, () => 'a'),
+      attachmentNames: [],
+      folders: ['inbox'],
+      maxPagesPerFolder: 10,
+      maxMessagesPerFolder: 200,
+      maxAttachmentPagesPerMessage: 5,
+      maxAttachmentsPerMessage: 50,
+      maxResults: 25,
+    });
+
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+    expect(result.status).toBe('SEARCH_INCOMPLETE');
+    expect(result.coverage.folders[0]).toEqual(
+      expect.objectContaining({
+        status: 'INCOMPLETE',
+        reasons: expect.arrayContaining(['MESSAGE_TEXT_TRUNCATED']),
+      })
+    );
+  });
+
   it('matches the complete attachment name while exposing projection truncation', async () => {
     const longName = `${'prefix-'.repeat(45)}PROP-1001.pdf`;
     const service = new MultiMailboxService(config(), () =>
