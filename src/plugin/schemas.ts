@@ -93,6 +93,85 @@ export const getAttachmentContentSchema = z
   })
   .strict();
 
+const investigationFolderSchema = z.enum(['inbox', 'sentitems', 'archive']);
+const investigationSignalSchema = z.string().trim().min(1).max(200);
+const investigationSignalListSchema = z.array(investigationSignalSchema).max(25).default([]);
+
+const investigateDocumentsCriteriaSchema = z
+  .object({
+    proposalIds: investigationSignalListSchema,
+    clients: investigationSignalListSchema,
+    insurers: investigationSignalListSchema,
+    attachmentNames: investigationSignalListSchema,
+    folders: z
+      .array(investigationFolderSchema)
+      .min(1)
+      .max(3)
+      .default(['inbox', 'sentitems', 'archive']),
+    maxPagesPerFolder: z.number().int().min(1).max(10).default(10),
+    maxMessagesPerFolder: z.number().int().min(1).max(200).default(100),
+    maxAttachmentPagesPerMessage: z.number().int().min(1).max(5).default(5),
+    maxAttachmentsPerMessage: z.number().int().min(1).max(50).default(50),
+    maxResults: z.number().int().min(1).max(25).default(25),
+  })
+  .strict()
+  .superRefine((criteria, context) => {
+    if (new Set(criteria.folders).size !== criteria.folders.length) {
+      context.addIssue({
+        code: 'custom',
+        path: ['folders'],
+        message: 'folders must be unique',
+      });
+    }
+    if (
+      criteria.proposalIds.length === 0 &&
+      criteria.clients.length === 0 &&
+      criteria.insurers.length === 0 &&
+      criteria.attachmentNames.length === 0
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: [],
+        message: 'at least one investigation signal is required',
+      });
+    }
+  });
+
+export const investigateDocumentsSchema = z
+  .object({ mailbox: mailboxAliasSchema, criteria: investigateDocumentsCriteriaSchema })
+  .strict();
+
+const inspectAttachmentEvidenceSignalListSchema = z
+  .array(investigationSignalSchema)
+  .max(25)
+  .default([]);
+
+export const inspectAttachmentEvidenceSchema = z
+  .object({
+    mailbox: mailboxAliasSchema,
+    messageId: messageIdSchema,
+    attachmentId: z.string().min(1).max(512),
+    proposalIds: inspectAttachmentEvidenceSignalListSchema,
+    clients: inspectAttachmentEvidenceSignalListSchema,
+    insurers: inspectAttachmentEvidenceSignalListSchema,
+    attachmentNames: inspectAttachmentEvidenceSignalListSchema,
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (
+      input.proposalIds.length === 0 &&
+      input.clients.length === 0 &&
+      input.insurers.length === 0 &&
+      input.attachmentNames.length === 0
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: [],
+        message: 'at least one attachment evidence signal is required',
+      });
+    }
+  });
+
 export const createAttachmentHandoffSchema = z
   .object({
     mailbox: mailboxAliasSchema,
@@ -187,6 +266,9 @@ export type ListFoldersInput = z.output<typeof listFoldersSchema>;
 export type GetFolderStatsInput = z.output<typeof getFolderStatsSchema>;
 export type ListAttachmentsInput = z.output<typeof listAttachmentsSchema>;
 export type GetAttachmentContentInput = z.output<typeof getAttachmentContentSchema>;
+export type InvestigateDocumentsInput = z.output<typeof investigateDocumentsSchema>;
+export type InvestigateDocumentsCriteria = InvestigateDocumentsInput['criteria'];
+export type InspectAttachmentEvidenceInput = z.output<typeof inspectAttachmentEvidenceSchema>;
 export type CreateAttachmentHandoffInput = z.output<typeof createAttachmentHandoffSchema>;
 export type GetAttachmentHandoffInput = z.output<typeof getAttachmentHandoffSchema>;
 export type SearchMailboxesBatchInput = z.output<typeof searchMailboxesBatchSchema>;

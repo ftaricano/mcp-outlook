@@ -14,7 +14,7 @@
   "interface": {
     "displayName": "Outlook Multi-Mailbox",
     "shortDescription": "Search and manage allowed Outlook mail",
-    "longDescription": "Search and read messages across an explicitly allowed set of Microsoft Outlook mailboxes through ten bounded, read-only MCP tools by default. Two local attachment-handoff tools are available only with the independent `PLUGIN_ALLOW_LOCAL_HANDOFFS` opt-in; they return opaque integrity metadata, never content or local paths. Five additional mailbox-write tools — move, copy, mark read/unread, download attachments, and create drafts — are available only when explicitly enabled in configuration (`allowWrites`). Sending email and deleting messages are impossible by construction: no tool in this plugin exposes either action.",
+    "longDescription": "Search, investigate documents, inspect attachment evidence, and read messages across an explicitly allowed set of Microsoft Outlook mailboxes through twelve bounded, read-only MCP tools by default. Two local attachment-handoff tools are available only with the independent `PLUGIN_ALLOW_LOCAL_HANDOFFS` opt-in; they return opaque integrity metadata, never content or local paths. Five additional mailbox-write tools — move, copy, mark read/unread, download attachments, and create drafts — are available only when explicitly enabled in configuration (`allowWrites`). Sending email and deleting messages are impossible by construction: no tool in this plugin exposes either action.",
     "developerName": "Fernando Taricano",
     "category": "Productivity",
     "capabilities": ["Read", "Write"],

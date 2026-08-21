@@ -11,7 +11,7 @@ Works with any MCP-compatible client (Claude Desktop, Cursor, custom agents, etc
 
 | Metric | Value |
 |---|---|
-| Tools | 40 operational + 10 plugin tools by default (12 with local handoffs, 15 with mailbox writes, 17 with both) |
+| Tools | 40 operational + 12 plugin tools by default (14 with local handoffs, 17 with mailbox writes, 19 with both) |
 | Tests | Unit, protocol, CLI, plugin, and HTTP suites |
 | Node | ≥ 20 |
 | MCP SDK | ^1.29.0 |
@@ -24,8 +24,8 @@ Works with any MCP-compatible client (Claude Desktop, Cursor, custom agents, etc
   original server and any remotely exposed plugin:
   - original 40-tool server: `Mail.ReadWrite`; add `Mail.Send` only for `send_email` or
     `reply_to_email`
-  - default 10-tool plugin: `Mail.Read` only
-  - 15-tool plugin with writes enabled: `Mail.ReadWrite`; `Mail.Send` is never required because
+  - default 12-tool plugin: `Mail.Read` only
+  - 17-tool plugin with writes enabled: `Mail.ReadWrite`; `Mail.Send` is never required because
     the plugin cannot send
   - `User.Read.All` — optional, only for `list_users`
 - Admin consent granted in the Azure Portal
@@ -144,15 +144,15 @@ Every server-backed CLI call appends a sanitized event to `runs.jsonl` unless di
 
 ## Multi-mailbox plugin
 
-Version 2.3 adds a separate plugin surface for conversational search, attachment reading, and
+Version 2.3 adds a separate plugin surface for conversational search, document investigation, attachment evidence inspection, attachment reading, and
 (opt-in) light mailbox operations across an explicitly allowed set of mailboxes. It does not
-replace the CLI or change the original 40-tool MCP server. **Ten read tools are registered
+replace the CLI or change the original 40-tool MCP server. **Twelve read tools are registered
 always; two local handoff tools are registered only when `PLUGIN_ALLOW_LOCAL_HANDOFFS=true`, and
 five mailbox-write tools are registered independently when `PLUGIN_ALLOW_WRITES=true`.**
 `send_email`, `reply_to_email`, and every delete operation are impossible by construction — no
 dispatch branch exists for them in the plugin, regardless of config.
 
-Use application `Mail.Read` for the default ten-tool catalog. Enabling the five write tools
+Use application `Mail.Read` for the default twelve-tool catalog. Enabling the five write tools
 requires `Mail.ReadWrite`; the plugin never needs `Mail.Send`. `PLUGIN_ALLOW_WRITES=false` always
 forces writes off, an unset or empty value delegates to `allowWrites` in the private JSON (default
 `false`), and any other value fails startup.
@@ -163,6 +163,8 @@ forces writes off, an unset or empty value delegates to `allowWrites` in the pri
 | `search_mailbox` | read | Search one alias with reliability evidence |
 | `search_mailboxes` | read | Search several aliases with bounded concurrency |
 | `get_message` | read | Read one message with a server-truncated body |
+| `investigate_documents` | read | Scan bounded relevant folders for proposal/client/insurer/attachment identity with coverage evidence |
+| `inspect_attachment_evidence` | read | Validate one exact attachment, hash and boundedly extract it, and return identity evidence without text or Base64 |
 | `list_messages` | read | List a folder deterministically (filter, no relevance search) |
 | `list_folders` | read | Folder tree of one mailbox |
 | `get_folder_stats` | read | Item counts and a paginated, explicitly truncated date/attachment scan |
@@ -188,6 +190,40 @@ Move and mark replace existing mailbox state and therefore carry `destructiveHin
 copy, download, and draft creation are additive and carry `destructiveHint: false`. This MCP hint
 describes whether a call can overwrite state, independently of the stronger invariant that no
 plugin tool can delete or send.
+
+### Document investigation: `investigate_documents`
+
+`investigate_documents` is a read-only, alias-scoped search over the closed folder set
+`inbox`, `sentitems`, and `archive`. It scans messages deterministically with bounded page and
+message limits without trusting Graph's `hasAttachments` flag as an exclusion, then lists
+attachments for every scanned message with independent page and item limits. The response
+contains only bounded message/attachment metadata, matched signals, per-folder coverage, and
+one of `CONFIRMED`, `CANDIDATE_REVIEW`, `NOT_FOUND`, or `SEARCH_INCOMPLETE`. A `NOT_FOUND`
+result is emitted only when all three canonical folders were scanned and every attempted
+attachment listing completed; omitted folders are reported as `FOLDER_NOT_SCANNED` and keep the
+aggregate search incomplete. Attachment-name bounds are explicit through
+`ATTACHMENT_NAME_INVALID` or `ATTACHMENT_NAME_TRUNCATED`, so evidence is never silently cut;
+long message metadata is likewise reported as `MESSAGE_TEXT_TRUNCATED`. A proposal ID in an
+attachment name can produce a strong confirmation; an exact requested attachment-name match is
+strong only when paired with a proposal, client, or insurer identity hit. Other identity hits
+remain candidates for review. Message bodies are never returned.
+
+### Attachment evidence: `inspect_attachment_evidence`
+
+`inspect_attachment_evidence` is a read-only, alias-scoped check of one exact message attachment.
+Its paginated Graph listing selects metadata only; content is downloaded only after the exact
+attachment is uniquely identified and its declared size is validated. It then validates the
+known Graph `fileAttachment` type and performs one bounded Base64 download,
+computes SHA-256, and sends the bytes to the existing isolated extraction worker. The caller supplies proposal IDs, clients, insurers, and/or
+exact attachment names as bounded signals. The result returns only bounded metadata, hash, matched
+signals, and coverage; it never returns extracted text or Base64. `CONFIRMED` requires a proposal ID
+in the attachment name, or an exact requested attachment name plus an independent identity signal in
+the extracted text. Content-only and name-only matches remain `CANDIDATE_REVIEW`. `NOT_CONFIRMED`
+is emitted only after complete listing, decoding, hashing, supported non-truncated extraction, and
+readable text when the exact attachment exists. A complete listing that proves the exact requested
+attachment ID is absent returns `NOT_CONFIRMED` with `ATTACHMENT_NOT_FOUND` (an exact-target absence,
+not a claim about the mailbox or other documents). Listing gaps, malformed or mismatched bytes,
+unsupported formats, and download or extraction failures return `VALIDATION_INCOMPLETE`.
 
 ### Local attachment handoffs
 
@@ -443,8 +479,8 @@ This repository is a valid local Codex plugin:
 
 - `.codex-plugin/plugin.json` provides metadata;
 - `.mcp.json` launches `dist/plugin/stdio.js` through `${CODEX_PLUGIN_ROOT}`;
-- the plugin exposes 10 tools by default, 12 with `PLUGIN_ALLOW_LOCAL_HANDOFFS=true`, 15 with
-  `PLUGIN_ALLOW_WRITES=true`, or 17 when both independent gates are enabled.
+- the plugin exposes 12 tools by default, 14 with `PLUGIN_ALLOW_LOCAL_HANDOFFS=true`, 17 with
+  `PLUGIN_ALLOW_WRITES=true`, or 19 when both independent gates are enabled.
 
 Build the repository, then install the repository directory as a local plugin from the Codex
 plugin manager. The plugin process uses the same generic credential resolution as the existing
@@ -616,7 +652,7 @@ Runtime flow:
 | `npm test` | Vitest unit tests |
 | `npm run test:coverage` | Vitest with coverage thresholds |
 | `npm run smoke` | Protocol smoke — verify `tools/list` returns 40 entries |
-| `npm run smoke:plugin` | Spawn `dist/plugin/stdio.js`; verify the 10/12/15/17 catalogs and a safe read call |
+| `npm run smoke:plugin` | Spawn `dist/plugin/stdio.js`; verify the 12/14/17/19 catalogs and a safe read call |
 | `npm run smoke:http` | Loopback Streamable HTTP plugin smoke |
 | `npm run audit:prod` | Audit runtime deps only |
 

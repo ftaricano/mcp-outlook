@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { Message } from '@microsoft/microsoft-graph-types';
 import type { AdvancedSearchOptions, EmailService } from '../services/emailService.js';
 import type { ReliableSearchResult, SearchStatus } from '../services/reliableSearch.js';
@@ -7,7 +8,12 @@ import {
   AttachmentHandoffStore,
   type AttachmentHandoffManifest,
 } from './attachmentHandoffStore.js';
-import type { MailboxSearchResult, MultiMailboxSearchResult } from './schemas.js';
+import type {
+  InspectAttachmentEvidenceInput,
+  InvestigateDocumentsCriteria,
+  MailboxSearchResult,
+  MultiMailboxSearchResult,
+} from './schemas.js';
 import {
   ExtractionError,
   runAttachmentPipeline,
@@ -145,6 +151,409 @@ interface ListedAttachment {
   readonly name?: string | null;
   readonly contentType?: string | null;
   readonly size?: number | null;
+  readonly isInline?: boolean | null;
+  readonly attachmentType?: string | null;
+}
+
+export type InvestigationFolder = InvestigateDocumentsCriteria['folders'][number];
+export type InvestigationStatus =
+  'CONFIRMED' | 'CANDIDATE_REVIEW' | 'NOT_FOUND' | 'SEARCH_INCOMPLETE';
+export type InvestigationMatchClassification = 'CONFIRMED' | 'CANDIDATE_REVIEW';
+export type InvestigationFolderStatus = 'COMPLETE' | 'INCOMPLETE' | 'FAILED';
+export type InvestigationCoverageReason =
+  | 'MESSAGE_SCAN_LIMIT_REACHED'
+  | 'MESSAGE_SCAN_FAILED'
+  | 'MESSAGE_TEXT_TRUNCATED'
+  | 'ATTACHMENT_SCAN_LIMIT_REACHED'
+  | 'ATTACHMENT_SCAN_FAILED'
+  | 'ATTACHMENT_NAME_INVALID'
+  | 'ATTACHMENT_NAME_TRUNCATED'
+  | 'MESSAGE_ID_MISSING'
+  | 'FOLDER_NOT_SCANNED';
+export type InvestigationConfirmationReason =
+  'PROPOSAL_ID_IN_ATTACHMENT_NAME' | 'REQUESTED_ATTACHMENT_NAME_MATCH';
+
+export interface InvestigationFolderCoverage {
+  readonly folder: InvestigationFolder;
+  readonly status: InvestigationFolderStatus;
+  readonly pagesScanned: number;
+  readonly messagesScanned: number;
+  readonly attachmentListsAttempted: number;
+  readonly attachmentListsCompleted: number;
+  readonly attachmentPagesScanned: number;
+  readonly reasons: readonly InvestigationCoverageReason[];
+}
+
+export interface InvestigationMatch {
+  readonly folder: InvestigationFolder;
+  readonly classification: InvestigationMatchClassification;
+  readonly message: InvestigationMessage;
+  readonly matchedSignals: {
+    readonly proposalIds: readonly string[];
+    readonly clients: readonly string[];
+    readonly insurers: readonly string[];
+    readonly attachmentNames: readonly string[];
+  };
+  readonly confirmationReasons: readonly InvestigationConfirmationReason[];
+}
+
+export interface InvestigationMessage extends Message {
+  readonly attachmentCount?: number;
+  readonly attachmentsTruncated?: boolean;
+  readonly attachmentNamesTruncated?: boolean;
+}
+
+export interface InvestigateDocumentsResult {
+  readonly mailbox: string;
+  readonly status: InvestigationStatus;
+  readonly matches: readonly InvestigationMatch[];
+  readonly totalMatches: number;
+  readonly matchesTruncated: boolean;
+  readonly coverage: {
+    readonly complete: boolean;
+    readonly folders: readonly InvestigationFolderCoverage[];
+    readonly limits: {
+      readonly maxPagesPerFolder: number;
+      readonly maxMessagesPerFolder: number;
+      readonly maxAttachmentPagesPerMessage: number;
+      readonly maxAttachmentsPerMessage: number;
+      readonly maxResults: number;
+    };
+  };
+}
+
+export type AttachmentEvidenceStatus =
+  'CONFIRMED' | 'CANDIDATE_REVIEW' | 'NOT_CONFIRMED' | 'VALIDATION_INCOMPLETE';
+
+export type AttachmentEvidenceReason =
+  | 'ATTACHMENT_LIST_FAILED'
+  | 'ATTACHMENT_LIST_INCOMPLETE'
+  | 'ATTACHMENT_NOT_FOUND'
+  | 'ATTACHMENT_ID_DUPLICATE'
+  | 'ATTACHMENT_METADATA_INVALID'
+  | 'ATTACHMENT_TOO_LARGE'
+  | 'ATTACHMENT_TYPE_UNSUPPORTED'
+  | 'DOWNLOAD_FAILED'
+  | 'DOWNLOAD_METADATA_INVALID'
+  | 'BASE64_INVALID'
+  | 'SIZE_MISMATCH'
+  | 'UNSUPPORTED_FORMAT'
+  | 'EXTRACTION_FAILED'
+  | 'EXTRACTION_TIMEOUT'
+  | 'EXTRACTION_TRUNCATED'
+  | 'EXTRACTION_EMPTY';
+
+export type AttachmentEvidenceConfirmationReason =
+  'PROPOSAL_ID_IN_ATTACHMENT_NAME' | 'REQUESTED_ATTACHMENT_NAME_AND_IDENTITY_IN_TEXT';
+
+export interface AttachmentEvidenceResult {
+  readonly mailbox: string;
+  readonly messageId: string;
+  readonly attachmentId: string;
+  readonly status: AttachmentEvidenceStatus;
+  readonly attachment: {
+    readonly id?: string;
+    readonly name?: string;
+    readonly contentType?: string;
+    readonly declaredSizeBytes?: number;
+    readonly actualSizeBytes?: number;
+    readonly sha256?: string;
+    readonly extractor?: 'pdf' | 'xlsx' | 'docx' | 'text';
+  };
+  readonly matchedSignals: {
+    readonly proposalIds: readonly string[];
+    readonly clients: readonly string[];
+    readonly insurers: readonly string[];
+    readonly attachmentNames: readonly string[];
+  };
+  readonly confirmationReasons: readonly AttachmentEvidenceConfirmationReason[];
+  readonly reasons: readonly AttachmentEvidenceReason[];
+  readonly coverage: {
+    readonly complete: boolean;
+    readonly listing: {
+      readonly pagesScanned: number;
+      readonly itemsScanned: number;
+      readonly complete: boolean;
+    };
+    readonly download: {
+      readonly attempted: boolean;
+      readonly decoded: boolean;
+    };
+    readonly extraction: {
+      readonly attempted: boolean;
+      readonly complete: boolean;
+      readonly supported: boolean;
+      readonly truncated?: boolean;
+    };
+  };
+}
+
+const INVESTIGATION_FOLDER_ORDER = ['inbox', 'sentitems', 'archive'] as const;
+const INVESTIGATION_FOLDERS = new Set<InvestigationFolder>(INVESTIGATION_FOLDER_ORDER);
+const MAX_INVESTIGATION_ATTACHMENT_NAME_CHARS = 300;
+const MAX_INVESTIGATION_MATCH_TEXT_CHARS = 65_536;
+const MAX_INVESTIGATION_MATCH_NAME_CHARS = 4_096;
+const FILE_ATTACHMENT_TYPE = '#microsoft.graph.fileAttachment';
+const MAX_ATTACHMENT_EVIDENCE_PAGES = 20;
+
+function isInvestigationFolder(value: string): value is InvestigationFolder {
+  return INVESTIGATION_FOLDERS.has(value as InvestigationFolder);
+}
+
+function boundedInvestigationText(value: unknown, maxChars: number): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const input = value.length > maxChars * 4 ? value.slice(0, maxChars * 4) : value;
+  const normalized = input.replace(/\s+/g, ' ').trim();
+  if (!normalized) return undefined;
+  return normalized.length <= maxChars && input.length === value.length
+    ? normalized
+    : `${normalized.slice(0, maxChars)}...`;
+}
+
+function safeCount(value: unknown, fallback = 0): number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : fallback;
+}
+
+function normalizeInvestigationSignal(value: string): string {
+  return value
+    .normalize('NFKD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, '');
+}
+
+function investigationTokens(value: string): string[] {
+  return value
+    .normalize('NFKD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .split(/[^\p{Letter}\p{Number}]+/gu)
+    .filter(Boolean);
+}
+
+interface InvestigationTextMatcher {
+  includes(signal: string): boolean;
+}
+
+interface CompactMatcherNode {
+  readonly next: Map<string, number>;
+  fail: number;
+  readonly outputs: string[];
+}
+
+interface InvestigationAhoAutomaton {
+  readonly nodes: readonly CompactMatcherNode[];
+  readonly patternCount: number;
+}
+
+interface InvestigationSignalAutomata {
+  readonly separator: string;
+  readonly token: InvestigationAhoAutomaton | undefined;
+  readonly compact: InvestigationAhoAutomaton | undefined;
+}
+
+function buildAhoAutomaton(patterns: readonly string[]): InvestigationAhoAutomaton | undefined {
+  const uniquePatterns = [...new Set(patterns)].filter(Boolean);
+  if (uniquePatterns.length === 0) return undefined;
+
+  const nodes: CompactMatcherNode[] = [
+    {
+      next: new Map(),
+      fail: 0,
+      outputs: [],
+    },
+  ];
+  for (const pattern of uniquePatterns) {
+    let nodeIndex = 0;
+    for (let characterIndex = 0; characterIndex < pattern.length; characterIndex += 1) {
+      const character = pattern[characterIndex];
+      const existing = nodes[nodeIndex].next.get(character);
+      if (existing !== undefined) {
+        nodeIndex = existing;
+        continue;
+      }
+      const nextIndex = nodes.length;
+      nodes[nodeIndex].next.set(character, nextIndex);
+      nodes.push({ next: new Map(), fail: 0, outputs: [] });
+      nodeIndex = nextIndex;
+    }
+    nodes[nodeIndex].outputs.push(pattern);
+  }
+
+  const queue: number[] = [];
+  for (const child of nodes[0].next.values()) queue.push(child);
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const nodeIndex = queue[cursor];
+    for (const [character, child] of nodes[nodeIndex].next) {
+      queue.push(child);
+      let failure = nodes[nodeIndex].fail;
+      while (failure !== 0 && !nodes[failure].next.has(character)) {
+        failure = nodes[failure].fail;
+      }
+      nodes[child].fail = nodes[failure].next.get(character) ?? 0;
+      nodes[child].outputs.push(...nodes[nodes[child].fail].outputs);
+    }
+  }
+
+  return { nodes, patternCount: uniquePatterns.length };
+}
+
+function scanAhoAutomaton(
+  automaton: InvestigationAhoAutomaton | undefined,
+  text: string,
+  boundaryOffsets?: Uint8Array
+): ReadonlySet<string> {
+  if (!automaton || text.length === 0) return new Set();
+
+  const matches = new Set<string>();
+  const { nodes } = automaton;
+  let nodeIndex = 0;
+  for (let offset = 0; offset < text.length; offset += 1) {
+    const character = text[offset];
+    while (nodeIndex !== 0 && !nodes[nodeIndex].next.has(character)) {
+      nodeIndex = nodes[nodeIndex].fail;
+    }
+    nodeIndex = nodes[nodeIndex].next.get(character) ?? 0;
+    for (const pattern of nodes[nodeIndex].outputs) {
+      const start = offset - pattern.length + 1;
+      if (
+        start >= 0 &&
+        (!boundaryOffsets || (boundaryOffsets[start] === 1 && boundaryOffsets[offset + 1] === 1))
+      ) {
+        matches.add(pattern);
+      }
+    }
+    if (matches.size === automaton.patternCount) break;
+  }
+  return matches;
+}
+
+function compileInvestigationSignalAutomata(
+  signals: readonly string[]
+): InvestigationSignalAutomata {
+  const separator = '\u0001';
+  const tokenSignalKeys = signals
+    .map((signal) => {
+      const signalTokens = investigationTokens(signal);
+      return signalTokens.length > 0
+        ? `${separator}${signalTokens.join(separator)}${separator}`
+        : '';
+    })
+    .filter(Boolean);
+  const compactSignalPatterns = signals.map(normalizeInvestigationSignal).filter(Boolean);
+  return {
+    separator,
+    token: buildAhoAutomaton(tokenSignalKeys),
+    compact: buildAhoAutomaton(compactSignalPatterns),
+  };
+}
+
+function createInvestigationTextMatcher(
+  haystack: string,
+  automata: InvestigationSignalAutomata
+): InvestigationTextMatcher {
+  const tokens = investigationTokens(haystack);
+  const { separator } = automata;
+  const tokenKey = `${separator}${tokens.join(separator)}${separator}`;
+  const compactText = tokens.join('');
+  const boundaryOffsets = new Uint8Array(compactText.length + 1);
+  let offset = 0;
+  boundaryOffsets[0] = 1;
+  for (const token of tokens) {
+    offset += token.length;
+    boundaryOffsets[offset] = 1;
+  }
+  const tokenMatches = scanAhoAutomaton(automata.token, tokenKey);
+  const compactMatches = scanAhoAutomaton(automata.compact, compactText, boundaryOffsets);
+
+  return {
+    includes(signal: string): boolean {
+      const signalTokens = investigationTokens(signal);
+      if (signalTokens.length === 0) return false;
+
+      const signalKey = `${separator}${signalTokens.join(separator)}${separator}`;
+      if (tokenMatches.has(signalKey)) return true;
+
+      const compactSignal = normalizeInvestigationSignal(signal);
+      return compactSignal.length > 0 && compactMatches.has(compactSignal);
+    },
+  };
+}
+
+function investigationTokenSequenceIncludes(haystack: string, signal: string): boolean {
+  return createInvestigationTextMatcher(
+    haystack,
+    compileInvestigationSignalAutomata([signal])
+  ).includes(signal);
+}
+
+function investigationAttachmentContainsSignal(name: string, signal: string): boolean {
+  return investigationTokenSequenceIncludes(name, signal);
+}
+
+function investigationAttachmentEqualsSignal(name: string, signal: string): boolean {
+  if (name.length > MAX_INVESTIGATION_MATCH_NAME_CHARS) return false;
+  const normalizedName = name.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+  const normalizedSignal = signal.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+  return normalizedName.length > 0 && normalizedName === normalizedSignal;
+}
+
+function projectInvestigationAttachmentName(value: unknown): {
+  name: string | undefined;
+  nameTruncated: boolean;
+} {
+  if (typeof value !== 'string' || value.length === 0) {
+    return { name: undefined, nameTruncated: false };
+  }
+  if (value.length <= MAX_INVESTIGATION_ATTACHMENT_NAME_CHARS) {
+    return { name: value, nameTruncated: false };
+  }
+  return {
+    name: `${value.slice(0, MAX_INVESTIGATION_ATTACHMENT_NAME_CHARS)}...`,
+    nameTruncated: true,
+  };
+}
+
+function projectInvestigationMessage(
+  message: Message,
+  attachments: readonly ListedAttachment[],
+  attachmentsTruncated: boolean
+): InvestigationMessage {
+  const address = boundedInvestigationText(message.from?.emailAddress?.address, 320);
+  const projectedAttachments = attachments.slice(0, 50).map((attachment) => {
+    const projectedName = projectInvestigationAttachmentName(attachment.name);
+    return {
+      id: boundedInvestigationText(attachment.id, 512),
+      name: projectedName.name,
+      nameTruncated: projectedName.nameTruncated || undefined,
+      contentType: boundedInvestigationText(attachment.contentType, 100),
+      size:
+        typeof attachment.size === 'number' && attachment.size >= 0 ? attachment.size : undefined,
+      isInline: typeof attachment.isInline === 'boolean' ? attachment.isInline : undefined,
+    };
+  });
+  const attachmentNamesTruncated = projectedAttachments.some(
+    (attachment) => attachment.nameTruncated === true
+  );
+  const projected: InvestigationMessage = {
+    id: boundedInvestigationText(message.id, 512),
+    subject: boundedInvestigationText(message.subject, 300),
+    receivedDateTime: boundedInvestigationText(message.receivedDateTime, 64),
+    isRead: typeof message.isRead === 'boolean' ? message.isRead : undefined,
+    hasAttachments:
+      typeof message.hasAttachments === 'boolean' ? message.hasAttachments : undefined,
+    bodyPreview: boundedInvestigationText(message.bodyPreview, 500),
+    from: address ? { emailAddress: { address } } : undefined,
+    attachments: projectedAttachments.length > 0 ? projectedAttachments : undefined,
+    attachmentCount: attachments.length,
+    attachmentsTruncated:
+      attachmentsTruncated ||
+      attachmentNamesTruncated ||
+      attachments.length > projectedAttachments.length ||
+      projectedAttachments.length > 30,
+    attachmentNamesTruncated: attachmentNamesTruncated || undefined,
+  };
+  return projected;
 }
 
 function decodeGraphBase64(value: string, maxBytes: number): Buffer {
@@ -163,6 +572,25 @@ function decodeGraphBase64(value: string, maxBytes: number): Buffer {
     throw new AttachmentHandoffError('ATTACHMENT_FETCH_FAILED');
   }
   return decoded;
+}
+
+function decodeBoundedBase64(
+  value: unknown,
+  maxBytes: number
+): { buffer?: Buffer; reason?: 'ATTACHMENT_TOO_LARGE' | 'BASE64_INVALID' } {
+  if (typeof value !== 'string') return { reason: 'BASE64_INVALID' };
+  const maxEncodedChars = Math.ceil(maxBytes / 3) * 4;
+  if (value.length > maxEncodedChars) return { reason: 'ATTACHMENT_TOO_LARGE' };
+  if (
+    value.length % 4 !== 0 ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)
+  ) {
+    return { reason: 'BASE64_INVALID' };
+  }
+  const decoded = Buffer.from(value, 'base64');
+  if (decoded.length > maxBytes) return { reason: 'ATTACHMENT_TOO_LARGE' };
+  if (decoded.toString('base64') !== value) return { reason: 'BASE64_INVALID' };
+  return { buffer: decoded };
 }
 
 function truncateUtf8(value: string, maxBytes: number): string {
@@ -262,6 +690,577 @@ export class MultiMailboxService {
     return this.searchResolvedMailbox(mailbox, { ...criteria, query: undefined });
   }
 
+  async investigateDocuments(
+    alias: string,
+    criteria: InvestigateDocumentsCriteria
+  ): Promise<InvestigateDocumentsResult> {
+    const mailbox = this.resolveMailbox(alias);
+    if (
+      criteria.folders.length === 0 ||
+      criteria.folders.some((folder) => !isInvestigationFolder(folder)) ||
+      new Set(criteria.folders).size !== criteria.folders.length
+    ) {
+      throw new MailboxOperationError('document investigation');
+    }
+
+    const emailService = this.createEmailService(mailbox.address);
+    const coverage: InvestigationFolderCoverage[] = [];
+    const matches: InvestigationMatch[] = [];
+    const investigationSignals = [
+      ...criteria.proposalIds,
+      ...criteria.clients,
+      ...criteria.insurers,
+      ...criteria.attachmentNames,
+    ];
+    const investigationSignalAutomata = compileInvestigationSignalAutomata(investigationSignals);
+
+    for (const folder of criteria.folders) {
+      const reasons: InvestigationCoverageReason[] = [];
+      let pagesScanned = 0;
+      let messagesScanned = 0;
+      let attachmentListsAttempted = 0;
+      let attachmentListsCompleted = 0;
+      let attachmentPagesScanned = 0;
+
+      let searchResult: ReliableSearchResult<Message>;
+      try {
+        searchResult = await emailService.advancedSearchEmailsDetailed({
+          folder,
+          query: undefined,
+          includeFullContent: false,
+          maxPages: criteria.maxPagesPerFolder,
+          maxResults: criteria.maxMessagesPerFolder,
+          scanLimit: criteria.maxMessagesPerFolder,
+        });
+      } catch {
+        coverage.push({
+          folder,
+          status: 'FAILED',
+          pagesScanned: 0,
+          messagesScanned: 0,
+          attachmentListsAttempted: 0,
+          attachmentListsCompleted: 0,
+          attachmentPagesScanned: 0,
+          reasons: ['MESSAGE_SCAN_FAILED'],
+        });
+        continue;
+      }
+
+      pagesScanned = safeCount(searchResult.pagesScanned);
+      messagesScanned = Math.max(
+        safeCount(searchResult.candidatesScanned),
+        Array.isArray(searchResult.messages) ? searchResult.messages.length : 0
+      );
+      if (searchResult.status === 'SEARCH_FAILED' || searchResult.status === 'SEARCH_UNTRUSTED') {
+        reasons.push('MESSAGE_SCAN_FAILED');
+      } else if (searchResult.truncated || searchResult.status === 'SEARCH_INCOMPLETE') {
+        reasons.push('MESSAGE_SCAN_LIMIT_REACHED');
+      }
+
+      for (const message of searchResult.messages ?? []) {
+        const messageId = typeof message.id === 'string' ? message.id.trim() : '';
+        if (!messageId) {
+          reasons.push('MESSAGE_ID_MISSING');
+          continue;
+        }
+
+        let listedAttachments: ListedAttachment[] = [];
+        let attachmentsTruncated = false;
+        {
+          attachmentListsAttempted += 1;
+          try {
+            const listing = await emailService.listAttachmentsDetailed(messageId, {
+              maxItems: criteria.maxAttachmentsPerMessage,
+              maxPages: criteria.maxAttachmentPagesPerMessage,
+              metadataOnly: true,
+            });
+            const rawItems = Array.isArray(listing.items) ? listing.items : [];
+            const invalidAttachmentName = rawItems.some((attachment) => {
+              if (!attachment || typeof attachment !== 'object') return true;
+              const name = (attachment as { name?: unknown }).name;
+              return typeof name !== 'string' || name.trim().length === 0;
+            });
+            const attachmentNameTruncated = rawItems.some(
+              (attachment) =>
+                Boolean(attachment) &&
+                typeof attachment === 'object' &&
+                typeof (attachment as { name?: unknown }).name === 'string' &&
+                (attachment as { name: string }).name.length >
+                  MAX_INVESTIGATION_ATTACHMENT_NAME_CHARS
+            );
+            listedAttachments = rawItems
+              .filter(
+                (attachment): attachment is ListedAttachment =>
+                  Boolean(attachment) && typeof attachment === 'object'
+              )
+              .slice(0, criteria.maxAttachmentsPerMessage);
+            attachmentPagesScanned += safeCount(listing.pagesScanned);
+            if (invalidAttachmentName) reasons.push('ATTACHMENT_NAME_INVALID');
+            if (attachmentNameTruncated) {
+              reasons.push('ATTACHMENT_NAME_TRUNCATED');
+            }
+            if (listing.truncated || rawItems.length > criteria.maxAttachmentsPerMessage) {
+              reasons.push('ATTACHMENT_SCAN_LIMIT_REACHED');
+              attachmentsTruncated = true;
+            }
+            if (invalidAttachmentName) attachmentsTruncated = true;
+            if (
+              !listing.truncated &&
+              rawItems.length <= criteria.maxAttachmentsPerMessage &&
+              !invalidAttachmentName &&
+              !attachmentNameTruncated
+            ) {
+              attachmentListsCompleted += 1;
+            }
+          } catch {
+            reasons.push('ATTACHMENT_SCAN_FAILED');
+            attachmentsTruncated = true;
+          }
+        }
+
+        const attachmentNames = listedAttachments
+          .map((attachment) => attachment.name)
+          .filter((name): name is string => typeof name === 'string' && name.length > 0);
+        const metadataFields = [
+          message.subject,
+          message.bodyPreview,
+          message.from?.emailAddress?.address,
+        ]
+          .filter((value): value is string => typeof value === 'string')
+          .filter((value) => value.length > 0)
+          .map((value) => {
+            if (value.length <= MAX_INVESTIGATION_MATCH_TEXT_CHARS) return value;
+            reasons.push('MESSAGE_TEXT_TRUNCATED');
+            return value.slice(0, MAX_INVESTIGATION_MATCH_TEXT_CHARS);
+          });
+        const metadataMatchers = metadataFields.map((field) =>
+          createInvestigationTextMatcher(field, investigationSignalAutomata)
+        );
+        const attachmentMatchers = attachmentNames.map((name) =>
+          createInvestigationTextMatcher(
+            name.slice(0, MAX_INVESTIGATION_MATCH_NAME_CHARS),
+            investigationSignalAutomata
+          )
+        );
+        const matchesMetadataSignal = (signal: string): boolean =>
+          metadataMatchers.some((matcher) => matcher.includes(signal));
+        const matchesAttachmentSignal = (signal: string): boolean =>
+          attachmentMatchers.some((matcher) => matcher.includes(signal));
+        const matchesAnySignal = (signal: string): boolean =>
+          matchesMetadataSignal(signal) || matchesAttachmentSignal(signal);
+        const matchedSignals = {
+          proposalIds: criteria.proposalIds.filter(matchesAnySignal),
+          clients: criteria.clients.filter(matchesAnySignal),
+          insurers: criteria.insurers.filter(matchesAnySignal),
+          attachmentNames: criteria.attachmentNames.filter((signal) =>
+            attachmentNames.some((name) => investigationAttachmentEqualsSignal(name, signal))
+          ),
+        };
+
+        const proposalInAttachment = criteria.proposalIds.some((proposalId) =>
+          attachmentMatchers.some((matcher) => matcher.includes(proposalId))
+        );
+        const requestedAttachmentMatches = matchedSignals.attachmentNames.length > 0;
+        const hasMatchedSignal =
+          matchedSignals.proposalIds.length > 0 ||
+          matchedSignals.clients.length > 0 ||
+          matchedSignals.insurers.length > 0 ||
+          matchedSignals.attachmentNames.length > 0;
+        if (!hasMatchedSignal) continue;
+
+        const confirmationReasons: InvestigationConfirmationReason[] = [];
+        if (proposalInAttachment) confirmationReasons.push('PROPOSAL_ID_IN_ATTACHMENT_NAME');
+        const identitySignalMatches =
+          criteria.proposalIds.some(matchesMetadataSignal) ||
+          criteria.clients.some(matchesMetadataSignal) ||
+          criteria.insurers.some(matchesMetadataSignal);
+        if (requestedAttachmentMatches && identitySignalMatches) {
+          confirmationReasons.push('REQUESTED_ATTACHMENT_NAME_MATCH');
+        }
+        const isConfirmed = confirmationReasons.length > 0;
+
+        matches.push({
+          folder,
+          classification: isConfirmed ? 'CONFIRMED' : 'CANDIDATE_REVIEW',
+          message: projectInvestigationMessage(message, listedAttachments, attachmentsTruncated),
+          matchedSignals,
+          confirmationReasons,
+        });
+      }
+
+      const uniqueReasons = [...new Set(reasons)];
+      coverage.push({
+        folder,
+        status:
+          uniqueReasons.includes('MESSAGE_SCAN_FAILED') ||
+          uniqueReasons.includes('ATTACHMENT_SCAN_FAILED')
+            ? 'FAILED'
+            : uniqueReasons.length > 0
+              ? 'INCOMPLETE'
+              : 'COMPLETE',
+        pagesScanned,
+        messagesScanned,
+        attachmentListsAttempted,
+        attachmentListsCompleted,
+        attachmentPagesScanned,
+        reasons: uniqueReasons,
+      });
+    }
+
+    const scannedCoverage = coverage;
+    const coverageWithOmittedFolders: InvestigationFolderCoverage[] =
+      INVESTIGATION_FOLDER_ORDER.map(
+        (folder) =>
+          scannedCoverage.find((entry) => entry.folder === folder) ?? {
+            folder,
+            status: 'INCOMPLETE',
+            pagesScanned: 0,
+            messagesScanned: 0,
+            attachmentListsAttempted: 0,
+            attachmentListsCompleted: 0,
+            attachmentPagesScanned: 0,
+            reasons: ['FOLDER_NOT_SCANNED'],
+          }
+      );
+    const coverageComplete = coverageWithOmittedFolders.every(
+      (entry) => entry.status === 'COMPLETE'
+    );
+    const orderedMatches = matches
+      .map((match, index) => ({ match, index }))
+      .sort((left, right) => {
+        const leftRank = left.match.classification === 'CONFIRMED' ? 0 : 1;
+        const rightRank = right.match.classification === 'CONFIRMED' ? 0 : 1;
+        return leftRank - rightRank || left.index - right.index;
+      })
+      .map(({ match }) => match);
+    const visibleMatches = orderedMatches.slice(0, criteria.maxResults);
+    const matchesTruncated = orderedMatches.length > criteria.maxResults;
+    const hasConfirmed = visibleMatches.some((match) => match.classification === 'CONFIRMED');
+    const status: InvestigationStatus = hasConfirmed
+      ? 'CONFIRMED'
+      : !coverageComplete
+        ? 'SEARCH_INCOMPLETE'
+        : matches.length > 0
+          ? 'CANDIDATE_REVIEW'
+          : 'NOT_FOUND';
+
+    return {
+      mailbox: mailbox.alias,
+      status,
+      matches: visibleMatches,
+      totalMatches: orderedMatches.length,
+      matchesTruncated,
+      coverage: {
+        complete: coverageComplete,
+        folders: coverageWithOmittedFolders,
+        limits: {
+          maxPagesPerFolder: criteria.maxPagesPerFolder,
+          maxMessagesPerFolder: criteria.maxMessagesPerFolder,
+          maxAttachmentPagesPerMessage: criteria.maxAttachmentPagesPerMessage,
+          maxAttachmentsPerMessage: criteria.maxAttachmentsPerMessage,
+          maxResults: criteria.maxResults,
+        },
+      },
+    };
+  }
+
+  async inspectAttachmentEvidence(
+    alias: string,
+    messageId: string,
+    attachmentId: string,
+    criteria: Omit<InspectAttachmentEvidenceInput, 'mailbox' | 'messageId' | 'attachmentId'>
+  ): Promise<AttachmentEvidenceResult> {
+    const mailbox = this.resolveMailbox(alias);
+    const emailService = this.createEmailService(mailbox.address);
+    const matchedSignals = {
+      proposalIds: [] as string[],
+      clients: [] as string[],
+      insurers: [] as string[],
+      attachmentNames: [] as string[],
+    };
+    const confirmationReasons: AttachmentEvidenceConfirmationReason[] = [];
+    const reasons: AttachmentEvidenceReason[] = [];
+    const listingCoverage = {
+      pagesScanned: 0,
+      itemsScanned: 0,
+      complete: false,
+    };
+    const downloadCoverage = { attempted: false, decoded: false };
+    const extractionCoverage: {
+      attempted: boolean;
+      complete: boolean;
+      supported: boolean;
+      truncated?: boolean;
+    } = {
+      attempted: false,
+      complete: false,
+      supported: false,
+    };
+    let metadata: {
+      id?: string;
+      name?: string;
+      contentType?: string;
+      declaredSizeBytes?: number;
+      extractor?: 'pdf' | 'xlsx' | 'docx' | 'text';
+      actualSizeBytes?: number;
+      sha256?: string;
+    } = { id: attachmentId };
+
+    const result = (status: AttachmentEvidenceStatus): AttachmentEvidenceResult => ({
+      mailbox: mailbox.alias,
+      messageId,
+      attachmentId,
+      status,
+      attachment: metadata,
+      matchedSignals,
+      confirmationReasons,
+      reasons: [...new Set(reasons)],
+      coverage: {
+        complete:
+          listingCoverage.complete &&
+          ((status === 'NOT_CONFIRMED' && reasons.includes('ATTACHMENT_NOT_FOUND')) ||
+            (downloadCoverage.decoded && extractionCoverage.complete && reasons.length === 0)),
+        listing: { ...listingCoverage },
+        download: { ...downloadCoverage },
+        extraction: { ...extractionCoverage },
+      },
+    });
+
+    let listing: { items: unknown[]; pagesScanned: number; truncated: boolean };
+    try {
+      listing = await emailService.listAttachmentsDetailed(messageId, {
+        maxItems: this.config.maxBatchSize + 1,
+        maxPages: MAX_ATTACHMENT_EVIDENCE_PAGES,
+        metadataOnly: true,
+      });
+    } catch {
+      reasons.push('ATTACHMENT_LIST_FAILED');
+      return result('VALIDATION_INCOMPLETE');
+    }
+
+    if (
+      !Array.isArray(listing.items) ||
+      !Number.isSafeInteger(listing.pagesScanned) ||
+      listing.pagesScanned < 1 ||
+      listing.pagesScanned > MAX_ATTACHMENT_EVIDENCE_PAGES ||
+      typeof listing.truncated !== 'boolean'
+    ) {
+      reasons.push('ATTACHMENT_LIST_FAILED');
+      return result('VALIDATION_INCOMPLETE');
+    }
+    const listed = listing.items as ListedAttachment[];
+    const hasMalformedAttachmentId = listed.some((attachment) => {
+      if (!attachment || typeof attachment !== 'object') return true;
+      const id = (attachment as { id?: unknown }).id;
+      return typeof id !== 'string' || id.length === 0 || id.length > 512;
+    });
+    if (hasMalformedAttachmentId) {
+      reasons.push('ATTACHMENT_LIST_FAILED');
+      return result('VALIDATION_INCOMPLETE');
+    }
+    listingCoverage.pagesScanned = safeCount(listing.pagesScanned);
+    listingCoverage.itemsScanned = listed.length;
+    if (listing.truncated || listed.length > this.config.maxBatchSize) {
+      reasons.push('ATTACHMENT_LIST_INCOMPLETE');
+      return result('VALIDATION_INCOMPLETE');
+    }
+    listingCoverage.complete = true;
+
+    const matches = listed.filter((attachment) => attachment.id === attachmentId);
+    if (matches.length === 0) {
+      reasons.push('ATTACHMENT_NOT_FOUND');
+      return result('NOT_CONFIRMED');
+    }
+    if (matches.length !== 1) {
+      reasons.push('ATTACHMENT_ID_DUPLICATE');
+      return result('VALIDATION_INCOMPLETE');
+    }
+
+    const listedAttachment = matches[0];
+    const name = typeof listedAttachment.name === 'string' ? listedAttachment.name : undefined;
+    const contentType =
+      typeof listedAttachment.contentType === 'string'
+        ? listedAttachment.contentType.trim()
+        : undefined;
+    const declaredSize = listedAttachment.size;
+    metadata = {
+      id: typeof listedAttachment.id === 'string' ? listedAttachment.id.slice(0, 512) : undefined,
+      name: boundedInvestigationText(name, 300),
+      contentType: boundedInvestigationText(contentType, 100),
+      declaredSizeBytes:
+        typeof declaredSize === 'number' && Number.isSafeInteger(declaredSize)
+          ? declaredSize
+          : undefined,
+    };
+
+    if (
+      !name ||
+      name.length > 4_096 ||
+      !contentType ||
+      !Number.isSafeInteger(declaredSize) ||
+      (declaredSize as number) < 0
+    ) {
+      reasons.push('ATTACHMENT_METADATA_INVALID');
+      return result('VALIDATION_INCOMPLETE');
+    }
+    if ((declaredSize as number) > this.config.maxAttachmentInputBytes) {
+      reasons.push('ATTACHMENT_TOO_LARGE');
+      return result('VALIDATION_INCOMPLETE');
+    }
+    if (listedAttachment.attachmentType !== FILE_ATTACHMENT_TYPE) {
+      reasons.push('ATTACHMENT_TYPE_UNSUPPORTED');
+      return result('VALIDATION_INCOMPLETE');
+    }
+
+    let downloaded: {
+      name?: unknown;
+      contentType?: unknown;
+      content?: unknown;
+      size?: unknown;
+      attachmentType?: unknown;
+    };
+    downloadCoverage.attempted = true;
+    try {
+      downloaded = await emailService.downloadAttachment(messageId, attachmentId);
+    } catch {
+      reasons.push('DOWNLOAD_FAILED');
+      return result('VALIDATION_INCOMPLETE');
+    }
+
+    const downloadedName = typeof downloaded.name === 'string' ? downloaded.name : undefined;
+    const downloadedContentType =
+      typeof downloaded.contentType === 'string' ? downloaded.contentType.trim() : undefined;
+    if (
+      !downloadedName ||
+      !downloadedContentType ||
+      !investigationAttachmentEqualsSignal(downloadedName, name) ||
+      downloadedContentType.toLowerCase() !== contentType.toLowerCase() ||
+      downloaded.attachmentType !== FILE_ATTACHMENT_TYPE
+    ) {
+      reasons.push('DOWNLOAD_METADATA_INVALID');
+      return result('VALIDATION_INCOMPLETE');
+    }
+
+    const decoded = decodeBoundedBase64(downloaded.content, this.config.maxAttachmentInputBytes);
+    if (!decoded.buffer) {
+      reasons.push(
+        decoded.reason === 'ATTACHMENT_TOO_LARGE' ? 'ATTACHMENT_TOO_LARGE' : 'BASE64_INVALID'
+      );
+      return result('VALIDATION_INCOMPLETE');
+    }
+    downloadCoverage.decoded = true;
+    metadata = {
+      ...metadata,
+      actualSizeBytes: decoded.buffer.length,
+      sha256: createHash('sha256').update(decoded.buffer).digest('hex'),
+    };
+    if (decoded.buffer.length !== declaredSize) {
+      reasons.push('SIZE_MISMATCH');
+      return result('VALIDATION_INCOMPLETE');
+    }
+    if (
+      downloaded.size !== undefined &&
+      (!Number.isSafeInteger(downloaded.size) || downloaded.size !== decoded.buffer.length)
+    ) {
+      reasons.push('SIZE_MISMATCH');
+      return result('VALIDATION_INCOMPLETE');
+    }
+
+    extractionCoverage.attempted = true;
+    let extracted: Awaited<ReturnType<typeof runAttachmentPipeline>>;
+    try {
+      extracted = await runAttachmentPipeline({
+        buffer: decoded.buffer,
+        name,
+        contentType,
+        maxChars: this.config.maxExtractedChars,
+        mode: 'text',
+        zipLimits: {
+          maxEntries: this.config.maxZipEntries,
+          maxUncompressedBytes: this.config.maxZipUncompressedBytes,
+        },
+        containerLimits: {
+          maxEntries: this.config.maxContainerEntries,
+          maxUncompressedBytes: this.config.maxContainerUncompressedBytes,
+        },
+        maxConcurrentExtractions: this.config.maxConcurrentExtractions,
+      });
+    } catch (error) {
+      if (error instanceof ExtractionError) {
+        if (error.code === 'UNSUPPORTED_FORMAT') reasons.push('UNSUPPORTED_FORMAT');
+        else if (error.code === 'EXTRACTION_TIMEOUT') reasons.push('EXTRACTION_TIMEOUT');
+        else reasons.push('EXTRACTION_FAILED');
+      } else if (error instanceof ZipError) {
+        reasons.push('EXTRACTION_FAILED');
+      } else {
+        reasons.push('EXTRACTION_FAILED');
+      }
+      return result('VALIDATION_INCOMPLETE');
+    }
+
+    if (extracted.kind !== 'text') {
+      reasons.push('UNSUPPORTED_FORMAT');
+      return result('VALIDATION_INCOMPLETE');
+    }
+    extractionCoverage.supported = true;
+    extractionCoverage.truncated = extracted.truncated;
+    if (extracted.truncated) {
+      reasons.push('EXTRACTION_TRUNCATED');
+      return result('VALIDATION_INCOMPLETE');
+    }
+    if (!extracted.text.trim()) {
+      reasons.push('EXTRACTION_EMPTY');
+      return result('VALIDATION_INCOMPLETE');
+    }
+    extractionCoverage.complete = true;
+    metadata = { ...metadata, extractor: extracted.extractor };
+
+    const textMatcher = createInvestigationTextMatcher(
+      extracted.text,
+      compileInvestigationSignalAutomata([
+        ...criteria.proposalIds,
+        ...criteria.clients,
+        ...criteria.insurers,
+      ])
+    );
+    const proposalIdsInName = criteria.proposalIds.filter((signal) =>
+      investigationAttachmentContainsSignal(name, signal)
+    );
+    const clientsInText = criteria.clients.filter((signal) => textMatcher.includes(signal));
+    const insurersInText = criteria.insurers.filter((signal) => textMatcher.includes(signal));
+    const proposalIdsInText = criteria.proposalIds.filter((signal) => textMatcher.includes(signal));
+    const attachmentNamesMatched = criteria.attachmentNames.filter((signal) =>
+      investigationAttachmentEqualsSignal(name, signal)
+    );
+    matchedSignals.proposalIds = [...new Set([...proposalIdsInName, ...proposalIdsInText])];
+    matchedSignals.clients = clientsInText;
+    matchedSignals.insurers = insurersInText;
+    matchedSignals.attachmentNames = attachmentNamesMatched;
+
+    if (proposalIdsInName.length > 0) {
+      confirmationReasons.push('PROPOSAL_ID_IN_ATTACHMENT_NAME');
+    }
+    if (
+      attachmentNamesMatched.length > 0 &&
+      (proposalIdsInText.length > 0 || clientsInText.length > 0 || insurersInText.length > 0)
+    ) {
+      confirmationReasons.push('REQUESTED_ATTACHMENT_NAME_AND_IDENTITY_IN_TEXT');
+    }
+
+    const hasMatch =
+      matchedSignals.proposalIds.length > 0 ||
+      matchedSignals.clients.length > 0 ||
+      matchedSignals.insurers.length > 0 ||
+      matchedSignals.attachmentNames.length > 0;
+    const status =
+      confirmationReasons.length > 0
+        ? 'CONFIRMED'
+        : hasMatch
+          ? 'CANDIDATE_REVIEW'
+          : 'NOT_CONFIRMED';
+    return result(status);
+  }
+
   async listFolders(alias: string): Promise<{ items: unknown[]; truncated: boolean }> {
     const mailbox = this.resolveMailbox(alias);
     try {
@@ -286,7 +1285,9 @@ export class MultiMailboxService {
   ): Promise<{ items: unknown[]; pagesScanned: number; truncated: boolean }> {
     const mailbox = this.resolveMailbox(alias);
     try {
-      return await this.createEmailService(mailbox.address).listAttachmentsDetailed(messageId);
+      return await this.createEmailService(mailbox.address).listAttachmentsDetailed(messageId, {
+        metadataOnly: true,
+      });
     } catch {
       throw new MailboxOperationError('attachment listing');
     }
@@ -420,6 +1421,7 @@ export class MultiMailboxService {
       listing = await emailService.listAttachmentsDetailed(messageId, {
         maxItems: this.config.maxBatchSize,
         maxPages: 20,
+        metadataOnly: true,
       });
     } catch {
       throw new AttachmentHandoffError('ATTACHMENT_FETCH_FAILED');
@@ -573,6 +1575,7 @@ export class MultiMailboxService {
       const listing = await emailService.listAttachmentsDetailed(messageId, {
         maxItems: this.config.maxBatchSize + 1,
         maxPages: 20,
+        metadataOnly: true,
       });
       const listed = listing.items as {
         id?: string | null;

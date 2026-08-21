@@ -59,7 +59,7 @@ try {
   });
   await client.close();
 
-  if (tools.length !== 10) throw new Error(`Expected 10 tools, received ${tools.length}`);
+  if (tools.length !== 12) throw new Error(`Expected 12 tools, received ${tools.length}`);
   if (JSON.stringify(result.structuredContent) !== JSON.stringify({ mailboxes: ['test'] })) {
     throw new Error('Unexpected list_allowed_mailboxes result');
   }

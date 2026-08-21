@@ -4,6 +4,8 @@ import {
   createDraftSchema,
   getAttachmentContentSchema,
   getAttachmentHandoffSchema,
+  inspectAttachmentEvidenceSchema,
+  investigateDocumentsSchema,
   listMessagesSchema,
   markMessagesSchema,
   searchMailboxSchema,
@@ -45,6 +47,43 @@ describe('plugin search date compatibility', () => {
 });
 
 describe('expansion tool schemas', () => {
+  it('accepts a bounded document investigation and applies closed-scope defaults', () => {
+    const parsed = investigateDocumentsSchema.parse({
+      mailbox: 'finance',
+      criteria: { proposalIds: ['PROP-1001'], clients: ['Example Industries'] },
+    });
+
+    expect(parsed.criteria.folders).toEqual(['inbox', 'sentitems', 'archive']);
+    expect(parsed.criteria.maxPagesPerFolder).toBe(10);
+    expect(parsed.criteria.maxMessagesPerFolder).toBe(100);
+    expect(parsed.criteria.maxAttachmentPagesPerMessage).toBe(5);
+    expect(parsed.criteria.maxAttachmentsPerMessage).toBe(50);
+  });
+
+  it('requires an investigation signal and rejects arbitrary folders or excessive limits', () => {
+    expect(() => investigateDocumentsSchema.parse({ mailbox: 'finance', criteria: {} })).toThrow(
+      /signal/i
+    );
+    expect(() =>
+      investigateDocumentsSchema.parse({
+        mailbox: 'finance',
+        criteria: { proposalIds: ['PROP-1001'], folders: ['deleteditems'] },
+      })
+    ).toThrow();
+    expect(() =>
+      investigateDocumentsSchema.parse({
+        mailbox: 'finance',
+        criteria: { proposalIds: ['PROP-1001'], maxMessagesPerFolder: 201 },
+      })
+    ).toThrow();
+    expect(() =>
+      investigateDocumentsSchema.parse({
+        mailbox: 'finance',
+        criteria: { proposalIds: ['PROP-1001'], folders: ['inbox', 'inbox'] },
+      })
+    ).toThrow(/unique/i);
+  });
+
   it('accepts the new criteria flags and the raised deterministic cap', () => {
     const parsed = listMessagesSchema.parse({
       mailbox: 'finance',
@@ -118,6 +157,47 @@ describe('expansion tool schemas', () => {
       entry: 'relatorio..v2.pdf',
     });
     expect(parsed.entry).toBe('relatorio..v2.pdf');
+  });
+
+  it('requires at least one caller-supplied attachment evidence signal', () => {
+    expect(() =>
+      inspectAttachmentEvidenceSchema.parse({
+        mailbox: 'finance',
+        messageId: 'm1',
+        attachmentId: 'a1',
+      })
+    ).toThrow(/signal/i);
+
+    const parsed = inspectAttachmentEvidenceSchema.parse({
+      mailbox: 'finance',
+      messageId: 'm1',
+      attachmentId: 'a1',
+      clients: ['Example Client'],
+    });
+    expect(parsed.proposalIds).toEqual([]);
+    expect(parsed.clients).toEqual(['Example Client']);
+    expect(parsed.insurers).toEqual([]);
+    expect(parsed.attachmentNames).toEqual([]);
+  });
+
+  it('bounds evidence signals and rejects undeclared fields', () => {
+    expect(() =>
+      inspectAttachmentEvidenceSchema.parse({
+        mailbox: 'finance',
+        messageId: 'm1',
+        attachmentId: 'a1',
+        proposalIds: Array.from({ length: 26 }, (_, index) => `P-${index}`),
+      })
+    ).toThrow();
+    expect(() =>
+      inspectAttachmentEvidenceSchema.parse({
+        mailbox: 'finance',
+        messageId: 'm1',
+        attachmentId: 'a1',
+        clients: ['Example Client'],
+        text: 'must not be accepted',
+      })
+    ).toThrow();
   });
 
   it('rejects entry names the listing never emits, keeping both validations aligned', () => {

@@ -36,7 +36,7 @@ describe('plugin packaging', () => {
     });
     // The manifest must not undersell either independently gated local or
     // mailbox mutation surface.
-    expect(plugin.interface.longDescription).toMatch(/ten bounded, read-only/i);
+    expect(plugin.interface.longDescription).toMatch(/twelve bounded, read-only/i);
     expect(plugin.interface.longDescription).toMatch(/two local attachment-handoff tools/i);
     expect(plugin.interface.longDescription).toMatch(/PLUGIN_ALLOW_LOCAL_HANDOFFS/i);
     expect(plugin.interface.longDescription).toMatch(/five additional mailbox-write tools/i);
