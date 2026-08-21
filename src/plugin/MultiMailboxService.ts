@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { Message } from '@microsoft/microsoft-graph-types';
 import type { AdvancedSearchOptions, EmailService } from '../services/emailService.js';
 import type { ReliableSearchResult, SearchStatus } from '../services/reliableSearch.js';
@@ -8,6 +9,7 @@ import {
   type AttachmentHandoffManifest,
 } from './attachmentHandoffStore.js';
 import type {
+  InspectAttachmentEvidenceInput,
   InvestigateDocumentsCriteria,
   MailboxSearchResult,
   MultiMailboxSearchResult,
@@ -150,6 +152,7 @@ interface ListedAttachment {
   readonly contentType?: string | null;
   readonly size?: number | null;
   readonly isInline?: boolean | null;
+  readonly attachmentType?: string | null;
 }
 
 export type InvestigationFolder = InvestigateDocumentsCriteria['folders'][number];
@@ -217,9 +220,77 @@ export interface InvestigateDocumentsResult {
   };
 }
 
+export type AttachmentEvidenceStatus =
+  'CONFIRMED' | 'CANDIDATE_REVIEW' | 'NOT_CONFIRMED' | 'VALIDATION_INCOMPLETE';
+
+export type AttachmentEvidenceReason =
+  | 'ATTACHMENT_LIST_FAILED'
+  | 'ATTACHMENT_LIST_INCOMPLETE'
+  | 'ATTACHMENT_NOT_FOUND'
+  | 'ATTACHMENT_ID_DUPLICATE'
+  | 'ATTACHMENT_METADATA_INVALID'
+  | 'ATTACHMENT_TOO_LARGE'
+  | 'ATTACHMENT_TYPE_UNSUPPORTED'
+  | 'DOWNLOAD_FAILED'
+  | 'DOWNLOAD_METADATA_INVALID'
+  | 'BASE64_INVALID'
+  | 'SIZE_MISMATCH'
+  | 'UNSUPPORTED_FORMAT'
+  | 'EXTRACTION_FAILED'
+  | 'EXTRACTION_TIMEOUT'
+  | 'EXTRACTION_TRUNCATED'
+  | 'EXTRACTION_EMPTY';
+
+export type AttachmentEvidenceConfirmationReason =
+  'PROPOSAL_ID_IN_ATTACHMENT_NAME' | 'REQUESTED_ATTACHMENT_NAME_AND_IDENTITY_IN_TEXT';
+
+export interface AttachmentEvidenceResult {
+  readonly mailbox: string;
+  readonly messageId: string;
+  readonly attachmentId: string;
+  readonly status: AttachmentEvidenceStatus;
+  readonly attachment: {
+    readonly id?: string;
+    readonly name?: string;
+    readonly contentType?: string;
+    readonly declaredSizeBytes?: number;
+    readonly actualSizeBytes?: number;
+    readonly sha256?: string;
+    readonly extractor?: 'pdf' | 'xlsx' | 'docx' | 'text';
+  };
+  readonly matchedSignals: {
+    readonly proposalIds: readonly string[];
+    readonly clients: readonly string[];
+    readonly insurers: readonly string[];
+    readonly attachmentNames: readonly string[];
+  };
+  readonly confirmationReasons: readonly AttachmentEvidenceConfirmationReason[];
+  readonly reasons: readonly AttachmentEvidenceReason[];
+  readonly coverage: {
+    readonly complete: boolean;
+    readonly listing: {
+      readonly pagesScanned: number;
+      readonly itemsScanned: number;
+      readonly complete: boolean;
+    };
+    readonly download: {
+      readonly attempted: boolean;
+      readonly decoded: boolean;
+    };
+    readonly extraction: {
+      readonly attempted: boolean;
+      readonly complete: boolean;
+      readonly supported: boolean;
+      readonly truncated?: boolean;
+    };
+  };
+}
+
 const INVESTIGATION_FOLDER_ORDER = ['inbox', 'sentitems', 'archive'] as const;
 const INVESTIGATION_FOLDERS = new Set<InvestigationFolder>(INVESTIGATION_FOLDER_ORDER);
 const MAX_INVESTIGATION_ATTACHMENT_NAME_CHARS = 300;
+const FILE_ATTACHMENT_TYPE = '#microsoft.graph.fileAttachment';
+const MAX_ATTACHMENT_EVIDENCE_PAGES = 20;
 
 function isInvestigationFolder(value: string): value is InvestigationFolder {
   return INVESTIGATION_FOLDERS.has(value as InvestigationFolder);
@@ -253,30 +324,115 @@ function investigationTokens(value: string): string[] {
     .filter(Boolean);
 }
 
+interface InvestigationTextMatcher {
+  includes(signal: string): boolean;
+}
+
+interface CompactMatcherNode {
+  readonly next: Map<string, number>;
+  fail: number;
+  readonly outputs: string[];
+}
+
+function findCompactSignalMatches(
+  compactText: string,
+  boundaryOffsets: Uint8Array,
+  signals: readonly string[]
+): ReadonlySet<string> {
+  const patterns = [...new Set(signals.map(normalizeInvestigationSignal))].filter(Boolean);
+  if (patterns.length === 0 || compactText.length === 0) return new Set();
+
+  const nodes: CompactMatcherNode[] = [
+    {
+      next: new Map(),
+      fail: 0,
+      outputs: [],
+    },
+  ];
+  for (const pattern of patterns) {
+    let nodeIndex = 0;
+    for (let characterIndex = 0; characterIndex < pattern.length; characterIndex += 1) {
+      const character = pattern[characterIndex];
+      const existing = nodes[nodeIndex].next.get(character);
+      if (existing !== undefined) {
+        nodeIndex = existing;
+        continue;
+      }
+      const nextIndex = nodes.length;
+      nodes[nodeIndex].next.set(character, nextIndex);
+      nodes.push({ next: new Map(), fail: 0, outputs: [] });
+      nodeIndex = nextIndex;
+    }
+    nodes[nodeIndex].outputs.push(pattern);
+  }
+
+  const queue: number[] = [];
+  for (const child of nodes[0].next.values()) queue.push(child);
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const nodeIndex = queue[cursor];
+    for (const [character, child] of nodes[nodeIndex].next) {
+      queue.push(child);
+      let failure = nodes[nodeIndex].fail;
+      while (failure !== 0 && !nodes[failure].next.has(character)) {
+        failure = nodes[failure].fail;
+      }
+      nodes[child].fail = nodes[failure].next.get(character) ?? 0;
+      nodes[child].outputs.push(...nodes[nodes[child].fail].outputs);
+    }
+  }
+
+  const matches = new Set<string>();
+  let nodeIndex = 0;
+  for (let offset = 0; offset < compactText.length; offset += 1) {
+    const character = compactText[offset];
+    while (nodeIndex !== 0 && !nodes[nodeIndex].next.has(character)) {
+      nodeIndex = nodes[nodeIndex].fail;
+    }
+    nodeIndex = nodes[nodeIndex].next.get(character) ?? 0;
+    for (const pattern of nodes[nodeIndex].outputs) {
+      const start = offset - pattern.length + 1;
+      if (start >= 0 && boundaryOffsets[start] === 1 && boundaryOffsets[offset + 1] === 1) {
+        matches.add(pattern);
+      }
+    }
+    if (matches.size === patterns.length) break;
+  }
+  return matches;
+}
+
+function createInvestigationTextMatcher(
+  haystack: string,
+  compactSignals: readonly string[] = []
+): InvestigationTextMatcher {
+  const tokens = investigationTokens(haystack);
+  const separator = '\u0001';
+  const tokenKey = `${separator}${tokens.join(separator)}${separator}`;
+  const compactText = tokens.join('');
+  const boundaryOffsets = new Uint8Array(compactText.length + 1);
+  let offset = 0;
+  boundaryOffsets[0] = 1;
+  for (const token of tokens) {
+    offset += token.length;
+    boundaryOffsets[offset] = 1;
+  }
+  const compactMatches = findCompactSignalMatches(compactText, boundaryOffsets, compactSignals);
+
+  return {
+    includes(signal: string): boolean {
+      const signalTokens = investigationTokens(signal);
+      if (signalTokens.length === 0) return false;
+
+      const signalKey = `${separator}${signalTokens.join(separator)}${separator}`;
+      if (tokenKey.includes(signalKey)) return true;
+
+      const compactSignal = normalizeInvestigationSignal(signal);
+      return compactSignal.length > 0 && compactMatches.has(compactSignal);
+    },
+  };
+}
+
 function investigationTokenSequenceIncludes(haystack: string, signal: string): boolean {
-  const haystackTokens = investigationTokens(haystack);
-  const signalTokens = investigationTokens(signal);
-  if (signalTokens.length === 0 || haystackTokens.length < signalTokens.length) return false;
-
-  for (let start = 0; start <= haystackTokens.length - signalTokens.length; start += 1) {
-    if (signalTokens.every((token, offset) => haystackTokens[start + offset] === token)) {
-      return true;
-    }
-  }
-
-  // Some identifiers are written both with and without separators (for
-  // example PROP-1001 and PROP1001). Joining only contiguous tokens preserves
-  // token boundaries, so PROP-1001 cannot match PROP-10010.
-  const compactSignal = normalizeInvestigationSignal(signal);
-  for (let start = 0; start < haystackTokens.length; start += 1) {
-    let compact = '';
-    for (let end = start; end < haystackTokens.length; end += 1) {
-      compact += haystackTokens[end];
-      if (compact === compactSignal) return true;
-      if (compact.length >= compactSignal.length) break;
-    }
-  }
-  return false;
+  return createInvestigationTextMatcher(haystack, [signal]).includes(signal);
 }
 
 function includesInvestigationSignal(haystack: string, signal: string): boolean {
@@ -367,6 +523,25 @@ function decodeGraphBase64(value: string, maxBytes: number): Buffer {
     throw new AttachmentHandoffError('ATTACHMENT_FETCH_FAILED');
   }
   return decoded;
+}
+
+function decodeBoundedBase64(
+  value: unknown,
+  maxBytes: number
+): { buffer?: Buffer; reason?: 'ATTACHMENT_TOO_LARGE' | 'BASE64_INVALID' } {
+  if (typeof value !== 'string') return { reason: 'BASE64_INVALID' };
+  const maxEncodedChars = Math.ceil(maxBytes / 3) * 4;
+  if (value.length > maxEncodedChars) return { reason: 'ATTACHMENT_TOO_LARGE' };
+  if (
+    value.length % 4 !== 0 ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)
+  ) {
+    return { reason: 'BASE64_INVALID' };
+  }
+  const decoded = Buffer.from(value, 'base64');
+  if (decoded.length > maxBytes) return { reason: 'ATTACHMENT_TOO_LARGE' };
+  if (decoded.toString('base64') !== value) return { reason: 'BASE64_INVALID' };
+  return { buffer: decoded };
 }
 
 function truncateUtf8(value: string, maxBytes: number): string {
@@ -701,6 +876,299 @@ export class MultiMailboxService {
         },
       },
     };
+  }
+
+  async inspectAttachmentEvidence(
+    alias: string,
+    messageId: string,
+    attachmentId: string,
+    criteria: Omit<InspectAttachmentEvidenceInput, 'mailbox' | 'messageId' | 'attachmentId'>
+  ): Promise<AttachmentEvidenceResult> {
+    const mailbox = this.resolveMailbox(alias);
+    const emailService = this.createEmailService(mailbox.address);
+    const matchedSignals = {
+      proposalIds: [] as string[],
+      clients: [] as string[],
+      insurers: [] as string[],
+      attachmentNames: [] as string[],
+    };
+    const confirmationReasons: AttachmentEvidenceConfirmationReason[] = [];
+    const reasons: AttachmentEvidenceReason[] = [];
+    const listingCoverage = {
+      pagesScanned: 0,
+      itemsScanned: 0,
+      complete: false,
+    };
+    const downloadCoverage = { attempted: false, decoded: false };
+    const extractionCoverage: {
+      attempted: boolean;
+      complete: boolean;
+      supported: boolean;
+      truncated?: boolean;
+    } = {
+      attempted: false,
+      complete: false,
+      supported: false,
+    };
+    let metadata: {
+      id?: string;
+      name?: string;
+      contentType?: string;
+      declaredSizeBytes?: number;
+      extractor?: 'pdf' | 'xlsx' | 'docx' | 'text';
+      actualSizeBytes?: number;
+      sha256?: string;
+    } = { id: attachmentId };
+
+    const result = (status: AttachmentEvidenceStatus): AttachmentEvidenceResult => ({
+      mailbox: mailbox.alias,
+      messageId,
+      attachmentId,
+      status,
+      attachment: metadata,
+      matchedSignals,
+      confirmationReasons,
+      reasons: [...new Set(reasons)],
+      coverage: {
+        complete:
+          listingCoverage.complete &&
+          ((status === 'NOT_CONFIRMED' && reasons.includes('ATTACHMENT_NOT_FOUND')) ||
+            (downloadCoverage.decoded && extractionCoverage.complete && reasons.length === 0)),
+        listing: { ...listingCoverage },
+        download: { ...downloadCoverage },
+        extraction: { ...extractionCoverage },
+      },
+    });
+
+    let listing: { items: unknown[]; pagesScanned: number; truncated: boolean };
+    try {
+      listing = await emailService.listAttachmentsDetailed(messageId, {
+        maxItems: this.config.maxBatchSize + 1,
+        maxPages: MAX_ATTACHMENT_EVIDENCE_PAGES,
+      });
+    } catch {
+      reasons.push('ATTACHMENT_LIST_FAILED');
+      return result('VALIDATION_INCOMPLETE');
+    }
+
+    if (
+      !Array.isArray(listing.items) ||
+      !Number.isSafeInteger(listing.pagesScanned) ||
+      listing.pagesScanned < 1 ||
+      listing.pagesScanned > MAX_ATTACHMENT_EVIDENCE_PAGES ||
+      typeof listing.truncated !== 'boolean'
+    ) {
+      reasons.push('ATTACHMENT_LIST_FAILED');
+      return result('VALIDATION_INCOMPLETE');
+    }
+    const listed = listing.items as ListedAttachment[];
+    const hasMalformedAttachmentId = listed.some((attachment) => {
+      if (!attachment || typeof attachment !== 'object') return true;
+      const id = (attachment as { id?: unknown }).id;
+      return typeof id !== 'string' || id.length === 0 || id.length > 512;
+    });
+    if (hasMalformedAttachmentId) {
+      reasons.push('ATTACHMENT_LIST_FAILED');
+      return result('VALIDATION_INCOMPLETE');
+    }
+    listingCoverage.pagesScanned = safeCount(listing.pagesScanned);
+    listingCoverage.itemsScanned = listed.length;
+    if (listing.truncated || listed.length > this.config.maxBatchSize) {
+      reasons.push('ATTACHMENT_LIST_INCOMPLETE');
+      return result('VALIDATION_INCOMPLETE');
+    }
+    listingCoverage.complete = true;
+
+    const matches = listed.filter((attachment) => attachment.id === attachmentId);
+    if (matches.length === 0) {
+      reasons.push('ATTACHMENT_NOT_FOUND');
+      return result('NOT_CONFIRMED');
+    }
+    if (matches.length !== 1) {
+      reasons.push('ATTACHMENT_ID_DUPLICATE');
+      return result('VALIDATION_INCOMPLETE');
+    }
+
+    const listedAttachment = matches[0];
+    const name = typeof listedAttachment.name === 'string' ? listedAttachment.name : undefined;
+    const contentType =
+      typeof listedAttachment.contentType === 'string'
+        ? listedAttachment.contentType.trim()
+        : undefined;
+    const declaredSize = listedAttachment.size;
+    metadata = {
+      id: typeof listedAttachment.id === 'string' ? listedAttachment.id.slice(0, 512) : undefined,
+      name: boundedInvestigationText(name, 300),
+      contentType: boundedInvestigationText(contentType, 100),
+      declaredSizeBytes:
+        typeof declaredSize === 'number' && Number.isSafeInteger(declaredSize)
+          ? declaredSize
+          : undefined,
+    };
+
+    if (
+      !name ||
+      name.length > 4_096 ||
+      !contentType ||
+      !Number.isSafeInteger(declaredSize) ||
+      (declaredSize as number) < 0
+    ) {
+      reasons.push('ATTACHMENT_METADATA_INVALID');
+      return result('VALIDATION_INCOMPLETE');
+    }
+    if ((declaredSize as number) > this.config.maxAttachmentInputBytes) {
+      reasons.push('ATTACHMENT_TOO_LARGE');
+      return result('VALIDATION_INCOMPLETE');
+    }
+    if (listedAttachment.attachmentType !== FILE_ATTACHMENT_TYPE) {
+      reasons.push('ATTACHMENT_TYPE_UNSUPPORTED');
+      return result('VALIDATION_INCOMPLETE');
+    }
+
+    let downloaded: {
+      name?: unknown;
+      contentType?: unknown;
+      content?: unknown;
+      size?: unknown;
+      attachmentType?: unknown;
+    };
+    downloadCoverage.attempted = true;
+    try {
+      downloaded = await emailService.downloadAttachment(messageId, attachmentId);
+    } catch {
+      reasons.push('DOWNLOAD_FAILED');
+      return result('VALIDATION_INCOMPLETE');
+    }
+
+    const downloadedName = typeof downloaded.name === 'string' ? downloaded.name : undefined;
+    const downloadedContentType =
+      typeof downloaded.contentType === 'string' ? downloaded.contentType.trim() : undefined;
+    if (
+      !downloadedName ||
+      !downloadedContentType ||
+      !investigationAttachmentEqualsSignal(downloadedName, name) ||
+      downloadedContentType.toLowerCase() !== contentType.toLowerCase() ||
+      downloaded.attachmentType !== FILE_ATTACHMENT_TYPE
+    ) {
+      reasons.push('DOWNLOAD_METADATA_INVALID');
+      return result('VALIDATION_INCOMPLETE');
+    }
+
+    const decoded = decodeBoundedBase64(downloaded.content, this.config.maxAttachmentInputBytes);
+    if (!decoded.buffer) {
+      reasons.push(
+        decoded.reason === 'ATTACHMENT_TOO_LARGE' ? 'ATTACHMENT_TOO_LARGE' : 'BASE64_INVALID'
+      );
+      return result('VALIDATION_INCOMPLETE');
+    }
+    downloadCoverage.decoded = true;
+    metadata = {
+      ...metadata,
+      actualSizeBytes: decoded.buffer.length,
+      sha256: createHash('sha256').update(decoded.buffer).digest('hex'),
+    };
+    if (decoded.buffer.length !== declaredSize) {
+      reasons.push('SIZE_MISMATCH');
+      return result('VALIDATION_INCOMPLETE');
+    }
+    if (
+      downloaded.size !== undefined &&
+      (!Number.isSafeInteger(downloaded.size) || downloaded.size !== decoded.buffer.length)
+    ) {
+      reasons.push('SIZE_MISMATCH');
+      return result('VALIDATION_INCOMPLETE');
+    }
+
+    extractionCoverage.attempted = true;
+    let extracted: Awaited<ReturnType<typeof runAttachmentPipeline>>;
+    try {
+      extracted = await runAttachmentPipeline({
+        buffer: decoded.buffer,
+        name,
+        contentType,
+        maxChars: this.config.maxExtractedChars,
+        mode: 'text',
+        zipLimits: {
+          maxEntries: this.config.maxZipEntries,
+          maxUncompressedBytes: this.config.maxZipUncompressedBytes,
+        },
+        containerLimits: {
+          maxEntries: this.config.maxContainerEntries,
+          maxUncompressedBytes: this.config.maxContainerUncompressedBytes,
+        },
+        maxConcurrentExtractions: this.config.maxConcurrentExtractions,
+      });
+    } catch (error) {
+      if (error instanceof ExtractionError) {
+        if (error.code === 'UNSUPPORTED_FORMAT') reasons.push('UNSUPPORTED_FORMAT');
+        else if (error.code === 'EXTRACTION_TIMEOUT') reasons.push('EXTRACTION_TIMEOUT');
+        else reasons.push('EXTRACTION_FAILED');
+      } else if (error instanceof ZipError) {
+        reasons.push('EXTRACTION_FAILED');
+      } else {
+        reasons.push('EXTRACTION_FAILED');
+      }
+      return result('VALIDATION_INCOMPLETE');
+    }
+
+    if (extracted.kind !== 'text') {
+      reasons.push('UNSUPPORTED_FORMAT');
+      return result('VALIDATION_INCOMPLETE');
+    }
+    extractionCoverage.supported = true;
+    extractionCoverage.truncated = extracted.truncated;
+    if (extracted.truncated) {
+      reasons.push('EXTRACTION_TRUNCATED');
+      return result('VALIDATION_INCOMPLETE');
+    }
+    if (!extracted.text.trim()) {
+      reasons.push('EXTRACTION_EMPTY');
+      return result('VALIDATION_INCOMPLETE');
+    }
+    extractionCoverage.complete = true;
+    metadata = { ...metadata, extractor: extracted.extractor };
+
+    const textMatcher = createInvestigationTextMatcher(extracted.text, [
+      ...criteria.proposalIds,
+      ...criteria.clients,
+      ...criteria.insurers,
+    ]);
+    const proposalIdsInName = criteria.proposalIds.filter((signal) =>
+      investigationAttachmentContainsSignal(name, signal)
+    );
+    const clientsInText = criteria.clients.filter((signal) => textMatcher.includes(signal));
+    const insurersInText = criteria.insurers.filter((signal) => textMatcher.includes(signal));
+    const proposalIdsInText = criteria.proposalIds.filter((signal) => textMatcher.includes(signal));
+    const attachmentNamesMatched = criteria.attachmentNames.filter((signal) =>
+      investigationAttachmentEqualsSignal(name, signal)
+    );
+    matchedSignals.proposalIds = [...new Set([...proposalIdsInName, ...proposalIdsInText])];
+    matchedSignals.clients = clientsInText;
+    matchedSignals.insurers = insurersInText;
+    matchedSignals.attachmentNames = attachmentNamesMatched;
+
+    if (proposalIdsInName.length > 0) {
+      confirmationReasons.push('PROPOSAL_ID_IN_ATTACHMENT_NAME');
+    }
+    if (
+      attachmentNamesMatched.length > 0 &&
+      (proposalIdsInText.length > 0 || clientsInText.length > 0 || insurersInText.length > 0)
+    ) {
+      confirmationReasons.push('REQUESTED_ATTACHMENT_NAME_AND_IDENTITY_IN_TEXT');
+    }
+
+    const hasMatch =
+      matchedSignals.proposalIds.length > 0 ||
+      matchedSignals.clients.length > 0 ||
+      matchedSignals.insurers.length > 0 ||
+      matchedSignals.attachmentNames.length > 0;
+    const status =
+      confirmationReasons.length > 0
+        ? 'CONFIRMED'
+        : hasMatch
+          ? 'CANDIDATE_REVIEW'
+          : 'NOT_CONFIRMED';
+    return result(status);
   }
 
   async listFolders(alias: string): Promise<{ items: unknown[]; truncated: boolean }> {

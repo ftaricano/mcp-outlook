@@ -3,7 +3,11 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { PluginConfig } from './config.js';
 import { AttachmentHandoffError } from './attachmentHandoffStore.js';
 import { AttachmentContentError } from './MultiMailboxService.js';
-import type { InvestigateDocumentsResult, MultiMailboxService } from './MultiMailboxService.js';
+import type {
+  AttachmentEvidenceResult,
+  InvestigateDocumentsResult,
+  MultiMailboxService,
+} from './MultiMailboxService.js';
 import {
   copyMessagesSchema,
   createAttachmentHandoffSchema,
@@ -13,6 +17,7 @@ import {
   getAttachmentHandoffSchema,
   getFolderStatsSchema,
   getMessageSchema,
+  inspectAttachmentEvidenceSchema,
   investigateDocumentsSchema,
   listAllowedMailboxesSchema,
   listAttachmentsSchema,
@@ -203,6 +208,21 @@ function investigateDocumentsProjection(result: InvestigateDocumentsResult) {
       matchedSignals: match.matchedSignals,
       confirmationReasons: match.confirmationReasons,
     })),
+    coverage: result.coverage,
+  };
+}
+
+function inspectAttachmentEvidenceProjection(result: AttachmentEvidenceResult) {
+  return {
+    dataTrust: UNTRUSTED_DATA_MARKER,
+    mailbox: result.mailbox,
+    messageId: result.messageId,
+    attachmentId: result.attachmentId,
+    status: result.status,
+    attachment: result.attachment,
+    matchedSignals: result.matchedSignals,
+    confirmationReasons: result.confirmationReasons,
+    reasons: result.reasons,
     coverage: result.coverage,
   };
 }
@@ -447,6 +467,52 @@ export function createOutlookPluginServer(
         };
       } catch {
         return toolError('Document investigation failed or the mailbox alias is not allowed.');
+      }
+    }
+  );
+
+  server.registerTool(
+    'inspect_attachment_evidence',
+    {
+      title: 'Inspect Outlook attachment evidence',
+      description:
+        'Validate one exact attachment from an allowed mailbox, hash and boundedly extract it in an isolated worker, and return evidence metadata without attachment text or Base64.',
+      inputSchema: inspectAttachmentEvidenceSchema,
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async ({
+      mailbox,
+      messageId,
+      attachmentId,
+      proposalIds,
+      clients,
+      insurers,
+      attachmentNames,
+    }) => {
+      try {
+        const structuredContent = inspectAttachmentEvidenceProjection(
+          await service.inspectAttachmentEvidence(mailbox, messageId, attachmentId, {
+            proposalIds,
+            clients,
+            insurers,
+            attachmentNames,
+          })
+        );
+        return {
+          content: [
+            {
+              type: 'text',
+              text:
+                `Attachment evidence in mailbox ${mailbox}: ${structuredContent.status}. ` +
+                `${UNTRUSTED_FRAMING}`,
+            },
+          ],
+          structuredContent,
+        };
+      } catch {
+        return toolError(
+          'Attachment evidence inspection failed or the mailbox alias is not allowed.'
+        );
       }
     }
   );

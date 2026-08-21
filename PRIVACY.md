@@ -3,7 +3,7 @@
 `mcp-outlook` processes Microsoft Outlook data only when an operator configures Microsoft
 Graph credentials and invokes a tool.
 
-The multi-mailbox plugin defaults to eleven read-only tools. In that mode, it:
+The multi-mailbox plugin defaults to twelve read-only tools. In that mode, it:
 
 - reads only mailboxes listed in the operator's private allowlist;
 - returns bounded message metadata, body content, and explicitly requested attachment content;

@@ -141,6 +141,37 @@ export const investigateDocumentsSchema = z
   .object({ mailbox: mailboxAliasSchema, criteria: investigateDocumentsCriteriaSchema })
   .strict();
 
+const inspectAttachmentEvidenceSignalListSchema = z
+  .array(investigationSignalSchema)
+  .max(25)
+  .default([]);
+
+export const inspectAttachmentEvidenceSchema = z
+  .object({
+    mailbox: mailboxAliasSchema,
+    messageId: messageIdSchema,
+    attachmentId: z.string().min(1).max(512),
+    proposalIds: inspectAttachmentEvidenceSignalListSchema,
+    clients: inspectAttachmentEvidenceSignalListSchema,
+    insurers: inspectAttachmentEvidenceSignalListSchema,
+    attachmentNames: inspectAttachmentEvidenceSignalListSchema,
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (
+      input.proposalIds.length === 0 &&
+      input.clients.length === 0 &&
+      input.insurers.length === 0 &&
+      input.attachmentNames.length === 0
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: [],
+        message: 'at least one attachment evidence signal is required',
+      });
+    }
+  });
+
 export const createAttachmentHandoffSchema = z
   .object({
     mailbox: mailboxAliasSchema,
@@ -237,6 +268,7 @@ export type ListAttachmentsInput = z.output<typeof listAttachmentsSchema>;
 export type GetAttachmentContentInput = z.output<typeof getAttachmentContentSchema>;
 export type InvestigateDocumentsInput = z.output<typeof investigateDocumentsSchema>;
 export type InvestigateDocumentsCriteria = InvestigateDocumentsInput['criteria'];
+export type InspectAttachmentEvidenceInput = z.output<typeof inspectAttachmentEvidenceSchema>;
 export type CreateAttachmentHandoffInput = z.output<typeof createAttachmentHandoffSchema>;
 export type GetAttachmentHandoffInput = z.output<typeof getAttachmentHandoffSchema>;
 export type SearchMailboxesBatchInput = z.output<typeof searchMailboxesBatchSchema>;

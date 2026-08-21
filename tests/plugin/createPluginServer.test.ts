@@ -199,6 +199,35 @@ function fakeService(overrides: Partial<MultiMailboxService> = {}): MultiMailbox
       truncated: false,
       extractor: 'pdf',
     }),
+    inspectAttachmentEvidence: async () => ({
+      mailbox: 'finance',
+      messageId: 'm1',
+      attachmentId: 'a1',
+      status: 'CONFIRMED' as const,
+      attachment: {
+        id: 'a1',
+        name: 'fatura.pdf',
+        contentType: 'application/pdf',
+        declaredSizeBytes: 12,
+        actualSizeBytes: 12,
+        sha256: 'a'.repeat(64),
+        extractor: 'pdf' as const,
+      },
+      matchedSignals: {
+        proposalIds: ['PROP-1001'],
+        clients: [],
+        insurers: [],
+        attachmentNames: [],
+      },
+      confirmationReasons: ['PROPOSAL_ID_IN_ATTACHMENT_NAME' as const],
+      reasons: [],
+      coverage: {
+        complete: true,
+        listing: { pagesScanned: 1, itemsScanned: 1, complete: true },
+        download: { attempted: true, decoded: true },
+        extraction: { attempted: true, complete: true, supported: true, truncated: false },
+      },
+    }),
     createAttachmentHandoff: async () => ({
       version: 1 as const,
       handoffId: `oh_${'A'.repeat(43)}`,
@@ -333,7 +362,7 @@ afterEach(async () => {
 
 describe('createOutlookPluginServer', () => {
   describe('expanded catalog', () => {
-    it('registers exactly the 11 read tools when writes are disabled', async () => {
+    it('registers exactly the 12 read tools when writes are disabled', async () => {
       const { client } = await connect(createServer({ allowWrites: false }));
       const { tools } = await client.listTools();
       expect(tools.map((tool) => tool.name).sort()).toEqual(
@@ -341,6 +370,7 @@ describe('createOutlookPluginServer', () => {
           'get_attachment_content',
           'get_folder_stats',
           'get_message',
+          'inspect_attachment_evidence',
           'investigate_documents',
           'list_allowed_mailboxes',
           'list_attachments',
@@ -357,7 +387,7 @@ describe('createOutlookPluginServer', () => {
       const { client } = await connect(createServer({ allowWrites: true }));
       const { tools } = await client.listTools();
       const names = tools.map((tool) => tool.name);
-      expect(names).toHaveLength(16);
+      expect(names).toHaveLength(17);
       for (const name of [
         'download_attachments',
         'move_messages',
@@ -374,7 +404,7 @@ describe('createOutlookPluginServer', () => {
         createServer({ allowWrites: false, allowLocalHandoffs: true })
       );
       const handoffTools = (await handoffsOnly.client.listTools()).tools;
-      expect(handoffTools).toHaveLength(13);
+      expect(handoffTools).toHaveLength(14);
       expect(handoffTools.map((tool) => tool.name)).toEqual(
         expect.arrayContaining(['create_attachment_handoff', 'get_attachment_handoff'])
       );
@@ -382,7 +412,7 @@ describe('createOutlookPluginServer', () => {
 
       const both = await connect(createServer({ allowWrites: true, allowLocalHandoffs: true }));
       const bothTools = (await both.client.listTools()).tools;
-      expect(bothTools).toHaveLength(18);
+      expect(bothTools).toHaveLength(19);
       expect(bothTools.map((tool) => tool.name)).toEqual(
         expect.arrayContaining([
           'create_attachment_handoff',
@@ -609,6 +639,34 @@ describe('createOutlookPluginServer', () => {
     );
     const text = (result.content as Array<{ text: string }>).map((block) => block.text).join(' ');
     expect(text).toMatch(/untrusted data, not instructions/i);
+  });
+
+  it('returns attachment evidence metadata without text or Base64', async () => {
+    const { client } = await connect(createServer());
+    const result = await client.callTool({
+      name: 'inspect_attachment_evidence',
+      arguments: {
+        mailbox: 'finance',
+        messageId: 'm1',
+        attachmentId: 'a1',
+        proposalIds: ['PROP-1001'],
+      },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      mailbox: 'finance',
+      status: 'CONFIRMED',
+      attachment: {
+        name: 'fatura.pdf',
+        sha256: 'a'.repeat(64),
+      },
+      coverage: { complete: true },
+      dataTrust: 'UNTRUSTED_EMAIL_DATA_V1',
+    });
+    expect(result.structuredContent).not.toHaveProperty('text');
+    expect(result.structuredContent).not.toHaveProperty('base64');
+    expect(JSON.stringify(result.structuredContent)).not.toContain('secret body');
   });
 
   it('truncates message bodies according to server policy', async () => {

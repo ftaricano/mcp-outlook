@@ -4,6 +4,7 @@ import {
   createDraftSchema,
   getAttachmentContentSchema,
   getAttachmentHandoffSchema,
+  inspectAttachmentEvidenceSchema,
   investigateDocumentsSchema,
   listMessagesSchema,
   markMessagesSchema,
@@ -156,6 +157,47 @@ describe('expansion tool schemas', () => {
       entry: 'relatorio..v2.pdf',
     });
     expect(parsed.entry).toBe('relatorio..v2.pdf');
+  });
+
+  it('requires at least one caller-supplied attachment evidence signal', () => {
+    expect(() =>
+      inspectAttachmentEvidenceSchema.parse({
+        mailbox: 'finance',
+        messageId: 'm1',
+        attachmentId: 'a1',
+      })
+    ).toThrow(/signal/i);
+
+    const parsed = inspectAttachmentEvidenceSchema.parse({
+      mailbox: 'finance',
+      messageId: 'm1',
+      attachmentId: 'a1',
+      clients: ['Example Client'],
+    });
+    expect(parsed.proposalIds).toEqual([]);
+    expect(parsed.clients).toEqual(['Example Client']);
+    expect(parsed.insurers).toEqual([]);
+    expect(parsed.attachmentNames).toEqual([]);
+  });
+
+  it('bounds evidence signals and rejects undeclared fields', () => {
+    expect(() =>
+      inspectAttachmentEvidenceSchema.parse({
+        mailbox: 'finance',
+        messageId: 'm1',
+        attachmentId: 'a1',
+        proposalIds: Array.from({ length: 26 }, (_, index) => `P-${index}`),
+      })
+    ).toThrow();
+    expect(() =>
+      inspectAttachmentEvidenceSchema.parse({
+        mailbox: 'finance',
+        messageId: 'm1',
+        attachmentId: 'a1',
+        clients: ['Example Client'],
+        text: 'must not be accepted',
+      })
+    ).toThrow();
   });
 
   it('rejects entry names the listing never emits, keeping both validations aligned', () => {

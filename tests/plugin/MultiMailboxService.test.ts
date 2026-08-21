@@ -824,6 +824,296 @@ describe('read expansion methods', () => {
   });
 });
 
+describe('inspectAttachmentEvidence', () => {
+  function makeService(
+    options: {
+      name?: string;
+      contentType?: string;
+      bytes?: Buffer;
+      declaredSize?: number;
+      listed?: Record<string, unknown>[];
+      truncated?: boolean;
+      download?: Record<string, unknown>;
+      downloadError?: boolean;
+    } = {}
+  ) {
+    const bytes = options.bytes ?? Buffer.from('Proposal PROP-1001 for Example Client', 'utf8');
+    const name = options.name ?? 'proposal.txt';
+    const contentType = options.contentType ?? 'text/plain';
+    const listed = options.listed ?? [
+      {
+        id: 'attachment-1',
+        name,
+        contentType,
+        size: options.declaredSize ?? bytes.length,
+        attachmentType: '#microsoft.graph.fileAttachment',
+      },
+    ];
+    const downloadAttachment = vi.fn(async () => {
+      if (options.downloadError) throw new Error('synthetic download failure');
+      return {
+        name,
+        contentType,
+        attachmentType: '#microsoft.graph.fileAttachment',
+        content: bytes.toString('base64'),
+        size: bytes.length,
+        ...options.download,
+      };
+    });
+    return {
+      service: new MultiMailboxService(config(), () =>
+        stubEmailService({
+          listAttachmentsDetailed: vi.fn(async () => ({
+            items: listed,
+            pagesScanned: 2,
+            truncated: options.truncated ?? false,
+          })),
+          downloadAttachment,
+        })
+      ),
+      downloadAttachment,
+      bytes,
+    };
+  }
+
+  const baseCriteria = {
+    proposalIds: ['PROP-1001'],
+    clients: ['Example Client'],
+    insurers: [],
+    attachmentNames: ['proposal.txt'],
+  };
+
+  it('confirms a proposal ID in the exact attachment name and returns bounded hash metadata only', async () => {
+    const { service, downloadAttachment, bytes } = makeService({ name: 'PROP-1001.txt' });
+    const result = await service.inspectAttachmentEvidence('finance', 'message-1', 'attachment-1', {
+      ...baseCriteria,
+      attachmentNames: [],
+    });
+
+    expect(result.status).toBe('CONFIRMED');
+    expect(result.confirmationReasons).toEqual(['PROPOSAL_ID_IN_ATTACHMENT_NAME']);
+    expect(result.attachment).toMatchObject({
+      name: 'PROP-1001.txt',
+      declaredSizeBytes: bytes.length,
+      actualSizeBytes: bytes.length,
+      sha256: expect.any(String),
+      extractor: 'text',
+    });
+    expect(result).not.toHaveProperty('text');
+    expect(result).not.toHaveProperty('base64');
+    expect(downloadAttachment).toHaveBeenCalledOnce();
+  });
+
+  it('confirms an exact requested attachment name only with independent identity in extracted text', async () => {
+    const { service } = makeService();
+    const result = await service.inspectAttachmentEvidence('finance', 'message-1', 'attachment-1', {
+      ...baseCriteria,
+      proposalIds: [],
+    });
+
+    expect(result.status).toBe('CONFIRMED');
+    expect(result.confirmationReasons).toEqual(['REQUESTED_ATTACHMENT_NAME_AND_IDENTITY_IN_TEXT']);
+    expect(result.matchedSignals).toEqual({
+      proposalIds: [],
+      clients: ['Example Client'],
+      insurers: [],
+      attachmentNames: ['proposal.txt'],
+    });
+  });
+
+  it('keeps content-only and name-only matches at candidate review', async () => {
+    const contentOnly = makeService();
+    const contentResult = await contentOnly.service.inspectAttachmentEvidence(
+      'finance',
+      'message-1',
+      'attachment-1',
+      { proposalIds: [], clients: ['Example Client'], insurers: [], attachmentNames: [] }
+    );
+    expect(contentResult.status).toBe('CANDIDATE_REVIEW');
+
+    const nameOnly = makeService();
+    const nameResult = await nameOnly.service.inspectAttachmentEvidence(
+      'finance',
+      'message-1',
+      'attachment-1',
+      { proposalIds: [], clients: [], insurers: [], attachmentNames: ['proposal.txt'] }
+    );
+    expect(nameResult.status).toBe('CANDIDATE_REVIEW');
+  });
+
+  it('matches compact proposal IDs in text without accepting a longer partial ID', async () => {
+    const compact = makeService({ bytes: Buffer.from('PROP1001', 'utf8') });
+    const compactResult = await compact.service.inspectAttachmentEvidence(
+      'finance',
+      'message-1',
+      'attachment-1',
+      { proposalIds: ['PROP-1001'], clients: [], insurers: [], attachmentNames: [] }
+    );
+    expect(compactResult.status).toBe('CANDIDATE_REVIEW');
+    expect(compactResult.matchedSignals.proposalIds).toEqual(['PROP-1001']);
+
+    const partial = makeService({ bytes: Buffer.from('PROP10010', 'utf8') });
+    const partialResult = await partial.service.inspectAttachmentEvidence(
+      'finance',
+      'message-1',
+      'attachment-1',
+      { proposalIds: ['PROP-1001'], clients: [], insurers: [], attachmentNames: [] }
+    );
+    expect(partialResult.status).toBe('NOT_CONFIRMED');
+    expect(partialResult.matchedSignals.proposalIds).toEqual([]);
+
+    const astral = makeService({ bytes: Buffer.from('𐐀1', 'utf8') });
+    const astralResult = await astral.service.inspectAttachmentEvidence(
+      'finance',
+      'message-1',
+      'attachment-1',
+      { proposalIds: ['𐐀-1'], clients: [], insurers: [], attachmentNames: [] }
+    );
+    expect(astralResult.status).toBe('CANDIDATE_REVIEW');
+    expect(astralResult.matchedSignals.proposalIds).toEqual(['𐐀-1']);
+  });
+
+  it('returns NOT_CONFIRMED only after complete listing, decoding, hashing, and extraction', async () => {
+    const { service } = makeService({ bytes: Buffer.from('Routine document', 'utf8') });
+    const result = await service.inspectAttachmentEvidence('finance', 'message-1', 'attachment-1', {
+      proposalIds: ['MISSING-99'],
+      clients: ['Other Client'],
+      insurers: ['Other Insurer'],
+      attachmentNames: ['other.txt'],
+    });
+
+    expect(result.status).toBe('NOT_CONFIRMED');
+    expect(result.reasons).toEqual([]);
+    expect(result.coverage).toMatchObject({
+      complete: true,
+      listing: { complete: true, pagesScanned: 2 },
+      download: { attempted: true, decoded: true },
+      extraction: { attempted: true, complete: true, supported: true, truncated: false },
+    });
+  });
+
+  it('fails closed when the attachment listing is truncated and does not download a guessed item', async () => {
+    const { service, downloadAttachment } = makeService({ truncated: true });
+    const result = await service.inspectAttachmentEvidence('finance', 'message-1', 'attachment-1', {
+      ...baseCriteria,
+    });
+
+    expect(result.status).toBe('VALIDATION_INCOMPLETE');
+    expect(result.reasons).toEqual(['ATTACHMENT_LIST_INCOMPLETE']);
+    expect(downloadAttachment).not.toHaveBeenCalled();
+  });
+
+  it('reports a deterministic NOT_CONFIRMED when a complete listing lacks the exact attachment ID', async () => {
+    const { service, downloadAttachment } = makeService({
+      listed: [
+        {
+          id: 'different-attachment',
+          name: 'other.txt',
+          contentType: 'text/plain',
+          size: 4,
+          attachmentType: '#microsoft.graph.fileAttachment',
+        },
+      ],
+    });
+    const result = await service.inspectAttachmentEvidence('finance', 'message-1', 'attachment-1', {
+      ...baseCriteria,
+    });
+
+    expect(result.status).toBe('NOT_CONFIRMED');
+    expect(result.reasons).toEqual(['ATTACHMENT_NOT_FOUND']);
+    expect(result.coverage.complete).toBe(true);
+    expect(result.coverage.listing.complete).toBe(true);
+    expect(downloadAttachment).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a complete-looking listing contains an attachment without a valid ID', async () => {
+    const { service, downloadAttachment } = makeService({
+      listed: [
+        {
+          id: undefined,
+          name: 'other.txt',
+          contentType: 'text/plain',
+          size: 4,
+          attachmentType: '#microsoft.graph.fileAttachment',
+        },
+      ],
+    });
+    const result = await service.inspectAttachmentEvidence('finance', 'message-1', 'attachment-1', {
+      ...baseCriteria,
+    });
+
+    expect(result.status).toBe('VALIDATION_INCOMPLETE');
+    expect(result.reasons).toEqual(['ATTACHMENT_LIST_FAILED']);
+    expect(downloadAttachment).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when an attachment listing ID exceeds the bounded identifier size', async () => {
+    const { service, downloadAttachment } = makeService({
+      listed: [
+        {
+          id: 'a'.repeat(513),
+          name: 'other.txt',
+          contentType: 'text/plain',
+          size: 4,
+          attachmentType: '#microsoft.graph.fileAttachment',
+        },
+      ],
+    });
+    const result = await service.inspectAttachmentEvidence('finance', 'message-1', 'attachment-1', {
+      ...baseCriteria,
+    });
+
+    expect(result.status).toBe('VALIDATION_INCOMPLETE');
+    expect(result.reasons).toEqual(['ATTACHMENT_LIST_FAILED']);
+    expect(downloadAttachment).not.toHaveBeenCalled();
+  });
+
+  it('requires a known Graph file attachment type before validating content', async () => {
+    const { service, downloadAttachment } = makeService({
+      listed: [
+        {
+          id: 'attachment-1',
+          name: 'proposal.txt',
+          contentType: 'text/plain',
+          size: 1,
+        },
+      ],
+    });
+    const result = await service.inspectAttachmentEvidence('finance', 'message-1', 'attachment-1', {
+      ...baseCriteria,
+    });
+
+    expect(result.status).toBe('VALIDATION_INCOMPLETE');
+    expect(result.reasons).toEqual(['ATTACHMENT_TYPE_UNSUPPORTED']);
+    expect(downloadAttachment).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['size mismatch', { declaredSize: 999 }, 'SIZE_MISMATCH'],
+    ['malformed Base64', { download: { content: '%%%=' } }, 'BASE64_INVALID'],
+    ['download failure', { downloadError: true }, 'DOWNLOAD_FAILED'],
+    [
+      'missing download attachment type',
+      { download: { attachmentType: undefined } },
+      'DOWNLOAD_METADATA_INVALID',
+    ],
+    [
+      'unsupported format',
+      { name: 'proposal.bin', contentType: 'application/octet-stream' },
+      'UNSUPPORTED_FORMAT',
+    ],
+  ] as const)('returns VALIDATION_INCOMPLETE for %s', async (_label, options, reason) => {
+    const { service } = makeService(options);
+    const result = await service.inspectAttachmentEvidence('finance', 'message-1', 'attachment-1', {
+      ...baseCriteria,
+    });
+
+    expect(result.status).toBe('VALIDATION_INCOMPLETE');
+    expect(result.reasons).toContain(reason);
+    expect(result.status).not.toBe('NOT_CONFIRMED');
+  });
+});
+
 describe('deterministic caps and term expansion', () => {
   it('caps $search criteria at 50 results but allows 100 for deterministic criteria', async () => {
     const advancedSearch = vi.fn(async () => searchResult('FOUND'));
