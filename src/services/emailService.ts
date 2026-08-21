@@ -741,7 +741,7 @@ export class EmailService {
 
   async listAttachmentsDetailed(
     emailId: string,
-    options: { maxItems?: number; maxPages?: number } = {}
+    options: { maxItems?: number; maxPages?: number; metadataOnly?: boolean } = {}
   ): Promise<{ items: any[]; pagesScanned: number; truncated: boolean }> {
     try {
       const userEmail = this.targetUserEmail || 'me';
@@ -750,7 +750,13 @@ export class EmailService {
           ? `/me/messages/${encodeGraphSegment(emailId)}/attachments`
           : `/users/${userEmail}/messages/${encodeGraphSegment(emailId)}/attachments`;
 
-      const firstPage = await this.client.api(apiPath).get();
+      const request = this.client.api(apiPath);
+      const firstPage = options.metadataOnly
+        ? await request
+            .select('id,name,contentType,size,isInline')
+            .top(Math.min(Math.max(options.maxItems ?? 1_000, 1), 100))
+            .get()
+        : await request.get();
       const pagination = await collectGraphPages({
         firstPage,
         fetchNext: (nextLink) => this.client.api(validateGraphNextLink(nextLink)).get(),

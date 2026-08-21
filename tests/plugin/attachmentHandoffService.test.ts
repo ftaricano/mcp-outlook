@@ -93,6 +93,7 @@ describe('MultiMailboxService attachment handoffs', () => {
     expect(listAttachmentsDetailed).toHaveBeenCalledWith('message-1', {
       maxItems: 25,
       maxPages: 20,
+      metadataOnly: true,
     });
     expect(listAttachmentsDetailed).toHaveBeenCalledOnce();
     expect(downloadAttachment).toHaveBeenCalledOnce();

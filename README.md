@@ -211,8 +211,9 @@ remain candidates for review. Message bodies are never returned.
 ### Attachment evidence: `inspect_attachment_evidence`
 
 `inspect_attachment_evidence` is a read-only, alias-scoped check of one exact message attachment.
-It first requires a complete paginated attachment listing, validates the unique attachment metadata,
-declared size, and known Graph `fileAttachment` type, then performs one bounded Base64 download,
+Its paginated Graph listing selects metadata only; content is downloaded only after the exact
+attachment is uniquely identified and its declared size is validated. It then validates the
+known Graph `fileAttachment` type and performs one bounded Base64 download,
 computes SHA-256, and sends the bytes to the existing isolated extraction worker. The caller supplies proposal IDs, clients, insurers, and/or
 exact attachment names as bounded signals. The result returns only bounded metadata, hash, matched
 signals, and coverage; it never returns extracted text or Base64. `CONFIRMED` requires a proposal ID

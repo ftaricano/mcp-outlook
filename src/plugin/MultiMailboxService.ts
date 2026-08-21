@@ -772,6 +772,7 @@ export class MultiMailboxService {
             const listing = await emailService.listAttachmentsDetailed(messageId, {
               maxItems: criteria.maxAttachmentsPerMessage,
               maxPages: criteria.maxAttachmentPagesPerMessage,
+              metadataOnly: true,
             });
             const rawItems = Array.isArray(listing.items) ? listing.items : [];
             const invalidAttachmentName = rawItems.some((attachment) => {
@@ -1030,6 +1031,7 @@ export class MultiMailboxService {
       listing = await emailService.listAttachmentsDetailed(messageId, {
         maxItems: this.config.maxBatchSize + 1,
         maxPages: MAX_ATTACHMENT_EVIDENCE_PAGES,
+        metadataOnly: true,
       });
     } catch {
       reasons.push('ATTACHMENT_LIST_FAILED');
@@ -1283,7 +1285,9 @@ export class MultiMailboxService {
   ): Promise<{ items: unknown[]; pagesScanned: number; truncated: boolean }> {
     const mailbox = this.resolveMailbox(alias);
     try {
-      return await this.createEmailService(mailbox.address).listAttachmentsDetailed(messageId);
+      return await this.createEmailService(mailbox.address).listAttachmentsDetailed(messageId, {
+        metadataOnly: true,
+      });
     } catch {
       throw new MailboxOperationError('attachment listing');
     }
@@ -1417,6 +1421,7 @@ export class MultiMailboxService {
       listing = await emailService.listAttachmentsDetailed(messageId, {
         maxItems: this.config.maxBatchSize,
         maxPages: 20,
+        metadataOnly: true,
       });
     } catch {
       throw new AttachmentHandoffError('ATTACHMENT_FETCH_FAILED');
@@ -1570,6 +1575,7 @@ export class MultiMailboxService {
       const listing = await emailService.listAttachmentsDetailed(messageId, {
         maxItems: this.config.maxBatchSize + 1,
         maxPages: 20,
+        metadataOnly: true,
       });
       const listed = listing.items as {
         id?: string | null;

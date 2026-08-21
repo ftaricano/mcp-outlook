@@ -990,18 +990,20 @@ describe('inspectAttachmentEvidence', () => {
         ...options.download,
       };
     });
+    const listAttachmentsDetailed = vi.fn(async () => ({
+      items: listed,
+      pagesScanned: 2,
+      truncated: options.truncated ?? false,
+    }));
     return {
       service: new MultiMailboxService(config(), () =>
         stubEmailService({
-          listAttachmentsDetailed: vi.fn(async () => ({
-            items: listed,
-            pagesScanned: 2,
-            truncated: options.truncated ?? false,
-          })),
+          listAttachmentsDetailed,
           downloadAttachment,
         })
       ),
       downloadAttachment,
+      listAttachmentsDetailed,
       bytes,
     };
   }
@@ -1014,13 +1016,20 @@ describe('inspectAttachmentEvidence', () => {
   };
 
   it('confirms a proposal ID in the exact attachment name and returns bounded hash metadata only', async () => {
-    const { service, downloadAttachment, bytes } = makeService({ name: 'PROP-1001.txt' });
+    const { service, downloadAttachment, listAttachmentsDetailed, bytes } = makeService({
+      name: 'PROP-1001.txt',
+    });
     const result = await service.inspectAttachmentEvidence('finance', 'message-1', 'attachment-1', {
       ...baseCriteria,
       attachmentNames: [],
     });
 
     expect(result.status).toBe('CONFIRMED');
+    expect(listAttachmentsDetailed).toHaveBeenCalledWith('message-1', {
+      maxItems: 26,
+      maxPages: 20,
+      metadataOnly: true,
+    });
     expect(result.confirmationReasons).toEqual(['PROPOSAL_ID_IN_ATTACHMENT_NAME']);
     expect(result.attachment).toMatchObject({
       name: 'PROP-1001.txt',
@@ -1612,7 +1621,11 @@ describe('write methods', () => {
     );
 
     await expect(service.downloadAttachments('finance', 'm1')).rejects.toThrow(/batch limit/i);
-    expect(listAttachmentsDetailed).toHaveBeenCalledWith('m1', { maxItems: 3, maxPages: 20 });
+    expect(listAttachmentsDetailed).toHaveBeenCalledWith('m1', {
+      maxItems: 3,
+      maxPages: 20,
+      metadataOnly: true,
+    });
     expect(downloadOne).not.toHaveBeenCalled();
   });
 

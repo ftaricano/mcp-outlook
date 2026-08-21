@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { EmailService } from '../../src/services/emailService.js';
 
 describe('EmailService.listAttachmentsDetailed', () => {
@@ -44,5 +44,41 @@ describe('EmailService.listAttachmentsDetailed', () => {
 
     expect(result).toMatchObject({ pagesScanned: 1, truncated: true });
     expect(result.items).toHaveLength(1);
+  });
+
+  it('requests metadata-only attachment pages without contentBytes', async () => {
+    const request: any = {
+      select: vi.fn(),
+      top: vi.fn(),
+      get: vi.fn(async () => ({
+        value: [
+          {
+            id: 'a1',
+            name: 'one.txt',
+            contentType: 'text/plain',
+            size: 1,
+            isInline: false,
+            contentBytes: 'not-requested',
+          },
+        ],
+      })),
+    };
+    request.select.mockReturnValue(request);
+    request.top.mockReturnValue(request);
+    const api = vi.fn(() => request);
+    const service = Object.create(EmailService.prototype) as any;
+    service.client = { api };
+    service.targetUserEmail = 'user@example.com';
+
+    const result = await service.listAttachmentsDetailed('m1', {
+      maxItems: 3,
+      maxPages: 2,
+      metadataOnly: true,
+    });
+
+    expect(request.select).toHaveBeenCalledWith('id,name,contentType,size,isInline');
+    expect(request.top).toHaveBeenCalledWith(3);
+    expect(result.items).toEqual([expect.objectContaining({ id: 'a1', name: 'one.txt', size: 1 })]);
+    expect(result.items[0]).not.toHaveProperty('contentBytes');
   });
 });
