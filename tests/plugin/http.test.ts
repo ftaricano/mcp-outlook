@@ -169,7 +169,7 @@ describe('Outlook plugin HTTP server', () => {
     });
     await client.close();
 
-    expect(tools).toHaveLength(10);
+    expect(tools).toHaveLength(11);
     expect(result.structuredContent).toEqual({ mailboxes: ['finance'] });
   });
 });

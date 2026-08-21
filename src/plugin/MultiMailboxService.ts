@@ -7,7 +7,11 @@ import {
   AttachmentHandoffStore,
   type AttachmentHandoffManifest,
 } from './attachmentHandoffStore.js';
-import type { MailboxSearchResult, MultiMailboxSearchResult } from './schemas.js';
+import type {
+  InvestigateDocumentsCriteria,
+  MailboxSearchResult,
+  MultiMailboxSearchResult,
+} from './schemas.js';
 import {
   ExtractionError,
   runAttachmentPipeline,
@@ -145,6 +149,206 @@ interface ListedAttachment {
   readonly name?: string | null;
   readonly contentType?: string | null;
   readonly size?: number | null;
+  readonly isInline?: boolean | null;
+}
+
+export type InvestigationFolder = InvestigateDocumentsCriteria['folders'][number];
+export type InvestigationStatus =
+  'CONFIRMED' | 'CANDIDATE_REVIEW' | 'NOT_FOUND' | 'SEARCH_INCOMPLETE';
+export type InvestigationMatchClassification = 'CONFIRMED' | 'CANDIDATE_REVIEW';
+export type InvestigationFolderStatus = 'COMPLETE' | 'INCOMPLETE' | 'FAILED';
+export type InvestigationCoverageReason =
+  | 'MESSAGE_SCAN_LIMIT_REACHED'
+  | 'MESSAGE_SCAN_FAILED'
+  | 'ATTACHMENT_SCAN_LIMIT_REACHED'
+  | 'ATTACHMENT_SCAN_FAILED'
+  | 'ATTACHMENT_NAME_TRUNCATED'
+  | 'MESSAGE_ID_MISSING'
+  | 'FOLDER_NOT_SCANNED';
+export type InvestigationConfirmationReason =
+  'PROPOSAL_ID_IN_ATTACHMENT_NAME' | 'REQUESTED_ATTACHMENT_NAME_MATCH';
+
+export interface InvestigationFolderCoverage {
+  readonly folder: InvestigationFolder;
+  readonly status: InvestigationFolderStatus;
+  readonly pagesScanned: number;
+  readonly messagesScanned: number;
+  readonly attachmentListsAttempted: number;
+  readonly attachmentListsCompleted: number;
+  readonly attachmentPagesScanned: number;
+  readonly reasons: readonly InvestigationCoverageReason[];
+}
+
+export interface InvestigationMatch {
+  readonly folder: InvestigationFolder;
+  readonly classification: InvestigationMatchClassification;
+  readonly message: InvestigationMessage;
+  readonly matchedSignals: {
+    readonly proposalIds: readonly string[];
+    readonly clients: readonly string[];
+    readonly insurers: readonly string[];
+    readonly attachmentNames: readonly string[];
+  };
+  readonly confirmationReasons: readonly InvestigationConfirmationReason[];
+}
+
+export interface InvestigationMessage extends Message {
+  readonly attachmentCount?: number;
+  readonly attachmentsTruncated?: boolean;
+  readonly attachmentNamesTruncated?: boolean;
+}
+
+export interface InvestigateDocumentsResult {
+  readonly mailbox: string;
+  readonly status: InvestigationStatus;
+  readonly matches: readonly InvestigationMatch[];
+  readonly totalMatches: number;
+  readonly matchesTruncated: boolean;
+  readonly coverage: {
+    readonly complete: boolean;
+    readonly folders: readonly InvestigationFolderCoverage[];
+    readonly limits: {
+      readonly maxPagesPerFolder: number;
+      readonly maxMessagesPerFolder: number;
+      readonly maxAttachmentPagesPerMessage: number;
+      readonly maxAttachmentsPerMessage: number;
+      readonly maxResults: number;
+    };
+  };
+}
+
+const INVESTIGATION_FOLDER_ORDER = ['inbox', 'sentitems', 'archive'] as const;
+const INVESTIGATION_FOLDERS = new Set<InvestigationFolder>(INVESTIGATION_FOLDER_ORDER);
+const MAX_INVESTIGATION_ATTACHMENT_NAME_CHARS = 300;
+
+function isInvestigationFolder(value: string): value is InvestigationFolder {
+  return INVESTIGATION_FOLDERS.has(value as InvestigationFolder);
+}
+
+function boundedInvestigationText(value: unknown, maxChars: number): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (!normalized) return undefined;
+  return normalized.length <= maxChars ? normalized : `${normalized.slice(0, maxChars)}...`;
+}
+
+function safeCount(value: unknown, fallback = 0): number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : fallback;
+}
+
+function normalizeInvestigationSignal(value: string): string {
+  return value
+    .normalize('NFKD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, '');
+}
+
+function investigationTokens(value: string): string[] {
+  return value
+    .normalize('NFKD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .split(/[^\p{Letter}\p{Number}]+/gu)
+    .filter(Boolean);
+}
+
+function investigationTokenSequenceIncludes(haystack: string, signal: string): boolean {
+  const haystackTokens = investigationTokens(haystack);
+  const signalTokens = investigationTokens(signal);
+  if (signalTokens.length === 0 || haystackTokens.length < signalTokens.length) return false;
+
+  for (let start = 0; start <= haystackTokens.length - signalTokens.length; start += 1) {
+    if (signalTokens.every((token, offset) => haystackTokens[start + offset] === token)) {
+      return true;
+    }
+  }
+
+  // Some identifiers are written both with and without separators (for
+  // example PROP-1001 and PROP1001). Joining only contiguous tokens preserves
+  // token boundaries, so PROP-1001 cannot match PROP-10010.
+  const compactSignal = normalizeInvestigationSignal(signal);
+  for (let start = 0; start < haystackTokens.length; start += 1) {
+    let compact = '';
+    for (let end = start; end < haystackTokens.length; end += 1) {
+      compact += haystackTokens[end];
+      if (compact === compactSignal) return true;
+      if (compact.length >= compactSignal.length) break;
+    }
+  }
+  return false;
+}
+
+function includesInvestigationSignal(haystack: string, signal: string): boolean {
+  return investigationTokenSequenceIncludes(haystack, signal);
+}
+
+function investigationAttachmentContainsSignal(name: string, signal: string): boolean {
+  return investigationTokenSequenceIncludes(name, signal);
+}
+
+function investigationAttachmentEqualsSignal(name: string, signal: string): boolean {
+  const normalizedName = name.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+  const normalizedSignal = signal.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+  return normalizedName.length > 0 && normalizedName === normalizedSignal;
+}
+
+function projectInvestigationAttachmentName(value: unknown): {
+  name: string | undefined;
+  nameTruncated: boolean;
+} {
+  if (typeof value !== 'string' || value.length === 0) {
+    return { name: undefined, nameTruncated: false };
+  }
+  if (value.length <= MAX_INVESTIGATION_ATTACHMENT_NAME_CHARS) {
+    return { name: value, nameTruncated: false };
+  }
+  return {
+    name: `${value.slice(0, MAX_INVESTIGATION_ATTACHMENT_NAME_CHARS)}...`,
+    nameTruncated: true,
+  };
+}
+
+function projectInvestigationMessage(
+  message: Message,
+  attachments: readonly ListedAttachment[],
+  attachmentsTruncated: boolean
+): InvestigationMessage {
+  const address = boundedInvestigationText(message.from?.emailAddress?.address, 320);
+  const projectedAttachments = attachments.slice(0, 50).map((attachment) => {
+    const projectedName = projectInvestigationAttachmentName(attachment.name);
+    return {
+      id: boundedInvestigationText(attachment.id, 512),
+      name: projectedName.name,
+      nameTruncated: projectedName.nameTruncated || undefined,
+      contentType: boundedInvestigationText(attachment.contentType, 100),
+      size:
+        typeof attachment.size === 'number' && attachment.size >= 0 ? attachment.size : undefined,
+      isInline: typeof attachment.isInline === 'boolean' ? attachment.isInline : undefined,
+    };
+  });
+  const attachmentNamesTruncated = projectedAttachments.some(
+    (attachment) => attachment.nameTruncated === true
+  );
+  const projected: InvestigationMessage = {
+    id: boundedInvestigationText(message.id, 512),
+    subject: boundedInvestigationText(message.subject, 300),
+    receivedDateTime: boundedInvestigationText(message.receivedDateTime, 64),
+    isRead: typeof message.isRead === 'boolean' ? message.isRead : undefined,
+    hasAttachments:
+      typeof message.hasAttachments === 'boolean' ? message.hasAttachments : undefined,
+    bodyPreview: boundedInvestigationText(message.bodyPreview, 500),
+    from: address ? { emailAddress: { address } } : undefined,
+    attachments: projectedAttachments.length > 0 ? projectedAttachments : undefined,
+    attachmentCount: attachments.length,
+    attachmentsTruncated:
+      attachmentsTruncated ||
+      attachmentNamesTruncated ||
+      attachments.length > projectedAttachments.length ||
+      projectedAttachments.length > 30,
+    attachmentNamesTruncated: attachmentNamesTruncated || undefined,
+  };
+  return projected;
 }
 
 function decodeGraphBase64(value: string, maxBytes: number): Buffer {
@@ -260,6 +464,243 @@ export class MultiMailboxService {
   async listMessages(alias: string, criteria: AdvancedSearchOptions): Promise<MailboxSearchResult> {
     const mailbox = this.resolveMailbox(alias);
     return this.searchResolvedMailbox(mailbox, { ...criteria, query: undefined });
+  }
+
+  async investigateDocuments(
+    alias: string,
+    criteria: InvestigateDocumentsCriteria
+  ): Promise<InvestigateDocumentsResult> {
+    const mailbox = this.resolveMailbox(alias);
+    if (
+      criteria.folders.length === 0 ||
+      criteria.folders.some((folder) => !isInvestigationFolder(folder)) ||
+      new Set(criteria.folders).size !== criteria.folders.length
+    ) {
+      throw new MailboxOperationError('document investigation');
+    }
+
+    const emailService = this.createEmailService(mailbox.address);
+    const coverage: InvestigationFolderCoverage[] = [];
+    const matches: InvestigationMatch[] = [];
+
+    for (const folder of criteria.folders) {
+      const reasons: InvestigationCoverageReason[] = [];
+      let pagesScanned = 0;
+      let messagesScanned = 0;
+      let attachmentListsAttempted = 0;
+      let attachmentListsCompleted = 0;
+      let attachmentPagesScanned = 0;
+
+      let searchResult: ReliableSearchResult<Message>;
+      try {
+        searchResult = await emailService.advancedSearchEmailsDetailed({
+          folder,
+          query: undefined,
+          hasAttachments: true,
+          includeFullContent: false,
+          maxPages: criteria.maxPagesPerFolder,
+          maxResults: criteria.maxMessagesPerFolder,
+          scanLimit: criteria.maxMessagesPerFolder,
+        });
+      } catch {
+        coverage.push({
+          folder,
+          status: 'FAILED',
+          pagesScanned: 0,
+          messagesScanned: 0,
+          attachmentListsAttempted: 0,
+          attachmentListsCompleted: 0,
+          attachmentPagesScanned: 0,
+          reasons: ['MESSAGE_SCAN_FAILED'],
+        });
+        continue;
+      }
+
+      pagesScanned = safeCount(searchResult.pagesScanned);
+      messagesScanned = Math.max(
+        safeCount(searchResult.candidatesScanned),
+        Array.isArray(searchResult.messages) ? searchResult.messages.length : 0
+      );
+      if (searchResult.status === 'SEARCH_FAILED' || searchResult.status === 'SEARCH_UNTRUSTED') {
+        reasons.push('MESSAGE_SCAN_FAILED');
+      } else if (searchResult.truncated || searchResult.status === 'SEARCH_INCOMPLETE') {
+        reasons.push('MESSAGE_SCAN_LIMIT_REACHED');
+      }
+
+      for (const message of searchResult.messages ?? []) {
+        const messageId = typeof message.id === 'string' ? message.id.trim() : '';
+        if (!messageId) {
+          reasons.push('MESSAGE_ID_MISSING');
+          continue;
+        }
+
+        let listedAttachments: ListedAttachment[] = [];
+        let attachmentsTruncated = false;
+        if (message.hasAttachments !== false) {
+          attachmentListsAttempted += 1;
+          try {
+            const listing = await emailService.listAttachmentsDetailed(messageId, {
+              maxItems: criteria.maxAttachmentsPerMessage,
+              maxPages: criteria.maxAttachmentPagesPerMessage,
+            });
+            const rawItems = Array.isArray(listing.items) ? listing.items : [];
+            listedAttachments = rawItems.slice(
+              0,
+              criteria.maxAttachmentsPerMessage
+            ) as ListedAttachment[];
+            attachmentPagesScanned += safeCount(listing.pagesScanned);
+            if (
+              rawItems.some(
+                (attachment) =>
+                  typeof attachment?.name === 'string' &&
+                  attachment.name.length > MAX_INVESTIGATION_ATTACHMENT_NAME_CHARS
+              )
+            ) {
+              reasons.push('ATTACHMENT_NAME_TRUNCATED');
+            }
+            if (listing.truncated || rawItems.length > criteria.maxAttachmentsPerMessage) {
+              reasons.push('ATTACHMENT_SCAN_LIMIT_REACHED');
+              attachmentsTruncated = true;
+            }
+            if (!listing.truncated && rawItems.length <= criteria.maxAttachmentsPerMessage) {
+              attachmentListsCompleted += 1;
+            }
+          } catch {
+            reasons.push('ATTACHMENT_SCAN_FAILED');
+            attachmentsTruncated = true;
+          }
+        }
+
+        const attachmentNames = listedAttachments
+          .map((attachment) => attachment.name)
+          .filter((name): name is string => typeof name === 'string' && name.length > 0);
+        const metadataFields = [
+          message.subject,
+          message.bodyPreview,
+          message.from?.emailAddress?.address,
+        ]
+          .filter((value): value is string => typeof value === 'string')
+          .filter((value) => value.length > 0);
+        const matchesMetadataSignal = (signal: string): boolean =>
+          metadataFields.some((field) => includesInvestigationSignal(field, signal));
+        const matchesAttachmentSignal = (signal: string): boolean =>
+          attachmentNames.some((name) => includesInvestigationSignal(name, signal));
+        const matchesAnySignal = (signal: string): boolean =>
+          matchesMetadataSignal(signal) || matchesAttachmentSignal(signal);
+        const matchedSignals = {
+          proposalIds: criteria.proposalIds.filter(matchesAnySignal),
+          clients: criteria.clients.filter(matchesAnySignal),
+          insurers: criteria.insurers.filter(matchesAnySignal),
+          attachmentNames: criteria.attachmentNames.filter((signal) =>
+            attachmentNames.some((name) => investigationAttachmentEqualsSignal(name, signal))
+          ),
+        };
+
+        const proposalInAttachment = criteria.proposalIds.some((proposalId) =>
+          attachmentNames.some((name) => investigationAttachmentContainsSignal(name, proposalId))
+        );
+        const requestedAttachmentMatches = matchedSignals.attachmentNames.length > 0;
+        const hasMatchedSignal =
+          matchedSignals.proposalIds.length > 0 ||
+          matchedSignals.clients.length > 0 ||
+          matchedSignals.insurers.length > 0 ||
+          matchedSignals.attachmentNames.length > 0;
+        if (!hasMatchedSignal) continue;
+
+        const confirmationReasons: InvestigationConfirmationReason[] = [];
+        if (proposalInAttachment) confirmationReasons.push('PROPOSAL_ID_IN_ATTACHMENT_NAME');
+        const identitySignalMatches =
+          criteria.proposalIds.some(matchesMetadataSignal) ||
+          criteria.clients.some(matchesMetadataSignal) ||
+          criteria.insurers.some(matchesMetadataSignal);
+        if (requestedAttachmentMatches && identitySignalMatches) {
+          confirmationReasons.push('REQUESTED_ATTACHMENT_NAME_MATCH');
+        }
+        const isConfirmed = confirmationReasons.length > 0;
+
+        matches.push({
+          folder,
+          classification: isConfirmed ? 'CONFIRMED' : 'CANDIDATE_REVIEW',
+          message: projectInvestigationMessage(message, listedAttachments, attachmentsTruncated),
+          matchedSignals,
+          confirmationReasons,
+        });
+      }
+
+      const uniqueReasons = [...new Set(reasons)];
+      coverage.push({
+        folder,
+        status:
+          uniqueReasons.includes('MESSAGE_SCAN_FAILED') ||
+          uniqueReasons.includes('ATTACHMENT_SCAN_FAILED')
+            ? 'FAILED'
+            : uniqueReasons.length > 0
+              ? 'INCOMPLETE'
+              : 'COMPLETE',
+        pagesScanned,
+        messagesScanned,
+        attachmentListsAttempted,
+        attachmentListsCompleted,
+        attachmentPagesScanned,
+        reasons: uniqueReasons,
+      });
+    }
+
+    const scannedCoverage = coverage;
+    const coverageWithOmittedFolders: InvestigationFolderCoverage[] =
+      INVESTIGATION_FOLDER_ORDER.map(
+        (folder) =>
+          scannedCoverage.find((entry) => entry.folder === folder) ?? {
+            folder,
+            status: 'INCOMPLETE',
+            pagesScanned: 0,
+            messagesScanned: 0,
+            attachmentListsAttempted: 0,
+            attachmentListsCompleted: 0,
+            attachmentPagesScanned: 0,
+            reasons: ['FOLDER_NOT_SCANNED'],
+          }
+      );
+    const coverageComplete = coverageWithOmittedFolders.every(
+      (entry) => entry.status === 'COMPLETE'
+    );
+    const orderedMatches = matches
+      .map((match, index) => ({ match, index }))
+      .sort((left, right) => {
+        const leftRank = left.match.classification === 'CONFIRMED' ? 0 : 1;
+        const rightRank = right.match.classification === 'CONFIRMED' ? 0 : 1;
+        return leftRank - rightRank || left.index - right.index;
+      })
+      .map(({ match }) => match);
+    const visibleMatches = orderedMatches.slice(0, criteria.maxResults);
+    const matchesTruncated = orderedMatches.length > criteria.maxResults;
+    const hasConfirmed = visibleMatches.some((match) => match.classification === 'CONFIRMED');
+    const status: InvestigationStatus = hasConfirmed
+      ? 'CONFIRMED'
+      : !coverageComplete
+        ? 'SEARCH_INCOMPLETE'
+        : matches.length > 0
+          ? 'CANDIDATE_REVIEW'
+          : 'NOT_FOUND';
+
+    return {
+      mailbox: mailbox.alias,
+      status,
+      matches: visibleMatches,
+      totalMatches: orderedMatches.length,
+      matchesTruncated,
+      coverage: {
+        complete: coverageComplete,
+        folders: coverageWithOmittedFolders,
+        limits: {
+          maxPagesPerFolder: criteria.maxPagesPerFolder,
+          maxMessagesPerFolder: criteria.maxMessagesPerFolder,
+          maxAttachmentPagesPerMessage: criteria.maxAttachmentPagesPerMessage,
+          maxAttachmentsPerMessage: criteria.maxAttachmentsPerMessage,
+          maxResults: criteria.maxResults,
+        },
+      },
+    };
   }
 
   async listFolders(alias: string): Promise<{ items: unknown[]; truncated: boolean }> {

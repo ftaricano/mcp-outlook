@@ -103,6 +103,667 @@ describe('MultiMailboxService', () => {
 });
 
 describe('read expansion methods', () => {
+  it('reports NOT_FOUND only after complete message and attachment coverage', async () => {
+    const advancedSearch = vi.fn(async ({ folder }: { folder?: string }) => ({
+      ...searchResult('FOUND'),
+      messages: [
+        {
+          id: `${folder}-message`,
+          subject: 'Routine correspondence',
+          bodyPreview: 'No requested identifiers here',
+          hasAttachments: true,
+        },
+      ] as Message[],
+      pagesScanned: 2,
+      candidatesScanned: 1,
+    }));
+    const listAttachments = vi.fn(async () => ({
+      items: [{ id: 'attachment-1', name: 'generic-file.pdf', size: 100 }],
+      pagesScanned: 1,
+      truncated: false,
+    }));
+    const service = new MultiMailboxService(config(), () =>
+      stubEmailService({
+        advancedSearchEmailsDetailed: advancedSearch,
+        listAttachmentsDetailed: listAttachments,
+      })
+    );
+
+    const result = await service.investigateDocuments('finance', {
+      proposalIds: ['PROP-1001'],
+      clients: [],
+      insurers: [],
+      attachmentNames: [],
+      folders: ['inbox', 'sentitems', 'archive'],
+      maxPagesPerFolder: 10,
+      maxMessagesPerFolder: 100,
+      maxAttachmentPagesPerMessage: 5,
+      maxAttachmentsPerMessage: 50,
+      maxResults: 25,
+    });
+
+    expect(result.status).toBe('NOT_FOUND');
+    expect(result.coverage.complete).toBe(true);
+    expect(result.coverage.folders).toEqual([
+      expect.objectContaining({ folder: 'inbox', status: 'COMPLETE', messagesScanned: 1 }),
+      expect.objectContaining({ folder: 'sentitems', status: 'COMPLETE', messagesScanned: 1 }),
+      expect.objectContaining({ folder: 'archive', status: 'COMPLETE', messagesScanned: 1 }),
+    ]);
+    expect(listAttachments).toHaveBeenCalledTimes(3);
+    expect(advancedSearch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: undefined,
+        hasAttachments: true,
+        includeFullContent: false,
+        maxPages: 10,
+        maxResults: 100,
+        scanLimit: 100,
+      })
+    );
+  });
+
+  it('matches the complete attachment name while exposing projection truncation', async () => {
+    const longName = `${'prefix-'.repeat(45)}PROP-1001.pdf`;
+    const service = new MultiMailboxService(config(), () =>
+      stubEmailService({
+        advancedSearchEmailsDetailed: vi.fn(async () => ({
+          ...searchResult('FOUND'),
+          messages: [{ id: 'message-1', hasAttachments: true }] as Message[],
+        })),
+        listAttachmentsDetailed: vi.fn(async () => ({
+          items: [{ id: 'attachment-1', name: longName, size: 100 }],
+          pagesScanned: 1,
+          truncated: false,
+        })),
+      })
+    );
+
+    const result = await service.investigateDocuments('finance', {
+      proposalIds: ['PROP-1001'],
+      clients: [],
+      insurers: [],
+      attachmentNames: [],
+      folders: ['inbox', 'sentitems', 'archive'],
+      maxPagesPerFolder: 10,
+      maxMessagesPerFolder: 100,
+      maxAttachmentPagesPerMessage: 5,
+      maxAttachmentsPerMessage: 50,
+      maxResults: 25,
+    });
+
+    expect(result.status).toBe('CONFIRMED');
+    expect(result.matches[0]).toMatchObject({
+      classification: 'CONFIRMED',
+      message: {
+        attachmentNamesTruncated: true,
+        attachmentsTruncated: true,
+        attachments: [{ nameTruncated: true }],
+      },
+    });
+    expect(result.coverage.complete).toBe(false);
+    expect(result.coverage.folders).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          folder: 'inbox',
+          status: 'INCOMPLETE',
+          reasons: ['ATTACHMENT_NAME_TRUNCATED'],
+        }),
+      ])
+    );
+  });
+
+  it('reports omitted canonical folders as incomplete instead of NOT_FOUND', async () => {
+    const service = new MultiMailboxService(config(), () =>
+      stubEmailService({
+        advancedSearchEmailsDetailed: vi.fn(async () => ({
+          ...searchResult('NOT_FOUND'),
+          messages: [],
+        })),
+      })
+    );
+
+    const result = await service.investigateDocuments('finance', {
+      proposalIds: ['PROP-1001'],
+      clients: [],
+      insurers: [],
+      attachmentNames: [],
+      folders: ['inbox'],
+      maxPagesPerFolder: 10,
+      maxMessagesPerFolder: 100,
+      maxAttachmentPagesPerMessage: 5,
+      maxAttachmentsPerMessage: 50,
+      maxResults: 25,
+    });
+
+    expect(result.status).toBe('SEARCH_INCOMPLETE');
+    expect(result.coverage.complete).toBe(false);
+    expect(result.coverage.folders).toEqual([
+      expect.objectContaining({ folder: 'inbox', status: 'COMPLETE' }),
+      expect.objectContaining({
+        folder: 'sentitems',
+        status: 'INCOMPLETE',
+        reasons: ['FOLDER_NOT_SCANNED'],
+      }),
+      expect.objectContaining({
+        folder: 'archive',
+        status: 'INCOMPLETE',
+        reasons: ['FOLDER_NOT_SCANNED'],
+      }),
+    ]);
+  });
+
+  it('returns SEARCH_INCOMPLETE instead of absence when a folder scan is truncated', async () => {
+    const service = new MultiMailboxService(config(), () =>
+      stubEmailService({
+        advancedSearchEmailsDetailed: vi.fn(async () => ({
+          ...searchResult('SEARCH_INCOMPLETE'),
+          messages: [],
+          truncated: true,
+          pagesScanned: 10,
+          candidatesScanned: 100,
+        })),
+      })
+    );
+
+    const result = await service.investigateDocuments('finance', {
+      proposalIds: ['PROP-1001'],
+      clients: [],
+      insurers: [],
+      attachmentNames: [],
+      folders: ['inbox'],
+      maxPagesPerFolder: 10,
+      maxMessagesPerFolder: 100,
+      maxAttachmentPagesPerMessage: 5,
+      maxAttachmentsPerMessage: 50,
+      maxResults: 25,
+    });
+
+    expect(result.status).toBe('SEARCH_INCOMPLETE');
+    expect(result.coverage.complete).toBe(false);
+    expect(result.coverage.folders[0]).toMatchObject({
+      status: 'INCOMPLETE',
+      reasons: ['MESSAGE_SCAN_LIMIT_REACHED'],
+    });
+  });
+
+  it('returns SEARCH_INCOMPLETE when attachment pagination is capped', async () => {
+    const service = new MultiMailboxService(config(), () =>
+      stubEmailService({
+        advancedSearchEmailsDetailed: vi.fn(async () => ({
+          ...searchResult('FOUND'),
+          messages: [{ id: 'message-1', subject: 'PROP-1001', hasAttachments: true }] as Message[],
+        })),
+        listAttachmentsDetailed: vi.fn(async () => ({
+          items: [{ id: 'attachment-1', name: 'generic.pdf', size: 100 }],
+          pagesScanned: 5,
+          truncated: true,
+        })),
+      })
+    );
+
+    const result = await service.investigateDocuments('finance', {
+      proposalIds: ['PROP-1001'],
+      clients: [],
+      insurers: [],
+      attachmentNames: [],
+      folders: ['inbox'],
+      maxPagesPerFolder: 10,
+      maxMessagesPerFolder: 100,
+      maxAttachmentPagesPerMessage: 5,
+      maxAttachmentsPerMessage: 50,
+      maxResults: 25,
+    });
+
+    expect(result.status).toBe('SEARCH_INCOMPLETE');
+    expect(result.matches[0].classification).toBe('CANDIDATE_REVIEW');
+    expect(result.coverage.folders[0].reasons).toContain('ATTACHMENT_SCAN_LIMIT_REACHED');
+  });
+
+  it('keeps attachment failures incomplete with a stable redacted reason', async () => {
+    const service = new MultiMailboxService(config(), () =>
+      stubEmailService({
+        advancedSearchEmailsDetailed: vi.fn(async () => ({
+          ...searchResult('FOUND'),
+          messages: [{ id: 'message-1', subject: 'PROP-1001', hasAttachments: true }] as Message[],
+        })),
+        listAttachmentsDetailed: vi.fn(async () => {
+          throw new Error('Graph mailbox secret');
+        }),
+      })
+    );
+
+    const result = await service.investigateDocuments('finance', {
+      proposalIds: ['PROP-1001'],
+      clients: [],
+      insurers: [],
+      attachmentNames: [],
+      folders: ['inbox'],
+      maxPagesPerFolder: 10,
+      maxMessagesPerFolder: 100,
+      maxAttachmentPagesPerMessage: 5,
+      maxAttachmentsPerMessage: 50,
+      maxResults: 25,
+    });
+
+    expect(result.status).toBe('SEARCH_INCOMPLETE');
+    expect(result.matches[0]).toMatchObject({
+      classification: 'CANDIDATE_REVIEW',
+      message: { attachmentsTruncated: true },
+    });
+    expect(result.coverage.folders[0]).toMatchObject({
+      status: 'FAILED',
+      attachmentListsAttempted: 1,
+      attachmentListsCompleted: 0,
+      reasons: ['ATTACHMENT_SCAN_FAILED'],
+    });
+    expect(JSON.stringify(result)).not.toContain('mailbox secret');
+  });
+
+  it('confirms only strong attachment identity and otherwise returns review candidates', async () => {
+    const messages = [
+      {
+        id: 'confirmed-message',
+        subject: 'Documents for Example Industries',
+        bodyPreview: 'Carrier Example Assurance',
+        hasAttachments: true,
+      },
+      {
+        id: 'candidate-message',
+        subject: 'Example Industries renewal',
+        bodyPreview: 'Example Assurance',
+        hasAttachments: true,
+      },
+    ] as Message[];
+    const service = new MultiMailboxService(config(), () =>
+      stubEmailService({
+        advancedSearchEmailsDetailed: vi.fn(async () => ({
+          ...searchResult('FOUND'),
+          messages,
+          candidatesScanned: 2,
+        })),
+        listAttachmentsDetailed: vi.fn(async (messageId: string) => ({
+          items: [
+            {
+              id: `${messageId}-attachment`,
+              name:
+                messageId === 'confirmed-message'
+                  ? 'proposal-PROP-1001.pdf'
+                  : 'policy-document.pdf',
+              size: 100,
+            },
+          ],
+          pagesScanned: 1,
+          truncated: false,
+        })),
+      })
+    );
+
+    const result = await service.investigateDocuments('finance', {
+      proposalIds: ['PROP-1001'],
+      clients: ['Example Industries'],
+      insurers: ['Example Assurance'],
+      attachmentNames: ['proposal-PROP-1001.pdf'],
+      folders: ['inbox', 'sentitems', 'archive'],
+      maxPagesPerFolder: 10,
+      maxMessagesPerFolder: 100,
+      maxAttachmentPagesPerMessage: 5,
+      maxAttachmentsPerMessage: 50,
+      maxResults: 25,
+    });
+
+    expect(result.status).toBe('CONFIRMED');
+    expect(result.matches.filter((match) => match.folder === 'inbox')).toEqual([
+      expect.objectContaining({
+        message: expect.objectContaining({ id: 'confirmed-message' }),
+        classification: 'CONFIRMED',
+        matchedSignals: expect.objectContaining({
+          proposalIds: ['PROP-1001'],
+          clients: ['Example Industries'],
+          insurers: ['Example Assurance'],
+          attachmentNames: ['proposal-PROP-1001.pdf'],
+        }),
+      }),
+      expect.objectContaining({
+        message: expect.objectContaining({ id: 'candidate-message' }),
+        classification: 'CANDIDATE_REVIEW',
+      }),
+    ]);
+    expect(result.coverage.complete).toBe(true);
+  });
+
+  it('returns confirmations before candidates when maxResults truncates matches', async () => {
+    const service = new MultiMailboxService(config(), () =>
+      stubEmailService({
+        advancedSearchEmailsDetailed: vi.fn(async () => ({
+          ...searchResult('FOUND'),
+          messages: [
+            { id: 'candidate-message', subject: 'Example Industries', hasAttachments: true },
+            { id: 'confirmed-message', subject: 'Example Industries', hasAttachments: true },
+          ] as Message[],
+        })),
+        listAttachmentsDetailed: vi.fn(async (messageId: string) => ({
+          items: [
+            {
+              id: `${messageId}-attachment`,
+              name: messageId === 'confirmed-message' ? 'proposal-PROP-1001.pdf' : 'policy.pdf',
+              size: 100,
+            },
+          ],
+          pagesScanned: 1,
+          truncated: false,
+        })),
+      })
+    );
+
+    const result = await service.investigateDocuments('finance', {
+      proposalIds: ['PROP-1001'],
+      clients: ['Example Industries'],
+      insurers: [],
+      attachmentNames: [],
+      folders: ['inbox', 'sentitems', 'archive'],
+      maxPagesPerFolder: 10,
+      maxMessagesPerFolder: 100,
+      maxAttachmentPagesPerMessage: 5,
+      maxAttachmentsPerMessage: 50,
+      maxResults: 1,
+    });
+
+    expect(result.status).toBe('CONFIRMED');
+    expect(result.totalMatches).toBe(6);
+    expect(result.matchesTruncated).toBe(true);
+    expect(result.matches[0]).toMatchObject({
+      classification: 'CONFIRMED',
+      message: { id: 'confirmed-message' },
+    });
+  });
+
+  it('requires identity alongside an exact requested filename and preserves punctuation', async () => {
+    const service = new MultiMailboxService(config(), () =>
+      stubEmailService({
+        advancedSearchEmailsDetailed: vi.fn(async () => ({
+          ...searchResult('FOUND'),
+          messages: [
+            { id: 'generic-message', subject: 'Routine correspondence', hasAttachments: true },
+            { id: 'identity-message', subject: 'Example Industries', hasAttachments: true },
+            { id: 'collision-message', subject: 'Example Industries', hasAttachments: true },
+          ] as Message[],
+        })),
+        listAttachmentsDetailed: vi.fn(async (messageId: string) => ({
+          items: [
+            {
+              id: `${messageId}-attachment`,
+              name: messageId === 'collision-message' ? 'report1.pdf' : 'report-1.pdf',
+              size: 100,
+            },
+          ],
+          pagesScanned: 1,
+          truncated: false,
+        })),
+      })
+    );
+
+    const result = await service.investigateDocuments('finance', {
+      proposalIds: [],
+      clients: ['Example Industries'],
+      insurers: [],
+      attachmentNames: ['report-1.pdf'],
+      folders: ['inbox'],
+      maxPagesPerFolder: 10,
+      maxMessagesPerFolder: 100,
+      maxAttachmentPagesPerMessage: 5,
+      maxAttachmentsPerMessage: 50,
+      maxResults: 25,
+    });
+
+    expect(result.status).toBe('CONFIRMED');
+    expect(result.matches).toEqual([
+      expect.objectContaining({
+        message: expect.objectContaining({ id: 'identity-message' }),
+        classification: 'CONFIRMED',
+        confirmationReasons: ['REQUESTED_ATTACHMENT_NAME_MATCH'],
+      }),
+      expect.objectContaining({
+        message: expect.objectContaining({ id: 'generic-message' }),
+        classification: 'CANDIDATE_REVIEW',
+        confirmationReasons: [],
+      }),
+      expect.objectContaining({
+        message: expect.objectContaining({ id: 'collision-message' }),
+        classification: 'CANDIDATE_REVIEW',
+        matchedSignals: expect.objectContaining({ attachmentNames: [] }),
+      }),
+    ]);
+  });
+
+  it('keeps filename-only identity as a candidate when signals share one attachment field', async () => {
+    const service = new MultiMailboxService(config(), () =>
+      stubEmailService({
+        advancedSearchEmailsDetailed: vi.fn(async () => ({
+          ...searchResult('FOUND'),
+          messages: [{ id: 'filename-only', hasAttachments: true }] as Message[],
+        })),
+        listAttachmentsDetailed: vi.fn(async () => ({
+          items: [{ id: 'attachment-1', name: 'report.pdf', size: 100 }],
+          pagesScanned: 1,
+          truncated: false,
+        })),
+      })
+    );
+
+    const result = await service.investigateDocuments('finance', {
+      proposalIds: [],
+      clients: ['report'],
+      insurers: [],
+      attachmentNames: ['report.pdf'],
+      folders: ['inbox', 'sentitems', 'archive'],
+      maxPagesPerFolder: 10,
+      maxMessagesPerFolder: 100,
+      maxAttachmentPagesPerMessage: 5,
+      maxAttachmentsPerMessage: 50,
+      maxResults: 25,
+    });
+
+    expect(result.status).toBe('CANDIDATE_REVIEW');
+    expect(result.matches[0]).toMatchObject({
+      classification: 'CANDIDATE_REVIEW',
+      matchedSignals: { clients: ['report'], attachmentNames: ['report.pdf'] },
+      confirmationReasons: [],
+    });
+  });
+
+  it('does not bridge a multi-term identity signal across metadata fields', async () => {
+    const service = new MultiMailboxService(config(), () =>
+      stubEmailService({
+        advancedSearchEmailsDetailed: vi.fn(async () => ({
+          ...searchResult('FOUND'),
+          messages: [
+            {
+              id: 'split-identity',
+              subject: 'Example',
+              bodyPreview: 'Industries',
+              hasAttachments: false,
+            },
+          ] as Message[],
+        })),
+      })
+    );
+
+    const result = await service.investigateDocuments('finance', {
+      proposalIds: [],
+      clients: ['Example Industries'],
+      insurers: [],
+      attachmentNames: [],
+      folders: ['inbox', 'sentitems', 'archive'],
+      maxPagesPerFolder: 10,
+      maxMessagesPerFolder: 100,
+      maxAttachmentPagesPerMessage: 5,
+      maxAttachmentsPerMessage: 50,
+      maxResults: 25,
+    });
+
+    expect(result.status).toBe('NOT_FOUND');
+    expect(result.matches).toEqual([]);
+    expect(result.coverage.complete).toBe(true);
+  });
+
+  it('confirms an exact filename when identity appears in one metadata field', async () => {
+    const service = new MultiMailboxService(config(), () =>
+      stubEmailService({
+        advancedSearchEmailsDetailed: vi.fn(async () => ({
+          ...searchResult('FOUND'),
+          messages: [
+            {
+              id: 'metadata-identity',
+              subject: 'Example Industries',
+              bodyPreview: 'Routine correspondence',
+              hasAttachments: true,
+            },
+          ] as Message[],
+        })),
+        listAttachmentsDetailed: vi.fn(async () => ({
+          items: [{ id: 'attachment-1', name: 'report.pdf', size: 100 }],
+          pagesScanned: 1,
+          truncated: false,
+        })),
+      })
+    );
+
+    const result = await service.investigateDocuments('finance', {
+      proposalIds: [],
+      clients: ['Example Industries'],
+      insurers: [],
+      attachmentNames: ['report.pdf'],
+      folders: ['inbox', 'sentitems', 'archive'],
+      maxPagesPerFolder: 10,
+      maxMessagesPerFolder: 100,
+      maxAttachmentPagesPerMessage: 5,
+      maxAttachmentsPerMessage: 50,
+      maxResults: 25,
+    });
+
+    expect(result.status).toBe('CONFIRMED');
+    expect(result.matches[0]).toMatchObject({
+      classification: 'CONFIRMED',
+      confirmationReasons: ['REQUESTED_ATTACHMENT_NAME_MATCH'],
+    });
+  });
+
+  it('does not treat a partial proposal identifier as a confirmation', async () => {
+    const service = new MultiMailboxService(config(), () =>
+      stubEmailService({
+        advancedSearchEmailsDetailed: vi.fn(async () => ({
+          ...searchResult('FOUND'),
+          messages: [{ id: 'message-1', hasAttachments: true }] as Message[],
+        })),
+        listAttachmentsDetailed: vi.fn(async () => ({
+          items: [{ id: 'attachment-1', name: 'proposal-PROP-10010.pdf', size: 100 }],
+          pagesScanned: 1,
+          truncated: false,
+        })),
+      })
+    );
+
+    const result = await service.investigateDocuments('finance', {
+      proposalIds: ['PROP-1001'],
+      clients: [],
+      insurers: [],
+      attachmentNames: [],
+      folders: ['inbox', 'sentitems', 'archive'],
+      maxPagesPerFolder: 10,
+      maxMessagesPerFolder: 100,
+      maxAttachmentPagesPerMessage: 5,
+      maxAttachmentsPerMessage: 50,
+      maxResults: 25,
+    });
+
+    expect(result.status).toBe('NOT_FOUND');
+    expect(result.matches).toEqual([]);
+    expect(result.coverage.complete).toBe(true);
+  });
+
+  it('distinguishes complete scan coverage from a truncated match projection', async () => {
+    const attachments = Array.from({ length: 31 }, (_, index) => ({
+      id: `attachment-${index}`,
+      name: `generic-${index}.pdf`,
+      size: 100,
+    }));
+    const service = new MultiMailboxService(config(), () =>
+      stubEmailService({
+        advancedSearchEmailsDetailed: vi.fn(async () => ({
+          ...searchResult('FOUND'),
+          messages: [
+            { id: 'message-1', subject: 'Example Industries', hasAttachments: true },
+            { id: 'message-2', subject: 'Example Industries', hasAttachments: true },
+          ] as Message[],
+          candidatesScanned: 2,
+        })),
+        listAttachmentsDetailed: vi.fn(async () => ({
+          items: attachments,
+          pagesScanned: 1,
+          truncated: false,
+        })),
+      })
+    );
+
+    const result = await service.investigateDocuments('finance', {
+      proposalIds: [],
+      clients: ['Example Industries'],
+      insurers: [],
+      attachmentNames: [],
+      folders: ['inbox', 'sentitems', 'archive'],
+      maxPagesPerFolder: 10,
+      maxMessagesPerFolder: 100,
+      maxAttachmentPagesPerMessage: 5,
+      maxAttachmentsPerMessage: 50,
+      maxResults: 1,
+    });
+
+    expect(result).toMatchObject({
+      status: 'CANDIDATE_REVIEW',
+      totalMatches: 6,
+      matchesTruncated: true,
+      coverage: { complete: true },
+      matches: [
+        {
+          message: {
+            attachmentCount: 31,
+            attachmentsTruncated: true,
+          },
+        },
+      ],
+    });
+  });
+
+  it('redacts folder query failures and records a stable coverage reason', async () => {
+    const service = new MultiMailboxService(config(), () =>
+      stubEmailService({
+        advancedSearchEmailsDetailed: vi.fn(async () => {
+          throw new Error('Graph tenant secret');
+        }),
+      })
+    );
+
+    const result = await service.investigateDocuments('finance', {
+      proposalIds: ['PROP-1001'],
+      clients: [],
+      insurers: [],
+      attachmentNames: [],
+      folders: ['inbox'],
+      maxPagesPerFolder: 10,
+      maxMessagesPerFolder: 100,
+      maxAttachmentPagesPerMessage: 5,
+      maxAttachmentsPerMessage: 50,
+      maxResults: 25,
+    });
+
+    expect(result.status).toBe('SEARCH_INCOMPLETE');
+    expect(result.coverage.folders[0]).toMatchObject({
+      status: 'FAILED',
+      reasons: ['MESSAGE_SCAN_FAILED'],
+    });
+    expect(JSON.stringify(result)).not.toContain('tenant secret');
+  });
+
   it('lists messages via deterministic search on the pinned mailbox service', async () => {
     const advancedSearch = vi.fn(async () => searchResult('FOUND'));
     const service = new MultiMailboxService(config(), () =>

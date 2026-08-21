@@ -3,7 +3,7 @@
 As regras operacionais deste repo são canônicas em [CLAUDE.md](CLAUDE.md). Leia-o antes de tocar em código.
 
 TL;DR das invariantes:
-- O servidor original expõe exatamente 40 tools; o plugin expõe 10 por padrão, 12 com handoffs locais, 15 com mailbox writes ou 17 com ambos. Mudança exige atualizar os smokes e a tabela do README
+- O servidor original expõe exatamente 40 tools; o plugin expõe 11 por padrão, 13 com handoffs locais, 16 com mailbox writes ou 18 com ambos. Mudança exige atualizar os smokes e a tabela do README
 - Toda entrada passa por schema zod antes do dispatch
 - Filesystem sempre via `pathGuard`; Graph sempre via `EmailService`
 - Busca negativa preserva `NOT_FOUND` vs estados incompletos/falhos; nunca converte erro de paginação em vazio limpo

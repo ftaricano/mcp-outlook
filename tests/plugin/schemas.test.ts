@@ -4,6 +4,7 @@ import {
   createDraftSchema,
   getAttachmentContentSchema,
   getAttachmentHandoffSchema,
+  investigateDocumentsSchema,
   listMessagesSchema,
   markMessagesSchema,
   searchMailboxSchema,
@@ -45,6 +46,43 @@ describe('plugin search date compatibility', () => {
 });
 
 describe('expansion tool schemas', () => {
+  it('accepts a bounded document investigation and applies closed-scope defaults', () => {
+    const parsed = investigateDocumentsSchema.parse({
+      mailbox: 'finance',
+      criteria: { proposalIds: ['PROP-1001'], clients: ['Example Industries'] },
+    });
+
+    expect(parsed.criteria.folders).toEqual(['inbox', 'sentitems', 'archive']);
+    expect(parsed.criteria.maxPagesPerFolder).toBe(10);
+    expect(parsed.criteria.maxMessagesPerFolder).toBe(100);
+    expect(parsed.criteria.maxAttachmentPagesPerMessage).toBe(5);
+    expect(parsed.criteria.maxAttachmentsPerMessage).toBe(50);
+  });
+
+  it('requires an investigation signal and rejects arbitrary folders or excessive limits', () => {
+    expect(() => investigateDocumentsSchema.parse({ mailbox: 'finance', criteria: {} })).toThrow(
+      /signal/i
+    );
+    expect(() =>
+      investigateDocumentsSchema.parse({
+        mailbox: 'finance',
+        criteria: { proposalIds: ['PROP-1001'], folders: ['deleteditems'] },
+      })
+    ).toThrow();
+    expect(() =>
+      investigateDocumentsSchema.parse({
+        mailbox: 'finance',
+        criteria: { proposalIds: ['PROP-1001'], maxMessagesPerFolder: 201 },
+      })
+    ).toThrow();
+    expect(() =>
+      investigateDocumentsSchema.parse({
+        mailbox: 'finance',
+        criteria: { proposalIds: ['PROP-1001'], folders: ['inbox', 'inbox'] },
+      })
+    ).toThrow(/unique/i);
+  });
+
   it('accepts the new criteria flags and the raised deterministic cap', () => {
     const parsed = listMessagesSchema.parse({
       mailbox: 'finance',

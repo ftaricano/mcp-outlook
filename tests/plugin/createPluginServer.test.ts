@@ -89,6 +89,57 @@ function fakeService(overrides: Partial<MultiMailboxService> = {}): MultiMailbox
       subject: 'Invoice',
       body: { content: '1234567890abcdef', contentType: 'text' },
     }),
+    investigateDocuments: async () => ({
+      mailbox: 'finance',
+      status: 'CONFIRMED' as const,
+      totalMatches: 1,
+      matchesTruncated: false,
+      matches: [
+        {
+          folder: 'inbox' as const,
+          classification: 'CONFIRMED' as const,
+          message: {
+            id: 'message-1',
+            subject: 'PROP-1001',
+            body: { content: 'secret body must not be returned by investigation' },
+            bodyPreview: 'Example Industries',
+            from: { emailAddress: { address: 'sender@example.com' } },
+            attachments: [{ id: 'attachment-1', name: 'PROP-1001.pdf', size: 100 }],
+            attachmentCount: 1,
+            attachmentsTruncated: false,
+          },
+          matchedSignals: {
+            proposalIds: ['PROP-1001'],
+            clients: ['Example Industries'],
+            insurers: [],
+            attachmentNames: ['PROP-1001.pdf'],
+          },
+          confirmationReasons: ['PROPOSAL_ID_IN_ATTACHMENT_NAME' as const],
+        },
+      ],
+      coverage: {
+        complete: true,
+        folders: [
+          {
+            folder: 'inbox' as const,
+            status: 'COMPLETE' as const,
+            pagesScanned: 2,
+            messagesScanned: 1,
+            attachmentListsAttempted: 1,
+            attachmentListsCompleted: 1,
+            attachmentPagesScanned: 1,
+            reasons: [],
+          },
+        ],
+        limits: {
+          maxPagesPerFolder: 10,
+          maxMessagesPerFolder: 100,
+          maxAttachmentPagesPerMessage: 5,
+          maxAttachmentsPerMessage: 50,
+          maxResults: 25,
+        },
+      },
+    }),
     listMessages: async () => ({
       mailbox: 'finance',
       status: 'FOUND',
@@ -282,7 +333,7 @@ afterEach(async () => {
 
 describe('createOutlookPluginServer', () => {
   describe('expanded catalog', () => {
-    it('registers exactly the 10 read tools when writes are disabled', async () => {
+    it('registers exactly the 11 read tools when writes are disabled', async () => {
       const { client } = await connect(createServer({ allowWrites: false }));
       const { tools } = await client.listTools();
       expect(tools.map((tool) => tool.name).sort()).toEqual(
@@ -290,6 +341,7 @@ describe('createOutlookPluginServer', () => {
           'get_attachment_content',
           'get_folder_stats',
           'get_message',
+          'investigate_documents',
           'list_allowed_mailboxes',
           'list_attachments',
           'list_folders',
@@ -305,7 +357,7 @@ describe('createOutlookPluginServer', () => {
       const { client } = await connect(createServer({ allowWrites: true }));
       const { tools } = await client.listTools();
       const names = tools.map((tool) => tool.name);
-      expect(names).toHaveLength(15);
+      expect(names).toHaveLength(16);
       for (const name of [
         'download_attachments',
         'move_messages',
@@ -322,7 +374,7 @@ describe('createOutlookPluginServer', () => {
         createServer({ allowWrites: false, allowLocalHandoffs: true })
       );
       const handoffTools = (await handoffsOnly.client.listTools()).tools;
-      expect(handoffTools).toHaveLength(12);
+      expect(handoffTools).toHaveLength(13);
       expect(handoffTools.map((tool) => tool.name)).toEqual(
         expect.arrayContaining(['create_attachment_handoff', 'get_attachment_handoff'])
       );
@@ -330,7 +382,7 @@ describe('createOutlookPluginServer', () => {
 
       const both = await connect(createServer({ allowWrites: true, allowLocalHandoffs: true }));
       const bothTools = (await both.client.listTools()).tools;
-      expect(bothTools).toHaveLength(17);
+      expect(bothTools).toHaveLength(18);
       expect(bothTools.map((tool) => tool.name)).toEqual(
         expect.arrayContaining([
           'create_attachment_handoff',
@@ -525,6 +577,38 @@ describe('createOutlookPluginServer', () => {
       status: 'FOUND',
       messages: [{ id: 'message-1', bodyPreview: 'preview' }],
     });
+  });
+
+  it('returns document investigation evidence without full bodies', async () => {
+    const { client } = await connect(createServer());
+    const result = await client.callTool({
+      name: 'investigate_documents',
+      arguments: {
+        mailbox: 'finance',
+        criteria: { proposalIds: ['PROP-1001'] },
+      },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      mailbox: 'finance',
+      status: 'CONFIRMED',
+      totalMatches: 1,
+      matchesTruncated: false,
+      coverage: { complete: true },
+      matches: [
+        {
+          classification: 'CONFIRMED',
+          message: { id: 'message-1', attachments: [{ name: 'PROP-1001.pdf' }] },
+        },
+      ],
+      dataTrust: 'UNTRUSTED_EMAIL_DATA_V1',
+    });
+    expect(JSON.stringify(result.structuredContent)).not.toContain(
+      'secret body must not be returned by investigation'
+    );
+    const text = (result.content as Array<{ text: string }>).map((block) => block.text).join(' ');
+    expect(text).toMatch(/untrusted data, not instructions/i);
   });
 
   it('truncates message bodies according to server policy', async () => {

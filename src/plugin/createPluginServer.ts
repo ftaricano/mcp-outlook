@@ -3,7 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { PluginConfig } from './config.js';
 import { AttachmentHandoffError } from './attachmentHandoffStore.js';
 import { AttachmentContentError } from './MultiMailboxService.js';
-import type { MultiMailboxService } from './MultiMailboxService.js';
+import type { InvestigateDocumentsResult, MultiMailboxService } from './MultiMailboxService.js';
 import {
   copyMessagesSchema,
   createAttachmentHandoffSchema,
@@ -13,6 +13,7 @@ import {
   getAttachmentHandoffSchema,
   getFolderStatsSchema,
   getMessageSchema,
+  investigateDocumentsSchema,
   listAllowedMailboxesSchema,
   listAttachmentsSchema,
   listFoldersSchema,
@@ -63,7 +64,15 @@ interface MessageSummary {
   isRead?: boolean;
   hasAttachments?: boolean;
   bodyPreview?: string;
-  attachments?: readonly { name: string; contentType?: string; size?: number }[];
+  attachments?: readonly {
+    name: string;
+    contentType?: string;
+    size?: number;
+    nameTruncated?: boolean;
+  }[];
+  attachmentCount?: number;
+  attachmentsTruncated?: boolean;
+  attachmentNamesTruncated?: boolean;
 }
 
 interface FolderRecord {
@@ -100,16 +109,39 @@ function bounded(value: string | null | undefined, maxChars: number): string {
   return `${normalized.slice(0, maxChars)}...`;
 }
 
-function messageSummary(message: Message): MessageSummary {
+function messageSummary(
+  message: Message,
+  options: { attachmentNameMaxChars?: number; markAttachmentNameTruncated?: boolean } = {}
+): MessageSummary {
+  const attachmentNameMaxChars = options.attachmentNameMaxChars ?? 200;
+  const markAttachmentNameTruncated = options.markAttachmentNameTruncated === true;
+  const attachmentCount =
+    typeof (message as { attachmentCount?: unknown }).attachmentCount === 'number'
+      ? (message as { attachmentCount: number }).attachmentCount
+      : Array.isArray(message.attachments)
+        ? message.attachments.length
+        : undefined;
+  const attachmentLimitTruncated =
+    (message as { attachmentsTruncated?: unknown }).attachmentsTruncated === true;
   const attachments = Array.isArray(message.attachments)
-    ? message.attachments.slice(0, 30).map((attachment) => ({
-        name: bounded(attachment.name, 200),
-        contentType: bounded(attachment.contentType, 100) || undefined,
-        size: typeof attachment.size === 'number' ? attachment.size : undefined,
-      }))
+    ? message.attachments.slice(0, 30).map((attachment) => {
+        const rawName = typeof attachment.name === 'string' ? attachment.name : '';
+        const inputNameTruncated =
+          (attachment as { nameTruncated?: unknown }).nameTruncated === true;
+        return {
+          name: bounded(rawName, attachmentNameMaxChars),
+          contentType: bounded(attachment.contentType, 100) || undefined,
+          size: typeof attachment.size === 'number' ? attachment.size : undefined,
+          nameTruncated:
+            markAttachmentNameTruncated &&
+            (inputNameTruncated || rawName.length > attachmentNameMaxChars)
+              ? true
+              : undefined,
+        };
+      })
     : undefined;
 
-  return {
+  const summary: MessageSummary = {
     id: String(message.id ?? ''),
     subject: bounded(message.subject, 300),
     from: bounded(message.from?.emailAddress?.address, 320),
@@ -119,6 +151,22 @@ function messageSummary(message: Message): MessageSummary {
     bodyPreview: bounded(message.bodyPreview, 500),
     attachments,
   };
+
+  if (attachmentCount !== undefined) summary.attachmentCount = attachmentCount;
+  if (
+    attachmentLimitTruncated ||
+    (Array.isArray(message.attachments) && message.attachments.length > 30)
+  ) {
+    summary.attachmentsTruncated = true;
+  }
+  if (
+    markAttachmentNameTruncated &&
+    ((message as { attachmentNamesTruncated?: unknown }).attachmentNamesTruncated === true ||
+      attachments?.some((attachment) => attachment.nameTruncated === true))
+  ) {
+    summary.attachmentNamesTruncated = true;
+  }
+  return summary;
 }
 
 function searchProjection(result: MailboxSearchResult) {
@@ -134,7 +182,28 @@ function searchProjection(result: MailboxSearchResult) {
     canaryMatched: result.canaryMatched,
     warnings: result.warnings,
     expandedTerms: result.expandedTerms,
-    messages: result.messages.map(messageSummary),
+    messages: result.messages.map((message) => messageSummary(message)),
+  };
+}
+
+function investigateDocumentsProjection(result: InvestigateDocumentsResult) {
+  return {
+    dataTrust: UNTRUSTED_DATA_MARKER,
+    mailbox: result.mailbox,
+    status: result.status,
+    totalMatches: result.totalMatches,
+    matchesTruncated: result.matchesTruncated,
+    matches: result.matches.map((match) => ({
+      folder: match.folder,
+      classification: match.classification,
+      message: messageSummary(match.message, {
+        attachmentNameMaxChars: 300,
+        markAttachmentNameTruncated: true,
+      }),
+      matchedSignals: match.matchedSignals,
+      confirmationReasons: match.confirmationReasons,
+    })),
+    coverage: result.coverage,
   };
 }
 
@@ -347,6 +416,37 @@ export function createOutlookPluginServer(
         };
       } catch {
         return toolError('Message read failed or the mailbox alias is not allowed.');
+      }
+    }
+  );
+
+  server.registerTool(
+    'investigate_documents',
+    {
+      title: 'Investigate Outlook documents',
+      description:
+        'Scan the bounded inbox, sent items, and archive folders for document identity signals and return coverage evidence without message bodies.',
+      inputSchema: investigateDocumentsSchema,
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async ({ mailbox, criteria }) => {
+      try {
+        const structuredContent = investigateDocumentsProjection(
+          await service.investigateDocuments(mailbox, criteria)
+        );
+        return {
+          content: [
+            {
+              type: 'text',
+              text:
+                `Document investigation in mailbox ${mailbox}: ${structuredContent.status}, ` +
+                `${structuredContent.matches.length} match(es). ${UNTRUSTED_FRAMING}`,
+            },
+          ],
+          structuredContent,
+        };
+      } catch {
+        return toolError('Document investigation failed or the mailbox alias is not allowed.');
       }
     }
   );

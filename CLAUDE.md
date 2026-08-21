@@ -6,7 +6,7 @@ Guidance for agents working **on this repo**. End-user docs (tool catalog, setup
 
 MCP server exposing Microsoft Graph email operations as 40 tools over stdio, plus a standalone
 `outlook` CLI wrapper. A separate multi-mailbox plugin supports allowlisted search, reading, and
-bounded attachment access over stdio and loopback Streamable HTTP. It exposes ten read-only tools
+bounded attachment access over stdio and loopback Streamable HTTP. It exposes eleven read-only tools
 by default, two local handoff tools only when that separate gate is enabled, and five additional
 non-send/non-delete tools only when mailbox writes are explicitly enabled.
 Auth is Azure AD client-credentials (no user login). The original server remains single-mailbox
@@ -17,7 +17,7 @@ per process; plugin services pin mailbox identity per instance.
 These are enforced by CI or by design. Don't regress them.
 
 1. **Two fixed catalog families.** The original server exposes exactly 40 tools and
-   `scripts/smoke-test.js` enforces that count. The plugin exposes exactly ten physically
+   `scripts/smoke-test.js` enforces that count. The plugin exposes exactly eleven physically
    read-only tools by default, two independently gated local handoff tools, and five additional
    mailbox-write tools
    (move/copy/mark/download/create_draft) when writes are enabled — via the plugin.json
@@ -25,8 +25,8 @@ These are enforced by CI or by design. Don't regress them.
    `PLUGIN_ALLOW_WRITES=false` forces writes off regardless of what the file says; only when
    the env var is absent or empty does the file's `allowWrites` field decide (default `false`).
    Local handoffs are absent unless `PLUGIN_ALLOW_LOCAL_HANDOFFS=true`; there is no config-file
-   fallback. `scripts/plugin-smoke-test.js` enforces exactly 10 default, 12 handoff-only, 15
-   mailbox-write-only, and 17 tools with both gates. Sending email and every delete
+   fallback. `scripts/plugin-smoke-test.js` enforces exactly 11 default, 13 handoff-only, 16
+   mailbox-write-only, and 18 tools with both gates. Sending email and every delete
    operation are impossible by construction — no dispatch branch exists for them in the plugin.
 2. **Every tool has a zod schema.** `src/schemas/toolSchemas.ts` is the gate — `HandlerRegistry.handleTool` runs `validateToolInput` before dispatching. No handler method runs on unvalidated args.
 3. **Filesystem access goes through `pathGuard`.** Handlers never call `fs.readFile` / `fs.writeFile` on caller-supplied paths directly; `src/services/fileManager.ts` and `src/services/emailService.ts` already route through `pathGuard.resolveSafe()`. Any new file-touching code must go through the same door.
@@ -41,7 +41,7 @@ These are enforced by CI or by design. Don't regress them.
     constructor-pinned mailbox services, and cache keys include mailbox identity.
 11. **HTTP is loopback-only in this repo.** Remote ChatGPT use requires a separately reviewed
     HTTPS OAuth 2.1 resource-server layer and a separate Graph `Mail.Read` app registration.
-12. **Graph permissions follow the exposed catalog.** The default ten-tool plugin requires only
+12. **Graph permissions follow the exposed catalog.** The default eleven-tool plugin requires only
     application `Mail.Read`. Enabling its five write tools requires `Mail.ReadWrite`, but never
     `Mail.Send`. The original 40-tool server requires `Mail.ReadWrite` and needs `Mail.Send` only
     for `send_email` and `reply_to_email`.

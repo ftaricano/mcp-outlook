@@ -12,6 +12,7 @@ const READ_TOOLS = [
   'search_mailbox',
   'search_mailboxes',
   'get_message',
+  'investigate_documents',
   'list_messages',
   'list_folders',
   'get_folder_stats',
