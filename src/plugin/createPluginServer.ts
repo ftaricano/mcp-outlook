@@ -116,10 +116,15 @@ function bounded(value: string | null | undefined, maxChars: number): string {
 
 function messageSummary(
   message: Message,
-  options: { attachmentNameMaxChars?: number; markAttachmentNameTruncated?: boolean } = {}
+  options: {
+    attachmentNameMaxChars?: number;
+    markAttachmentNameTruncated?: boolean;
+    includeBodyPreview?: boolean;
+  } = {}
 ): MessageSummary {
   const attachmentNameMaxChars = options.attachmentNameMaxChars ?? 200;
   const markAttachmentNameTruncated = options.markAttachmentNameTruncated === true;
+  const includeBodyPreview = options.includeBodyPreview !== false;
   const attachmentCount =
     typeof (message as { attachmentCount?: unknown }).attachmentCount === 'number'
       ? (message as { attachmentCount: number }).attachmentCount
@@ -153,9 +158,9 @@ function messageSummary(
     receivedDateTime: message.receivedDateTime ?? undefined,
     isRead: message.isRead ?? undefined,
     hasAttachments: message.hasAttachments ?? undefined,
-    bodyPreview: bounded(message.bodyPreview, 500),
     attachments,
   };
+  if (includeBodyPreview) summary.bodyPreview = bounded(message.bodyPreview, 500);
 
   if (attachmentCount !== undefined) summary.attachmentCount = attachmentCount;
   if (
@@ -204,6 +209,7 @@ function investigateDocumentsProjection(result: InvestigateDocumentsResult) {
       message: messageSummary(match.message, {
         attachmentNameMaxChars: 300,
         markAttachmentNameTruncated: true,
+        includeBodyPreview: false,
       }),
       matchedSignals: match.matchedSignals,
       confirmationReasons: match.confirmationReasons,

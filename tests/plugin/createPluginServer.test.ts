@@ -102,7 +102,7 @@ function fakeService(overrides: Partial<MultiMailboxService> = {}): MultiMailbox
             id: 'message-1',
             subject: 'PROP-1001',
             body: { content: 'secret body must not be returned by investigation' },
-            bodyPreview: 'Example Industries',
+            bodyPreview: 'secret investigation body preview',
             from: { emailAddress: { address: 'sender@example.com' } },
             attachments: [{ id: 'attachment-1', name: 'PROP-1001.pdf', size: 100 }],
             attachmentCount: 1,
@@ -636,6 +636,9 @@ describe('createOutlookPluginServer', () => {
     });
     expect(JSON.stringify(result.structuredContent)).not.toContain(
       'secret body must not be returned by investigation'
+    );
+    expect(JSON.stringify(result.structuredContent)).not.toContain(
+      'secret investigation body preview'
     );
     const text = (result.content as Array<{ text: string }>).map((block) => block.text).join(' ');
     expect(text).toMatch(/untrusted data, not instructions/i);
