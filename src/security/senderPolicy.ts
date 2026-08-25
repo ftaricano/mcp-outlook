@@ -95,6 +95,17 @@ export class RecipientNotAllowedError extends Error {
   }
 }
 
+export class ReplyDisabledError extends Error {
+  // Replying is refused wholesale while a recipient allowlist is set, so this
+  // is not a recipient-count failure. Reusing RecipientNotAllowedError(0) here
+  // printed "0 address(es) outside the allowlist" alongside a refusal, which
+  // reads as a contradiction and hides the actual rule.
+  constructor() {
+    super('Reply is disabled while an outbound recipient domain allowlist is set');
+    this.name = 'ReplyDisabledError';
+  }
+}
+
 const DOMAIN_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 
 /**

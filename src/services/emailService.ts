@@ -11,7 +11,7 @@ import { CacheManager } from './cacheManager.js';
 import { GraphOptimizer } from './graphOptimizer.js';
 import { ParallelProcessor } from './parallelProcessor.js';
 import { PathGuard } from '../security/pathGuard.js';
-import { RecipientNotAllowedError, SenderPolicy } from '../security/senderPolicy.js';
+import { ReplyDisabledError, SenderPolicy } from '../security/senderPolicy.js';
 import {
   buildSenderContainsFilter,
   buildSenderExactFilter,
@@ -632,7 +632,7 @@ export class EmailService {
     // a recipient allowlist is configured, replying is refused rather than
     // allowed unchecked.
     if (this.senderPolicy.restrictsRecipients) {
-      throw new RecipientNotAllowedError(0);
+      throw new ReplyDisabledError();
     }
 
     try {

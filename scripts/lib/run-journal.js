@@ -188,6 +188,16 @@ export function normalizeErrorClass(raw) {
   // unknown_error would make `outlook harvest` blind to the one signal this
   // gate is supposed to produce. Class name only — no address is persisted.
   if (/sender not allowed|sender allowlist/.test(text)) return 'sender_not_allowed';
+  // Before the recipient rule below, not after: the reply refusal names the
+  // recipient allowlist in its own message, so the broader pattern would
+  // swallow it and collapse two distinct policy outcomes into one class.
+  if (/reply is disabled/.test(text)) return 'reply_disabled';
+  // Same reason as the sender rule, and it matters more here: the recipient
+  // gate is the one aimed at exfiltration, so 'N sends refused by policy' is
+  // precisely the signal harvest should be able to see. Class name only.
+  if (/recipients? not allowed|recipient domain allowlist/.test(text)) {
+    return 'recipient_not_allowed';
+  }
   if (/timeout|timed out|etimedout/.test(text)) return 'timeout';
   if (/invalid arguments|validation|zod/.test(text)) return 'invalid_arguments';
   if (/server exited|spawn|enoent/.test(text)) return 'server_startup';

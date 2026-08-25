@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { EmailService } from '../../src/services/emailService.js';
 import {
   RecipientNotAllowedError,
+  ReplyDisabledError,
   SenderNotAllowedError,
   SenderPolicy,
 } from '../../src/security/senderPolicy.js';
@@ -171,10 +172,41 @@ describe('EmailService recipient gate', () => {
   it('refuses replying at all, since a reply inherits recipients from untrusted content', async () => {
     const { service, posts } = makeService(ALLOWED, new SenderPolicy(policyOptions, {}));
 
-    await expect(service.replyToEmail('message-1', 'Body')).rejects.toThrow(
-      RecipientNotAllowedError
+    await expect(service.replyToEmail('message-1', 'Body')).rejects.toThrow(ReplyDisabledError);
+    expect(posts).toHaveLength(0);
+  });
+
+  it('says replying is disabled rather than counting zero bad recipients', async () => {
+    const { service } = makeService(ALLOWED, new SenderPolicy(policyOptions, {}));
+
+    const error = await service
+      .replyToEmail('message-1', 'Body')
+      .then(() => null)
+      .catch((caught: unknown) => caught);
+
+    // "0 address(es) outside the allowlist" alongside a refusal reads as a
+    // contradiction and hides the rule the operator needs to know.
+    expect((error as Error).message).not.toContain('0 address');
+    expect((error as Error).message).toContain('Reply is disabled');
+  });
+
+  it('refuses replyAll through the same gate', async () => {
+    const { service, posts } = makeService(ALLOWED, new SenderPolicy(policyOptions, {}));
+
+    await expect(service.replyToEmail('message-1', 'Body', true)).rejects.toThrow(
+      ReplyDisabledError
     );
     expect(posts).toHaveLength(0);
+  });
+
+  it('refuses the hybrid attachment send before the attachment is downloaded', async () => {
+    const { service } = makeService(ALLOWED, new SenderPolicy(policyOptions, {}));
+    const download = vi.spyOn(service, 'downloadAttachmentToFile');
+
+    await expect(
+      service.sendEmailFromAttachment('msg-1', 'att-1', ['leak@evil.test'], 'S', 'B')
+    ).rejects.toThrow(RecipientNotAllowedError);
+    expect(download).not.toHaveBeenCalled();
   });
 
   it('still allows replying when no recipient allowlist is configured', async () => {
@@ -187,10 +219,16 @@ describe('EmailService recipient gate', () => {
 
   it('refuses the hybrid file send before the file is read', async () => {
     const { service } = makeService(ALLOWED, new SenderPolicy(policyOptions, {}));
+    // Asserting only that it throws would keep passing if the gate moved below
+    // the encode, which is exactly what the gate's placement is for.
+    const fileManager = (service as unknown as { fileManager: Record<string, unknown> })
+      .fileManager;
+    const encode = vi.spyOn(fileManager as never, 'encodeFileForEmailAttachment' as never);
 
     await expect(
       service.sendEmailWithFileAttachment('/tmp/nope.pdf', ['leak@evil.test'], 'S', 'B')
     ).rejects.toThrow(RecipientNotAllowedError);
+    expect(encode).not.toHaveBeenCalled();
   });
 
   it('leaves drafts unrestricted, so a human can still be handed an outside message', async () => {

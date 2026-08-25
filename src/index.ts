@@ -63,7 +63,10 @@ class EmailMCPServer {
     const senderPolicy = new SenderPolicy();
     this.logger.info('senderPolicy ready', {
       operation: 'bootstrap',
-      context: { outboundAllowlist: senderPolicy.restricted ? 'active' : 'inactive' },
+      context: {
+        outboundAllowlist: senderPolicy.restricted ? 'active' : 'inactive',
+        recipientAllowlist: senderPolicy.restrictsRecipients ? 'active' : 'inactive',
+      },
     });
 
     this.authProvider = new GraphAuthProvider(env);

