@@ -2,6 +2,7 @@ import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
+import { parseAllowedSenders } from '../security/senderPolicy.js';
 
 const MAX_CONCURRENT_MAILBOXES = 8;
 const MAX_MAILBOXES_PER_SEARCH = 32;
@@ -136,6 +137,8 @@ export interface PluginConfig {
   readonly maxBodyChars: number;
   readonly allowWrites: boolean;
   readonly allowLocalHandoffs: boolean;
+  readonly allowSend: boolean;
+  readonly sendFromAlias: string | undefined;
   readonly maxAttachmentInputBytes: number;
   readonly maxExtractedChars: number;
   readonly maxRawAttachmentBytes: number;
@@ -241,6 +244,61 @@ function resolveBooleanEnv(
   throw new PluginConfigError(`${name} must be a boolean value`);
 }
 
+/**
+ * Resolve the single mailbox this plugin instance may send from.
+ *
+ * Deliberately stricter than the CLI. The plugin is the surface that reads
+ * untrusted mail across every allowed mailbox, so enabling sending here only
+ * makes sense if the sender is fixed by configuration and cannot be named by a
+ * caller. Three conditions, all required, all failing at startup rather than at
+ * the first send — a plugin that boots with sending half-configured is a plugin
+ * whose operator believes it is safe:
+ *
+ *  1. `OUTLOOK_SEND_FROM` names the sending mailbox. Without it the plugin
+ *     would fall back to the per-call mailbox, i.e. sending as any allowed box.
+ *  2. That address is one of the configured mailboxes, so the send runs on a
+ *     constructor-pinned service like every other operation (invariant 10) and
+ *     is visible in `list_allowed_mailboxes`.
+ *  3. `OUTLOOK_ALLOWED_SENDERS` is set and covers it. The outbound gate is the
+ *     authority; enabling sending without it would leave a plugin that can send
+ *     as anything the credential allows.
+ */
+function resolveSendFromAlias(mailboxes: readonly MailboxConfig[]): string {
+  const sendFrom = process.env.OUTLOOK_SEND_FROM?.trim().toLowerCase();
+  if (!sendFrom) {
+    throw new PluginConfigError(
+      'PLUGIN_ALLOW_SEND requires OUTLOOK_SEND_FROM to name the sending mailbox'
+    );
+  }
+
+  const mailbox = mailboxes.find((entry) => entry.address.toLowerCase() === sendFrom);
+  if (!mailbox) {
+    throw new PluginConfigError(
+      'OUTLOOK_SEND_FROM does not match any mailbox in the plugin allowlist'
+    );
+  }
+
+  let allowedSenders: readonly string[];
+  try {
+    allowedSenders = parseAllowedSenders(process.env.OUTLOOK_ALLOWED_SENDERS);
+  } catch (error) {
+    throw new PluginConfigError(error instanceof Error ? error.message : 'invalid sender allowlist');
+  }
+
+  if (allowedSenders.length === 0) {
+    throw new PluginConfigError(
+      'PLUGIN_ALLOW_SEND requires a non-empty OUTLOOK_ALLOWED_SENDERS outbound gate'
+    );
+  }
+  if (!allowedSenders.includes(sendFrom)) {
+    throw new PluginConfigError(
+      'OUTLOOK_SEND_FROM is not covered by the outbound sender allowlist'
+    );
+  }
+
+  return mailbox.alias;
+}
+
 export function loadPluginConfig(configPath?: string): PluginConfig {
   const resolvedConfigPath = resolvePluginConfigPath(configPath);
   let source: unknown;
@@ -270,6 +328,8 @@ export function loadPluginConfig(configPath?: string): PluginConfig {
     process.env.PLUGIN_ALLOW_LOCAL_HANDOFFS,
     false
   );
+  const allowSend = resolveBooleanEnv('PLUGIN_ALLOW_SEND', process.env.PLUGIN_ALLOW_SEND, false);
+  const sendFromAlias = allowSend ? resolveSendFromAlias(mailboxes) : undefined;
   const searchMemoryPath =
     process.env.PLUGIN_SEARCH_MEMORY_PATH?.trim() || parsed.data.searchMemoryPath;
 
@@ -284,6 +344,8 @@ export function loadPluginConfig(configPath?: string): PluginConfig {
     maxBodyChars: parsed.data.maxBodyChars,
     allowWrites,
     allowLocalHandoffs,
+    allowSend,
+    sendFromAlias,
     maxAttachmentInputBytes: parsed.data.maxAttachmentInputBytes,
     maxExtractedChars: parsed.data.maxExtractedChars,
     maxRawAttachmentBytes: parsed.data.maxRawAttachmentBytes,

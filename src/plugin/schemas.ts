@@ -275,7 +275,24 @@ export type SearchMailboxesBatchInput = z.output<typeof searchMailboxesBatchSche
 export type MoveMessagesInput = z.output<typeof moveMessagesSchema>;
 export type MarkMessagesInput = z.output<typeof markMessagesSchema>;
 export type DownloadAttachmentsInput = z.output<typeof downloadAttachmentsSchema>;
+/**
+ * Sending takes no `mailbox`. The plugin reads untrusted mail from every
+ * allowed mailbox, so a caller-nameable sender would be an input a malicious
+ * message could try to steer ("reply as the owner"). The sending mailbox is
+ * pinned by configuration (`OUTLOOK_SEND_FROM`); here it is not sayable.
+ */
+export const sendEmailSchema = z
+  .object({
+    to: emailAddressListSchema,
+    cc: emailAddressListSchema.optional(),
+    bcc: emailAddressListSchema.optional(),
+    subject: z.string().min(1).max(500),
+    body: z.string().min(1).max(500_000),
+  })
+  .strict();
+
 export type CreateDraftInput = z.output<typeof createDraftSchema>;
+export type SendEmailInput = z.output<typeof sendEmailSchema>;
 
 export interface MailboxSearchResult extends ReliableSearchResult<Message> {
   readonly mailbox: string;

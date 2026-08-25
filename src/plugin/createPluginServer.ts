@@ -12,6 +12,7 @@ import {
   copyMessagesSchema,
   createAttachmentHandoffSchema,
   createDraftSchema,
+  sendEmailSchema,
   downloadAttachmentsSchema,
   getAttachmentContentSchema,
   getAttachmentHandoffSchema,
@@ -45,6 +46,16 @@ const ADDITIVE_WRITE_ANNOTATIONS = {
   destructiveHint: false,
   idempotentHint: false,
   openWorldHint: false,
+} as const;
+
+// Sending is the only plugin action whose effect leaves the tenant and cannot
+// be undone. openWorldHint marks that; destructiveHint stays false because it
+// destroys nothing — it is irreversible, which is a different axis.
+const SEND_ANNOTATIONS = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: true,
 } as const;
 
 const MUTATING_WRITE_ANNOTATIONS = {
@@ -969,6 +980,36 @@ export function createOutlookPluginServer(
           };
         } catch {
           return toolError('Draft creation failed or the mailbox alias is not allowed.');
+        }
+      }
+    );
+  }
+
+  if (config.allowSend) {
+    server.registerTool(
+      'send_email',
+      {
+        title: 'Send an Outlook email',
+        description:
+          'Send an email from the mailbox this server is configured to send as. ' +
+          'The sending mailbox is fixed by configuration and cannot be chosen per call.',
+        inputSchema: sendEmailSchema,
+        annotations: SEND_ANNOTATIONS,
+      },
+      async ({ to, cc, bcc, subject, body }) => {
+        try {
+          const result = await service.sendMessage({ to, cc, bcc, subject, body });
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Email sent from mailbox ${result.mailbox} to ${result.recipients} recipient(s).`,
+              },
+            ],
+            structuredContent: result,
+          };
+        } catch {
+          return toolError('Send failed or this server is not configured to send.');
         }
       }
     );
