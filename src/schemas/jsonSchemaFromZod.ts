@@ -11,7 +11,10 @@ const toolDescriptions: Record<string, string> = {
   send_email: 'Envia um novo email com suporte a anexos e templates HTML',
   create_draft:
     'Cria um rascunho de email na pasta Rascunhos (apenas Mail.ReadWrite — não envia). Retorna o id do rascunho para revisão/envio posterior.',
-  reply_to_email: 'Responde a um email existente',
+  reply_to_email:
+    'Responde a um email existente. Indisponível quando uma allowlist de domínio de ' +
+    'destinatário está configurada: os destinatários de uma resposta vêm da mensagem original ' +
+    'e não podem ser validados contra ela.',
   mark_as_read: 'Marca um email como lido',
   mark_as_unread: 'Marca um email como não lido',
   delete_email: 'Deleta um email permanentemente',

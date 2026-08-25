@@ -864,6 +864,139 @@ describe('createOutlookPluginServer', () => {
     expect(result.structuredContent).toMatchObject({ successfulDownloads: 1 });
   });
 
+  it('does not register send_email when the send gate is off', async () => {
+    const { client } = await connect(createServer({ allowWrites: true, allowLocalHandoffs: true }));
+    const { tools } = await client.listTools();
+    expect(tools.map((tool) => tool.name)).not.toContain('send_email');
+  });
+
+  it('sends through the configured mailbox and reports the recipient count', async () => {
+    const sends: unknown[] = [];
+    const server = createOutlookPluginServer(
+      fakeService({
+        sendMessage: async (message: unknown) => {
+          sends.push(message);
+          return { mailbox: 'finance', recipients: 3 };
+        },
+      }),
+      pluginConfig({ allowSend: true, sendFromAlias: 'finance' })
+    );
+    const { client } = await connect(server);
+
+    const result = await client.callTool({
+      name: 'send_email',
+      arguments: {
+        to: ['a@example.com', 'b@example.com'],
+        cc: ['c@example.com'],
+        subject: 'Assunto',
+        body: '<p>corpo</p>',
+      },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({ mailbox: 'finance', recipients: 3 });
+    expect(sends).toEqual([
+      {
+        to: ['a@example.com', 'b@example.com'],
+        cc: ['c@example.com'],
+        bcc: undefined,
+        subject: 'Assunto',
+        body: '<p>corpo</p>',
+      },
+    ]);
+  });
+
+  it('refuses a caller-supplied sending mailbox before the handler runs', async () => {
+    const sends: unknown[] = [];
+    const server = createOutlookPluginServer(
+      fakeService({
+        sendMessage: async (message: unknown) => {
+          sends.push(message);
+          return { mailbox: 'finance', recipients: 1 };
+        },
+      }),
+      pluginConfig({ allowSend: true, sendFromAlias: 'finance' })
+    );
+    const { client } = await connect(server);
+
+    // The whole point of omitting `mailbox` from the schema: a message the model
+    // is reading must have no field through which to suggest a different sender.
+    const result = await client.callTool({
+      name: 'send_email',
+      arguments: {
+        mailbox: 'billing',
+        to: ['a@example.com'],
+        subject: 'Assunto',
+        body: 'corpo',
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain('unrecognized_keys');
+    // Rejected by schema validation, so the handler never ran.
+    expect(sends).toHaveLength(0);
+  });
+
+  it('reports a send failure without leaking the underlying cause', async () => {
+    const server = createOutlookPluginServer(
+      fakeService({
+        sendMessage: async () => {
+          throw new Error('Graph said finance@example.com is over quota');
+        },
+      }),
+      pluginConfig({ allowSend: true, sendFromAlias: 'finance' })
+    );
+    const { client } = await connect(server);
+
+    const result = await client.callTool({
+      name: 'send_email',
+      arguments: { to: ['a@example.com'], subject: 'Assunto', body: 'corpo' },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).not.toContain('finance@example.com');
+    expect(JSON.stringify(result.content)).not.toContain('quota');
+  });
+
+  it('marks send_email as needing human confirmation, above marking a message read', async () => {
+    const { client } = await connect(
+      createServer({ allowWrites: true, allowSend: true, sendFromAlias: 'finance' })
+    );
+    const { tools } = await client.listTools();
+    const send = tools.find((tool) => tool.name === 'send_email');
+
+    expect(send?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: true,
+    });
+  });
+
+  it('tells the caller a recipient policy refused it, not that sending broke', async () => {
+    const { RecipientNotAllowedError } = await import('../../src/security/senderPolicy.js');
+    const server = createOutlookPluginServer(
+      fakeService({
+        sendMessage: async () => {
+          throw new RecipientNotAllowedError(2);
+        },
+      }),
+      pluginConfig({ allowSend: true, sendFromAlias: 'finance' })
+    );
+    const { client } = await connect(server);
+
+    const result = await client.callTool({
+      name: 'send_email',
+      arguments: { to: ['a@evil.test'], subject: 'S', body: 'B' },
+    });
+
+    const text = JSON.stringify(result.content);
+    expect(result.isError).toBe(true);
+    // A caller told only "send failed" retries; one told it was policy stops.
+    expect(text).toContain('2 address(es)');
+    expect(text).toContain('do not retry');
+    expect(text).not.toContain('evil.test');
+  });
+
   it('creates a draft without exposing a send path', async () => {
     const { client } = await connect(createServer({ allowWrites: true }));
     const result = await client.callTool({

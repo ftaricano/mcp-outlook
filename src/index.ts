@@ -15,6 +15,7 @@ import { GraphAuthProvider } from './auth/graphAuth.js';
 import { EmailService } from './services/emailService.js';
 import { EmailSummarizer } from './services/emailSummarizer.js';
 import { createPathGuard } from './security/pathGuard.js';
+import { SenderPolicy } from './security/senderPolicy.js';
 import { HandlerRegistry } from './handlers/HandlerRegistry.js';
 import { Logger } from './logging/logger.js';
 import { LockManager } from './utils/lockManager.js';
@@ -56,8 +57,20 @@ class EmailMCPServer {
       },
     });
 
+    // Logged because the only other signal that outbound sending is unrestricted
+    // is a mail nobody expected. Metadata only: whether the gate is on and how
+    // many entries it holds, never the addresses (invariants 7 and 9).
+    const senderPolicy = new SenderPolicy();
+    this.logger.info('senderPolicy ready', {
+      operation: 'bootstrap',
+      context: {
+        outboundAllowlist: senderPolicy.restricted ? 'active' : 'inactive',
+        recipientAllowlist: senderPolicy.restrictsRecipients ? 'active' : 'inactive',
+      },
+    });
+
     this.authProvider = new GraphAuthProvider(env);
-    this.emailService = new EmailService(this.authProvider, pathGuard);
+    this.emailService = new EmailService(this.authProvider, pathGuard, { senderPolicy });
     this.emailSummarizer = new EmailSummarizer();
 
     this.handlerRegistry = new HandlerRegistry(this.emailService, this.emailSummarizer);

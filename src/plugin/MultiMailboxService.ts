@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Message } from '@microsoft/microsoft-graph-types';
 import type { AdvancedSearchOptions, EmailService } from '../services/emailService.js';
 import type { ReliableSearchResult, SearchStatus } from '../services/reliableSearch.js';
+import { RecipientNotAllowedError } from '../security/senderPolicy.js';
 import type { PluginConfig, MailboxConfig } from './config.js';
 import {
   AttachmentHandoffError,
@@ -22,8 +23,17 @@ import {
 } from './extractors.js';
 import { expandTerm, type SearchMemory } from './searchMemory.js';
 
+/**
+ * The subset of EmailService this plugin may call. Narrow on purpose: methods
+ * absent here are unreachable from the plugin no matter what a handler tries.
+ *
+ * `sendEmail` was added when sending became an opt-in capability. It is the one
+ * entry whose reachability is gated at runtime too (`config.allowSend`), not
+ * just by this type — a type cannot express "only when configured".
+ */
 export type MailboxEmailService = Pick<
   EmailService,
+  | 'sendEmail'
   | 'advancedSearchEmailsDetailed'
   | 'getEmailById'
   | 'listFoldersDetailed'
@@ -1678,6 +1688,52 @@ export class MultiMailboxService {
     } catch (error) {
       if (error instanceof BatchLimitError || error instanceof DownloadLimitError) throw error;
       throw new MailboxOperationError('attachment download');
+    }
+  }
+
+  /**
+   * Send from the configuration-pinned mailbox.
+   *
+   * Takes no alias: `config.sendFromAlias` was validated at startup against
+   * both the mailbox allowlist and the outbound sender gate, so there is no
+   * per-call decision for a caller — or for a message a caller is reading — to
+   * influence. `EmailService.sendEmail` re-checks through `senderPolicy`; that
+   * redundancy is deliberate, since this is the one plugin path that leaves a
+   * trace outside the tenant.
+   */
+  async sendMessage(message: {
+    to: readonly string[];
+    cc?: readonly string[];
+    bcc?: readonly string[];
+    subject: string;
+    body: string;
+  }): Promise<{ mailbox: string; recipients: number }> {
+    if (!this.config.allowSend || !this.config.sendFromAlias) {
+      throw new MailboxOperationError('send');
+    }
+
+    const mailbox = this.resolveMailbox(this.config.sendFromAlias);
+    const emailService = this.createEmailService(mailbox.address);
+    try {
+      await emailService.sendEmail(
+        [...message.to],
+        message.subject,
+        message.body,
+        message.cc ? [...message.cc] : undefined,
+        message.bcc ? [...message.bcc] : undefined
+      );
+      return {
+        mailbox: mailbox.alias,
+        recipients: message.to.length + (message.cc?.length ?? 0) + (message.bcc?.length ?? 0),
+      };
+    } catch (error) {
+      // A policy refusal is not a failure to retry. Passing it through — its
+      // message carries a count, never an address — lets the caller learn it
+      // must change the recipients or ask a human, instead of seeing the same
+      // opaque string it would get from a transient Graph error.
+      if (error instanceof RecipientNotAllowedError) throw error;
+      if (error instanceof MailboxOperationError) throw error;
+      throw new MailboxOperationError('send');
     }
   }
 

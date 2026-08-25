@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseAllowedRecipientDomains, parseAllowedSenders } from '../security/senderPolicy.js';
 
 /**
  * Environment schema. Validated once at startup so the server fails fast
@@ -28,6 +29,37 @@ const EnvSchema = z.object({
   NODE_ENV: z.enum(['production', 'development', 'test']).optional().default('production'),
   MCP_SERVER_NAME: z.string().optional().default('mcp-outlook'),
   MCP_SERVER_VERSION: z.string().optional().default('2.3.0'),
+  OUTLOOK_SEND_FROM: z
+    .string()
+    .email('OUTLOOK_SEND_FROM must be a valid email address')
+    .optional()
+    .or(z.literal('').transform(() => undefined)),
+  OUTLOOK_ALLOWED_SENDERS: z
+    .string()
+    .optional()
+    .superRefine((value, ctx) => {
+      try {
+        parseAllowedSenders(value);
+      } catch (error) {
+        ctx.addIssue({
+          code: 'custom',
+          message: error instanceof Error ? error.message : 'invalid allowlist',
+        });
+      }
+    }),
+  OUTLOOK_ALLOWED_RECIPIENT_DOMAINS: z
+    .string()
+    .optional()
+    .superRefine((value, ctx) => {
+      try {
+        parseAllowedRecipientDomains(value);
+      } catch (error) {
+        ctx.addIssue({
+          code: 'custom',
+          message: error instanceof Error ? error.message : 'invalid recipient allowlist',
+        });
+      }
+    }),
   DOWNLOAD_DIR: z.string().optional(),
   MAX_ATTACHMENT_MB: z.coerce.number().int().positive().max(150).optional().default(25),
 });

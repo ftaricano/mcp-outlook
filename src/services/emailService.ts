@@ -11,6 +11,7 @@ import { CacheManager } from './cacheManager.js';
 import { GraphOptimizer } from './graphOptimizer.js';
 import { ParallelProcessor } from './parallelProcessor.js';
 import { PathGuard } from '../security/pathGuard.js';
+import { ReplyDisabledError, SenderPolicy } from '../security/senderPolicy.js';
 import {
   buildSenderContainsFilter,
   buildSenderExactFilter,
@@ -70,6 +71,7 @@ export interface EmailServiceOptions {
   targetUserEmail?: string;
   preloadCache?: boolean;
   ensureDownloadDirectory?: boolean;
+  senderPolicy?: SenderPolicy;
 }
 
 export interface EmailSummaryData {
@@ -89,6 +91,7 @@ export class EmailService {
   private parallelProcessor: ParallelProcessor<any, any>;
   private savedSearchStore: SavedSearchStore;
   private readonly targetUserEmail?: string;
+  private readonly senderPolicy: SenderPolicy;
 
   constructor(
     private authProvider: GraphAuthProvider,
@@ -100,6 +103,9 @@ export class EmailService {
       ensureDownloadDirectory: options.ensureDownloadDirectory,
     });
     this.targetUserEmail = options.targetUserEmail ?? process.env.TARGET_USER_EMAIL;
+    // Pinned at construction, like the mailbox itself: an outbound gate that
+    // could be re-read per call would be a gate that a later env change moves.
+    this.senderPolicy = options.senderPolicy ?? new SenderPolicy();
 
     // Initialize performance optimization systems
     this.cacheManager = new CacheManager({
@@ -371,8 +377,13 @@ export class EmailService {
     attachments?: EmailAttachment[],
     enhancedOptions?: EnhancedEmailOptions
   ): Promise<any> {
+    // Outside the try on purpose: the catch below rewrites errors into attachment
+    // and transport advice, which would disguise a refused sender as a transient
+    // failure worth retrying.
+    const userEmail = this.senderPolicy.resolveSendMailbox(this.targetUserEmail);
+    this.senderPolicy.assertRecipients([to, cc, bcc]);
+
     try {
-      const userEmail = this.targetUserEmail || 'me';
       const apiPath = userEmail === 'me' ? '/me/sendMail' : `/users/${userEmail}/sendMail`;
 
       // Preparar conteúdo do email com template se solicitado
@@ -612,8 +623,19 @@ export class EmailService {
     replyAll: boolean = false,
     enhancedOptions?: EnhancedEmailOptions
   ): Promise<any> {
+    // See sendEmail: the gate must not be reachable through the catch below.
+    const userEmail = this.senderPolicy.assertReplyMailbox(this.targetUserEmail);
+    // A reply's recipients come from the original message, i.e. from the very
+    // untrusted content a recipient allowlist exists to contain, and Graph
+    // resolves them server-side where we cannot inspect them. Replying to an
+    // external sender is precisely the exfiltration path being closed, so when
+    // a recipient allowlist is configured, replying is refused rather than
+    // allowed unchecked.
+    if (this.senderPolicy.restrictsRecipients) {
+      throw new ReplyDisabledError();
+    }
+
     try {
-      const userEmail = this.targetUserEmail || 'me';
       const action = replyAll ? 'replyAll' : 'reply';
       const apiPath =
         userEmail === 'me'
@@ -1329,6 +1351,11 @@ export class EmailService {
   /**
    * Função híbrida: baixa anexo e envia email automaticamente
    * Soluciona limitações do MCP para arquivos grandes
+   *
+   * Unlike every other failure here, a sender refused by `senderPolicy` is
+   * *thrown* rather than reported through the `error` field of the result: the
+   * gate runs before the try block so it cannot be mistaken for a partial send.
+   * Only reachable when an allowlist is configured. `HybridHandler` catches it.
    */
   async sendEmailFromAttachment(
     sourceEmailId: string,
@@ -1358,6 +1385,13 @@ export class EmailService {
     error?: string;
   }> {
     const startTime = Date.now();
+
+    // sendEmail() gates again at the point of no return; refusing here as well
+    // avoids downloading a multi-megabyte attachment for a send that cannot
+    // happen. Both catches below swallow into a result object, so the gate has
+    // to run before them to stay visible.
+    this.senderPolicy.resolveSendMailbox(this.targetUserEmail);
+    this.senderPolicy.assertRecipients([to, options.cc, options.bcc]);
 
     try {
       console.error('🚀 Iniciando envio híbrido de email com anexo...');
@@ -1472,6 +1506,9 @@ export class EmailService {
 
   /**
    * Função híbrida simplificada: envia email com anexo já baixado do disco
+   *
+   * See sendEmailFromAttachment: a sender refused by `senderPolicy` throws
+   * instead of surfacing through the `error` field.
    */
   async sendEmailWithFileAttachment(
     filePath: string,
@@ -1494,6 +1531,10 @@ export class EmailService {
     };
     error?: string;
   }> {
+    // See sendEmailFromAttachment: fail before encoding a file we may not send.
+    this.senderPolicy.resolveSendMailbox(this.targetUserEmail);
+    this.senderPolicy.assertRecipients([to, options.cc, options.bcc]);
+
     try {
       console.error('📎 Enviando email com arquivo do disco...');
       console.error(`   Arquivo: ${filePath}`);

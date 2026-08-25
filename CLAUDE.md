@@ -7,8 +7,9 @@ Guidance for agents working **on this repo**. End-user docs (tool catalog, setup
 MCP server exposing Microsoft Graph email operations as 40 tools over stdio, plus a standalone
 `outlook` CLI wrapper. A separate multi-mailbox plugin supports allowlisted search, reading, and
 bounded attachment access over stdio and loopback Streamable HTTP. It exposes twelve read-only tools
-by default, two local handoff tools only when that separate gate is enabled, and five additional
-non-send/non-delete tools only when mailbox writes are explicitly enabled.
+by default, two local handoff tools only when that separate gate is enabled, five additional
+non-delete tools only when mailbox writes are explicitly enabled, and one send tool only when a
+third gate is enabled and a sending mailbox is pinned by configuration.
 Auth is Azure AD client-credentials (no user login). The original server remains single-mailbox
 per process; plugin services pin mailbox identity per instance.
 
@@ -25,9 +26,18 @@ These are enforced by CI or by design. Don't regress them.
    `PLUGIN_ALLOW_WRITES=false` forces writes off regardless of what the file says; only when
    the env var is absent or empty does the file's `allowWrites` field decide (default `false`).
    Local handoffs are absent unless `PLUGIN_ALLOW_LOCAL_HANDOFFS=true`; there is no config-file
-   fallback. `scripts/plugin-smoke-test.js` enforces exactly 12 default, 14 handoff-only, 17
-   mailbox-write-only, and 19 tools with both gates. Sending email and every delete
-   operation are impossible by construction — no dispatch branch exists for them in the plugin.
+   fallback. `scripts/plugin-smoke-test.js` enforces the full gate matrix: 12 / 14 / 17 / 19 without
+   sending, and 13 / 15 / 18 / 20 with it. **Every delete operation is impossible by
+   construction** — no dispatch branch exists for one in the plugin, at any gate combination.
+   **Sending is a third, independent gate** (`PLUGIN_ALLOW_SEND=true`) exposing exactly one tool.
+   No fallback to the plugin's JSON config — `strictObject` rejects the key outright — but it is
+   an ordinary environment variable, so a `.env` in the process cwd sets it like any other
+   (`stdio.ts` runs `dotenv.config()` first). dotenv does not override an already-present value,
+   so an explicit `PLUGIN_ALLOW_SEND=false` in the environment still wins. It fails closed at startup unless `OUTLOOK_SEND_FROM`
+   names a mailbox that is both in the plugin allowlist and covered by a non-empty
+   `OUTLOOK_ALLOWED_SENDERS`. `send_email` takes **no `mailbox` argument**: the plugin reads
+   untrusted mail from every allowed mailbox, so a caller-nameable sender would be an input a
+   malicious message could try to steer. The sending mailbox is not sayable, only configurable.
 2. **Every tool has a zod schema.** `src/schemas/toolSchemas.ts` is the gate — `HandlerRegistry.handleTool` runs `validateToolInput` before dispatching. No handler method runs on unvalidated args.
 3. **Filesystem access goes through `pathGuard`.** Handlers never call `fs.readFile` / `fs.writeFile` on caller-supplied paths directly; `src/services/fileManager.ts` and `src/services/emailService.ts` already route through `pathGuard.resolveSafe()`. Any new file-touching code must go through the same door.
 4. **Graph calls go through `EmailService`.** No direct `Client.api()` in handlers — that bypasses response caching (`CacheManager`) and the batch helpers. Retry/throttling (429 + `Retry-After`) is **not** custom: it comes from the Graph SDK's default middleware chain (`Client.initWithMiddleware` in `src/auth/graphAuth.ts`), which includes the SDK `RetryHandler`. There is no in-house rate limiter.
@@ -42,13 +52,31 @@ These are enforced by CI or by design. Don't regress them.
 11. **HTTP is loopback-only in this repo.** Remote ChatGPT use requires a separately reviewed
     HTTPS OAuth 2.1 resource-server layer and a separate Graph `Mail.Read` app registration.
 12. **Graph permissions follow the exposed catalog.** The default twelve-tool plugin requires only
-    application `Mail.Read`. Enabling its five write tools requires `Mail.ReadWrite`, but never
-    `Mail.Send`. The original 40-tool server requires `Mail.ReadWrite` and needs `Mail.Send` only
+    application `Mail.Read`. Enabling its five write tools requires `Mail.ReadWrite`. Enabling its
+    send gate requires `Mail.Send` — the one case where the plugin needs it; leave that gate off
+    and the plugin never does. The original 40-tool server requires `Mail.ReadWrite` and needs `Mail.Send` only
     for `send_email` and `reply_to_email`.
 13. **Plugin downloads have aggregate budgets.** `download_attachments` applies both
     `maxBatchSize` and `maxDownloadBatchBytes` whether `attachmentIds` is supplied or omitted.
     No attachment may start writing when its real decoded size exceeds the remaining byte budget.
-14. **Local handoffs are opaque, private, and fail closed.** They use only the fixed
+14. **Outbound sending goes through `senderPolicy`.** The original server has exactly two paths
+    that put mail on the wire — `EmailService.sendEmail()` and `EmailService.replyToEmail()` — and
+    both resolve their mailbox through `src/security/senderPolicy.ts` *before* entering their
+    `try` block, because both catches rewrite errors and would disguise a refusal as a retryable
+    failure. When `OUTLOOK_ALLOWED_SENDERS` is set, any mailbox outside it is refused before Graph
+    is called; unset means unrestricted, since the deployment's addresses cannot live in this repo
+    (invariant 9). `OUTLOOK_SEND_FROM` redirects new messages only — a reply belongs to the mailbox
+    that owns the original message, and redirecting it would point at a foreign message id.
+    `OUTLOOK_ALLOWED_RECIPIENT_DOMAINS` is the second half of the gate and aims at a different
+    threat: pinning the sender stops impersonation, bounding recipients stops exfiltration. It
+    checks `to`/`cc`/`bcc` together, matches the exact domain after `@` (a subdomain does not
+    inherit its parent), and makes `reply_to_email` refuse outright — a reply's recipients come
+    from the original message, i.e. from the untrusted content the allowlist exists to contain.
+    `create_draft` is deliberately outside both gates. Any new outbound call site must pass them —
+    `tests/security/outboundCallSites.test.ts` fails if an outbound Graph route appears outside
+    `EmailService`, or if their number changes. The plugin's `send_email` reaches the wire through
+    that same `EmailService.sendEmail`, so it inherits this gate rather than bypassing it.
+15. **Local handoffs are opaque, private, and fail closed.** They use only the fixed
     `~/.jarvishub-mcp/outlook-handoffs` root, never a caller-supplied path. A `0700` bundle contains
     only `0600` `payload.bin` plus `manifest.json`; the manifest is the final commit marker. Replay
     revalidates request fingerprint, exact manifest shape, modes, size, and SHA-256. The MCP never
@@ -62,6 +90,7 @@ src/
   config/     zod-validated env, fails fast
   auth/       MSAL client-credentials
   security/   pathGuard — filesystem allowlist (DOWNLOAD_DIR, MCP_EMAIL_UPLOAD_DIRS)
+              senderPolicy — outbound mailbox allowlist (OUTLOOK_ALLOWED_SENDERS, OUTLOOK_SEND_FROM)
   services/   Graph wrapper: response cache, batch helpers (retry via SDK middleware)
   schemas/    zod input schema per tool + jsonSchema converter
   handlers/   one class per domain, HandlerRegistry routes by tool name
