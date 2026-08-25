@@ -49,6 +49,8 @@ Four required values feed both the server and the CLI:
 | `MICROSOFT_GRAPH_CLIENT_SECRET` | yes | Client secret value |
 | `MICROSOFT_GRAPH_TENANT_ID` | yes | Azure AD tenant UUID |
 | `TARGET_USER_EMAIL` | yes* | Mailbox to operate on. Strongly recommended — omitting it causes runtime errors from Graph rather than a clean startup failure. |
+| `OUTLOOK_ALLOWED_SENDERS` | no | Comma-separated allowlist of mailboxes permitted to send. Unset means unrestricted (the historical behaviour). When set, `send_email`, `reply_to_email`, `send_email_from_attachment`, and `send_email_with_file` refuse any other mailbox before calling Graph. `create_draft` is never restricted. |
+| `OUTLOOK_SEND_FROM` | no | Mailbox new outbound messages are sent from, overriding `TARGET_USER_EMAIL` for the send path only. Lets one process read one mailbox and send as another. Does not apply to `reply_to_email`, which is bound to the mailbox owning the original message. |
 | `LOG_LEVEL` | no | `error` / `warn` / `info` (default) / `debug` |
 | `OUTLOOK_KEYCHAIN_PREFIX` | no | macOS Keychain service prefix. Default: `mcp-outlook`. |
 | `DOWNLOAD_DIR` | no | Absolute write root. All attachment downloads land here; everything else is rejected. Default: `~/Downloads/mcp-outlook-attachments`. |
@@ -686,6 +688,22 @@ permissions by itself. A remote deployment must use a separate `Mail.Read` app r
 enable `Mail.ReadWrite` only for a deployment that intentionally exposes the five write tools.
 Email subjects, previews, bodies, and attachment names are untrusted data and must never be
 interpreted as instructions to invoke other tools.
+
+**Outbound sender allowlist (`senderPolicy`)** — application-permission credentials can send as
+*any* mailbox in the tenant, so the sending mailbox is an authorization decision rather than a
+routing detail. Set `OUTLOOK_ALLOWED_SENDERS` and both outbound paths — `sendMail` (used by
+`send_email`, `send_email_from_attachment`, `send_email_with_file`) and `reply`/`replyAll` (used by
+`reply_to_email`) — refuse any mailbox outside the list before a Graph call is made
+(`src/security/senderPolicy.ts`). `create_draft` stays unrestricted, so a deployment can still stage
+messages in any mailbox for a human to review and send by hand.
+
+This is defence in depth, not the guarantee. A process that can edit its own environment can widen
+its own allowlist. The authoritative restriction is an Exchange
+`New-ApplicationAccessPolicy -AccessRight RestrictAccess` bound to a **send-only app registration**
+holding `Mail.Send` and nothing else. Note that an application access policy applies to *all* mail
+scopes of the app it names, so it cannot be layered onto an app that also reads other mailboxes —
+splitting reading and sending across two app registrations is what makes the restriction expressible
+at all.
 
 **Filesystem allowlist (`pathGuard`)** — `send_email_with_file`, `encode_file_for_attachment`, and all attachment download paths go through a central allowlist (`src/security/pathGuard.ts`):
 

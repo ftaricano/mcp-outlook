@@ -11,6 +11,7 @@ import { CacheManager } from './cacheManager.js';
 import { GraphOptimizer } from './graphOptimizer.js';
 import { ParallelProcessor } from './parallelProcessor.js';
 import { PathGuard } from '../security/pathGuard.js';
+import { SenderPolicy } from '../security/senderPolicy.js';
 import {
   buildSenderContainsFilter,
   buildSenderExactFilter,
@@ -70,6 +71,7 @@ export interface EmailServiceOptions {
   targetUserEmail?: string;
   preloadCache?: boolean;
   ensureDownloadDirectory?: boolean;
+  senderPolicy?: SenderPolicy;
 }
 
 export interface EmailSummaryData {
@@ -89,6 +91,7 @@ export class EmailService {
   private parallelProcessor: ParallelProcessor<any, any>;
   private savedSearchStore: SavedSearchStore;
   private readonly targetUserEmail?: string;
+  private readonly senderPolicy: SenderPolicy;
 
   constructor(
     private authProvider: GraphAuthProvider,
@@ -100,6 +103,9 @@ export class EmailService {
       ensureDownloadDirectory: options.ensureDownloadDirectory,
     });
     this.targetUserEmail = options.targetUserEmail ?? process.env.TARGET_USER_EMAIL;
+    // Pinned at construction, like the mailbox itself: an outbound gate that
+    // could be re-read per call would be a gate that a later env change moves.
+    this.senderPolicy = options.senderPolicy ?? new SenderPolicy();
 
     // Initialize performance optimization systems
     this.cacheManager = new CacheManager({
@@ -371,8 +377,12 @@ export class EmailService {
     attachments?: EmailAttachment[],
     enhancedOptions?: EnhancedEmailOptions
   ): Promise<any> {
+    // Outside the try on purpose: the catch below rewrites errors into attachment
+    // and transport advice, which would disguise a refused sender as a transient
+    // failure worth retrying.
+    const userEmail = this.senderPolicy.resolveSendMailbox(this.targetUserEmail);
+
     try {
-      const userEmail = this.targetUserEmail || 'me';
       const apiPath = userEmail === 'me' ? '/me/sendMail' : `/users/${userEmail}/sendMail`;
 
       // Preparar conteúdo do email com template se solicitado
@@ -612,8 +622,10 @@ export class EmailService {
     replyAll: boolean = false,
     enhancedOptions?: EnhancedEmailOptions
   ): Promise<any> {
+    // See sendEmail: the gate must not be reachable through the catch below.
+    const userEmail = this.senderPolicy.assertReplyMailbox(this.targetUserEmail);
+
     try {
-      const userEmail = this.targetUserEmail || 'me';
       const action = replyAll ? 'replyAll' : 'reply';
       const apiPath =
         userEmail === 'me'
@@ -1359,6 +1371,12 @@ export class EmailService {
   }> {
     const startTime = Date.now();
 
+    // sendEmail() gates again at the point of no return; refusing here as well
+    // avoids downloading a multi-megabyte attachment for a send that cannot
+    // happen. Both catches below swallow into a result object, so the gate has
+    // to run before them to stay visible.
+    this.senderPolicy.resolveSendMailbox(this.targetUserEmail);
+
     try {
       console.error('🚀 Iniciando envio híbrido de email com anexo...');
       console.error(`   Email origem: ${sourceEmailId.substring(0, 30)}...`);
@@ -1494,6 +1512,9 @@ export class EmailService {
     };
     error?: string;
   }> {
+    // See sendEmailFromAttachment: fail before encoding a file we may not send.
+    this.senderPolicy.resolveSendMailbox(this.targetUserEmail);
+
     try {
       console.error('📎 Enviando email com arquivo do disco...');
       console.error(`   Arquivo: ${filePath}`);

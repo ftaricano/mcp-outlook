@@ -48,7 +48,16 @@ These are enforced by CI or by design. Don't regress them.
 13. **Plugin downloads have aggregate budgets.** `download_attachments` applies both
     `maxBatchSize` and `maxDownloadBatchBytes` whether `attachmentIds` is supplied or omitted.
     No attachment may start writing when its real decoded size exceeds the remaining byte budget.
-14. **Local handoffs are opaque, private, and fail closed.** They use only the fixed
+14. **Outbound sending goes through `senderPolicy`.** The original server has exactly two paths
+    that put mail on the wire — `EmailService.sendEmail()` and `EmailService.replyToEmail()` — and
+    both resolve their mailbox through `src/security/senderPolicy.ts` *before* entering their
+    `try` block, because both catches rewrite errors and would disguise a refusal as a retryable
+    failure. When `OUTLOOK_ALLOWED_SENDERS` is set, any mailbox outside it is refused before Graph
+    is called; unset means unrestricted, since the deployment's addresses cannot live in this repo
+    (invariant 9). `OUTLOOK_SEND_FROM` redirects new messages only — a reply belongs to the mailbox
+    that owns the original message, and redirecting it would point at a foreign message id.
+    `create_draft` is deliberately outside the gate. Any new outbound call site must pass the gate.
+15. **Local handoffs are opaque, private, and fail closed.** They use only the fixed
     `~/.jarvishub-mcp/outlook-handoffs` root, never a caller-supplied path. A `0700` bundle contains
     only `0600` `payload.bin` plus `manifest.json`; the manifest is the final commit marker. Replay
     revalidates request fingerprint, exact manifest shape, modes, size, and SHA-256. The MCP never
@@ -62,6 +71,7 @@ src/
   config/     zod-validated env, fails fast
   auth/       MSAL client-credentials
   security/   pathGuard — filesystem allowlist (DOWNLOAD_DIR, MCP_EMAIL_UPLOAD_DIRS)
+              senderPolicy — outbound mailbox allowlist (OUTLOOK_ALLOWED_SENDERS, OUTLOOK_SEND_FROM)
   services/   Graph wrapper: response cache, batch helpers (retry via SDK middleware)
   schemas/    zod input schema per tool + jsonSchema converter
   handlers/   one class per domain, HandlerRegistry routes by tool name
