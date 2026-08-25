@@ -13,8 +13,16 @@ The multi-mailbox plugin defaults to twelve read-only tools. In that mode, it:
 
 Operators may explicitly enable five additional tools that create drafts, move or copy messages,
 mark messages read or unread, and download attachments to the configured local download root.
-Even with those tools enabled, the plugin cannot send or delete email because it exposes no such
-tool or dispatch path.
+Even with those tools enabled, the plugin cannot delete email: it exposes no such tool or dispatch
+path at any configuration.
+
+Operators may independently enable a single send tool. It is off unless `PLUGIN_ALLOW_SEND=true`,
+and the plugin refuses to start unless the sending mailbox is named by `OUTLOOK_SEND_FROM`, listed
+in the operator's private mailbox allowlist, and covered by `OUTLOOK_ALLOWED_SENDERS`. The sending
+mailbox is fixed by that configuration and cannot be chosen per call — the tool takes no mailbox
+argument. Recipients, subject, and body come from the caller, so an operator who enables this gate
+is enabling outbound email to addresses chosen at call time; that is the point of the tool and it
+is not otherwise restricted by this software.
 
 Operators may independently enable two local attachment-handoff tools. They materialize one
 bounded attachment in a fixed private store under the operator's home directory and return only

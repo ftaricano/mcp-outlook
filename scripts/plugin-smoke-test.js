@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,7 +32,9 @@ const WRITE_TOOLS = [
 const HANDOFF_TOOLS = ['create_attachment_handoff', 'get_attachment_handoff'];
 const SEND_TOOLS = ['send_email'];
 const READ_ONLY_TOOLS = [...READ_TOOLS, 'get_attachment_handoff'];
-const DESTRUCTIVE_TOOLS = ['move_messages', 'mark_messages'];
+// send_email destroys nothing, but hosts read destructiveHint as 'confirm with
+// the human'. Leaving it out would rank sending below marking a message read.
+const DESTRUCTIVE_TOOLS = ['move_messages', 'mark_messages', 'send_email'];
 // Deleting stays impossible by construction — no dispatch branch exists for it
 // at any gate combination. Sending is no longer on this list because it became
 // an opt-in capability, but it must still be absent unless PLUGIN_ALLOW_SEND is
@@ -51,6 +54,34 @@ writeFileSync(
   { mode: 0o600 }
 );
 chmodSync(configPath, 0o600);
+
+const SEND_ADDRESS = 'test@example.com';
+
+async function checkStartupRefusal(label, sendEnv) {
+  const child = spawn(process.execPath, [serverEntry], {
+    cwd: repoRoot,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: {
+      PATH: process.env.PATH ?? '',
+      NODE_ENV: 'test',
+      LOG_LEVEL: 'error',
+      MICROSOFT_GRAPH_CLIENT_ID: '11111111-1111-4111-8111-111111111111',
+      MICROSOFT_GRAPH_CLIENT_SECRET: 'plugin-smoke-secret',
+      MICROSOFT_GRAPH_TENANT_ID: '22222222-2222-4222-8222-222222222222',
+      TARGET_USER_EMAIL: SEND_ADDRESS,
+      OUTLOOK_PLUGIN_CONFIG: configPath,
+      PLUGIN_ALLOW_SEND: 'true',
+      DOWNLOAD_DIR: downloadRoot,
+      ...sendEnv,
+    },
+  });
+
+  const code = await new Promise((resolve) => child.on('exit', resolve));
+  if (code === 0) {
+    throw new Error(`Plugin started with an incomplete send configuration: ${label}`);
+  }
+  process.stdout.write(`Plugin startup refusal OK (${label})\n`);
+}
 
 async function checkScenario(allowWrites, allowLocalHandoffs, allowSend, expected) {
   const transport = new StdioClientTransport({
@@ -73,8 +104,8 @@ async function checkScenario(allowWrites, allowLocalHandoffs, allowSend, expecte
       // Sending refuses to start without both of these; see resolveSendFromAlias.
       ...(allowSend
         ? {
-            OUTLOOK_SEND_FROM: 'test@example.com',
-            OUTLOOK_ALLOWED_SENDERS: 'test@example.com',
+            OUTLOOK_SEND_FROM: SEND_ADDRESS,
+            OUTLOOK_ALLOWED_SENDERS: SEND_ADDRESS,
           }
         : {}),
       DOWNLOAD_DIR: downloadRoot,
@@ -135,6 +166,19 @@ try {
     ...HANDOFF_TOOLS,
     ...SEND_TOOLS,
   ]);
+  // The strongest claim this plugin makes about sending is that it refuses to
+  // START when the gate is on but the sender is not fully pinned. Unit tests
+  // cover loadPluginConfig; only this proves the process actually dies.
+  await checkStartupRefusal('gate on, no sending mailbox', { OUTLOOK_ALLOWED_SENDERS: SEND_ADDRESS });
+  await checkStartupRefusal('gate on, no outbound allowlist', { OUTLOOK_SEND_FROM: SEND_ADDRESS });
+  await checkStartupRefusal('sending mailbox not in the plugin allowlist', {
+    OUTLOOK_SEND_FROM: 'stranger@example.com',
+    OUTLOOK_ALLOWED_SENDERS: 'stranger@example.com',
+  });
+  await checkStartupRefusal('sending mailbox not covered by the outbound allowlist', {
+    OUTLOOK_SEND_FROM: SEND_ADDRESS,
+    OUTLOOK_ALLOWED_SENDERS: 'stranger@example.com',
+  });
 } finally {
   rmSync(temporaryRoot, { recursive: true, force: true });
 }

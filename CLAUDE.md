@@ -29,8 +29,11 @@ These are enforced by CI or by design. Don't regress them.
    fallback. `scripts/plugin-smoke-test.js` enforces the full gate matrix: 12 / 14 / 17 / 19 without
    sending, and 13 / 15 / 18 / 20 with it. **Every delete operation is impossible by
    construction** — no dispatch branch exists for one in the plugin, at any gate combination.
-   **Sending is a third, independent gate** (`PLUGIN_ALLOW_SEND=true`, env only, no config-file
-   fallback) exposing exactly one tool. It fails closed at startup unless `OUTLOOK_SEND_FROM`
+   **Sending is a third, independent gate** (`PLUGIN_ALLOW_SEND=true`) exposing exactly one tool.
+   No fallback to the plugin's JSON config — `strictObject` rejects the key outright — but it is
+   an ordinary environment variable, so a `.env` in the process cwd sets it like any other
+   (`stdio.ts` runs `dotenv.config()` first). dotenv does not override an already-present value,
+   so an explicit `PLUGIN_ALLOW_SEND=false` in the environment still wins. It fails closed at startup unless `OUTLOOK_SEND_FROM`
    names a mailbox that is both in the plugin allowlist and covered by a non-empty
    `OUTLOOK_ALLOWED_SENDERS`. `send_email` takes **no `mailbox` argument**: the plugin reads
    untrusted mail from every allowed mailbox, so a caller-nameable sender would be an input a

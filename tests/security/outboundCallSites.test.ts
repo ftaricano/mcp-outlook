@@ -69,12 +69,27 @@ describe('outbound call sites', () => {
     expect(matches).toHaveLength(4);
   });
 
-  it('has no outbound route anywhere in the read-only plugin', () => {
+  it('builds no Graph route of its own in the plugin', () => {
     const pluginFiles = files.filter((file) => relative(SRC_ROOT, file).startsWith('plugin/'));
 
     expect(pluginFiles.length).toBeGreaterThan(5);
     for (const file of pluginFiles) {
       expect(OUTBOUND_ROUTE.test(stripComments(readFileSync(file, 'utf8')))).toBe(false);
     }
+  });
+
+  it('pins the plugin to exactly one outbound call, which the route scan cannot see', () => {
+    // The plugin reaches the wire through `emailService.sendEmail(...)`, not
+    // through a route literal, so the scan above is blind to it. Widening
+    // MailboxEmailService with `sendEmail` made the method callable from every
+    // method of MultiMailboxService; this is what stops a second caller from
+    // appearing quietly.
+    const pluginSource = files
+      .filter((file) => relative(SRC_ROOT, file).startsWith('plugin/'))
+      .map((file) => stripComments(readFileSync(file, 'utf8')))
+      .join('\n');
+
+    const calls = pluginSource.match(/\.sendEmail\(/g) ?? [];
+    expect(calls).toHaveLength(1);
   });
 });

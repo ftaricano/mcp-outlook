@@ -23,6 +23,8 @@ export function config(overrides: Partial<PluginConfig> = {}): PluginConfig {
     maxBodyChars: 12000,
     allowWrites: false,
     allowLocalHandoffs: false,
+    allowSend: false,
+    sendFromAlias: undefined,
     maxAttachmentInputBytes: 15 * 1024 * 1024,
     maxExtractedChars: 200_000,
     maxRawAttachmentBytes: 256 * 1024,
@@ -53,6 +55,10 @@ export function stubEmailService(
     throw new Error(`stubEmailService: ${method} was not stubbed for this test`);
   };
   const methods: (keyof MailboxEmailService)[] = [
+    // Listed so that a read handler which somehow reaches sendEmail fails loudly
+    // with "was not stubbed" instead of `undefined is not a function`, which the
+    // generic handler catch would flatten into an ordinary tool error.
+    'sendEmail',
     'advancedSearchEmailsDetailed',
     'getEmailById',
     'listFoldersDetailed',
