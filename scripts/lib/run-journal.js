@@ -184,6 +184,10 @@ export function normalizeErrorClass(raw) {
   }
   if (/\b403\b|forbidden|insufficient privileges/.test(text)) return 'forbidden';
   if (/raop|access to odata is disabled|access policy/.test(text)) return 'access_policy';
+  // A refused sender is a policy decision, not a crash. Folding it into
+  // unknown_error would make `outlook harvest` blind to the one signal this
+  // gate is supposed to produce. Class name only — no address is persisted.
+  if (/sender not allowed|sender allowlist/.test(text)) return 'sender_not_allowed';
   if (/timeout|timed out|etimedout/.test(text)) return 'timeout';
   if (/invalid arguments|validation|zod/.test(text)) return 'invalid_arguments';
   if (/server exited|spawn|enoent/.test(text)) return 'server_startup';

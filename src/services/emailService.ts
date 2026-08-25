@@ -1341,6 +1341,11 @@ export class EmailService {
   /**
    * Função híbrida: baixa anexo e envia email automaticamente
    * Soluciona limitações do MCP para arquivos grandes
+   *
+   * Unlike every other failure here, a sender refused by `senderPolicy` is
+   * *thrown* rather than reported through the `error` field of the result: the
+   * gate runs before the try block so it cannot be mistaken for a partial send.
+   * Only reachable when an allowlist is configured. `HybridHandler` catches it.
    */
   async sendEmailFromAttachment(
     sourceEmailId: string,
@@ -1490,6 +1495,9 @@ export class EmailService {
 
   /**
    * Função híbrida simplificada: envia email com anexo já baixado do disco
+   *
+   * See sendEmailFromAttachment: a sender refused by `senderPolicy` throws
+   * instead of surfacing through the `error` field.
    */
   async sendEmailWithFileAttachment(
     filePath: string,

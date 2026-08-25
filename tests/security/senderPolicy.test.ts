@@ -7,16 +7,38 @@ import {
 } from '../../src/security/senderPolicy.js';
 
 describe('parseAllowedSenders', () => {
-  it('treats absent and empty values as unrestricted', () => {
+  it('treats an absent value as unrestricted', () => {
     expect(parseAllowedSenders(undefined)).toEqual([]);
-    expect(parseAllowedSenders('')).toEqual([]);
-    expect(parseAllowedSenders('  ,  ,')).toEqual([]);
   });
+
+  it('treats an empty string as unset, the shell idiom for it', () => {
+    expect(parseAllowedSenders('')).toEqual([]);
+  });
+
+  // The dangerous case: a value that *looks* configured but parses to nothing.
+  // Treating it as unrestricted would make the one input an operator reads as
+  // "the gate is on" behave as "the gate is off", with no error and no log.
+  it.each([' ', ',', ',,,', '   ,  ,', '\t', '\n'])(
+    'refuses to start when the allowlist is set but yields no addresses: %j',
+    (raw) => {
+      expect(() => parseAllowedSenders(raw)).toThrow(SenderPolicyError);
+    }
+  );
 
   it('normalizes case, whitespace and duplicates', () => {
     expect(parseAllowedSenders(' Reports@Example.com , reports@example.com ,ops@example.com')).toEqual(
       ['reports@example.com', 'ops@example.com']
     );
+  });
+
+  it.each([
+    'a@b.c/../../users/victim',
+    'a@b.c/x',
+    'a@b.c?$select=1',
+    '<a@b.c>',
+    'a@b.c#frag',
+  ])('rejects an address that could escape a Graph URL segment: %j', (entry) => {
+    expect(() => parseAllowedSenders(entry)).toThrow(SenderPolicyError);
   });
 
   it('rejects entries that are not email addresses without echoing them', () => {

@@ -13,6 +13,8 @@
  * must do both.
  */
 
+import { z } from 'zod';
+
 export class SenderNotAllowedError extends Error {
   // The message deliberately names no environment variable. Every error
   // crossing the MCP boundary passes through `redactSecrets`, whose catch-all
@@ -33,26 +35,49 @@ export class SenderPolicyError extends Error {
   }
 }
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Deliberately the same validator `env.ts` applies to TARGET_USER_EMAIL rather
+// than a hand-rolled shape. A looser pattern here would let `a@b.c/../victim`
+// or `a@b.c?$select=1` through a module whose whole job is authorization, and
+// those values are interpolated straight into a Graph URL segment.
+const emailSchema = z.string().email();
+
+function isEmailAddress(value: string): boolean {
+  return emailSchema.safeParse(value).success;
+}
 
 /**
- * Parse a comma-separated allowlist. Entries are lowercased and de-duplicated;
- * an empty or absent value means "unrestricted", which is the pre-existing
- * behaviour of this server.
+ * Parse a comma-separated allowlist. Entries are lowercased and de-duplicated.
  *
- * The error deliberately reports a count rather than the offending values: a
- * malformed allowlist is an operator mistake, and echoing its contents would
- * put deployment addresses into whatever captured the error.
+ * An *absent* value means "unrestricted" — the pre-existing behaviour, and the
+ * only sensible default for a public repo that cannot carry a deployment's
+ * addresses (invariant 9). A value that is *present but yields no entries*
+ * (`" "`, `","`, `",,,"`) is an operator mistake, not consent to send from
+ * anywhere, so it fails loudly. Collapsing the two would make the one input
+ * that looks like "the gate is on" behave as "the gate is off", silently.
+ *
+ * The errors report a count rather than the offending values: a malformed
+ * allowlist is a config mistake, and echoing its contents would put deployment
+ * addresses into whatever captured the error.
  */
 export function parseAllowedSenders(raw: string | undefined): readonly string[] {
-  if (!raw) return Object.freeze([]);
+  if (raw === undefined) return Object.freeze([]);
 
   const entries = raw
     .split(',')
     .map((entry) => entry.trim().toLowerCase())
     .filter(Boolean);
 
-  const invalid = entries.filter((entry) => !EMAIL_PATTERN.test(entry)).length;
+  if (entries.length === 0) {
+    // An empty string is how "unset" reaches us from a shell that exports the
+    // variable without a value, so it keeps the unrestricted meaning. Anything
+    // the operator actually typed does not.
+    if (raw === '') return Object.freeze([]);
+    throw new SenderPolicyError(
+      'OUTLOOK_ALLOWED_SENDERS is set but contains no addresses; unset it to allow every mailbox'
+    );
+  }
+
+  const invalid = entries.filter((entry) => !isEmailAddress(entry)).length;
   if (invalid > 0) {
     throw new SenderPolicyError(
       `OUTLOOK_ALLOWED_SENDERS must be a comma-separated list of email addresses; ${invalid} entry/entries are not valid addresses`
@@ -73,7 +98,7 @@ export class SenderPolicy {
 
   constructor(options: SenderPolicyOptions = {}, source: NodeJS.ProcessEnv = process.env) {
     const sendFrom = (options.sendFrom ?? source.OUTLOOK_SEND_FROM)?.trim();
-    if (sendFrom && !EMAIL_PATTERN.test(sendFrom.toLowerCase())) {
+    if (sendFrom && !isEmailAddress(sendFrom.toLowerCase())) {
       throw new SenderPolicyError('OUTLOOK_SEND_FROM must be a valid email address');
     }
 

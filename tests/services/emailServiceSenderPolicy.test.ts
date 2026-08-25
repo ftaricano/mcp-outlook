@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { EmailService } from '../../src/services/emailService.js';
 import { SenderNotAllowedError, SenderPolicy } from '../../src/security/senderPolicy.js';
 
@@ -90,6 +90,20 @@ describe('EmailService outbound sender gate', () => {
 
     await expect(service.replyToEmail('message-1', 'Body')).rejects.toThrow(SenderNotAllowedError);
     expect(posts).toHaveLength(0);
+  });
+
+  it('refuses the hybrid attachment send before the attachment is downloaded', async () => {
+    const policy = new SenderPolicy({ allowedSenders: ALLOWED }, {});
+    const { service } = makeService('owner@example.com', policy);
+    // The pre-gate exists to avoid pulling a multi-megabyte attachment for a
+    // send that cannot happen. Asserting only that it throws would keep passing
+    // if someone moved the gate below the download, which is the whole point.
+    const download = vi.spyOn(service, 'downloadAttachmentToFile');
+
+    await expect(
+      service.sendEmailFromAttachment('msg-1', 'att-1', ['someone@example.com'], 'S', 'B')
+    ).rejects.toThrow(SenderNotAllowedError);
+    expect(download).not.toHaveBeenCalled();
   });
 
   it('refuses the hybrid file send before the file is read', async () => {
