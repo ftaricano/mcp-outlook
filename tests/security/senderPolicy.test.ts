@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  parseAllowedRecipientDomains,
   parseAllowedSenders,
+  RecipientNotAllowedError,
   SenderNotAllowedError,
   SenderPolicy,
   SenderPolicyError,
@@ -152,5 +154,91 @@ describe('SenderNotAllowedError message', () => {
 describe('SenderPolicy configuration errors', () => {
   it('rejects a malformed send-from', () => {
     expect(() => new SenderPolicy({ sendFrom: 'not-an-address' }, {})).toThrow(SenderPolicyError);
+  });
+});
+
+describe('parseAllowedRecipientDomains', () => {
+  it('treats an absent value as unrestricted', () => {
+    expect(parseAllowedRecipientDomains(undefined)).toEqual([]);
+    expect(parseAllowedRecipientDomains('')).toEqual([]);
+  });
+
+  it('refuses a value that is set but yields no domains', () => {
+    expect(() => parseAllowedRecipientDomains(' , ,')).toThrow(SenderPolicyError);
+  });
+
+  it('normalizes case, whitespace, a leading @ and duplicates', () => {
+    expect(parseAllowedRecipientDomains(' @Example.com , example.com ,partner.co.uk')).toEqual([
+      'example.com',
+      'partner.co.uk',
+    ]);
+  });
+
+  it.each(['not a domain', 'example', 'http://example.com', 'user@example.com', '-bad.com'])(
+    'rejects %j',
+    (entry) => {
+      expect(() => parseAllowedRecipientDomains(entry)).toThrow(SenderPolicyError);
+    }
+  );
+});
+
+describe('SenderPolicy.assertRecipients', () => {
+  const allowedRecipientDomains = 'example.com';
+
+  it('allows everything when no recipient allowlist is configured', () => {
+    const policy = new SenderPolicy({}, {});
+    expect(policy.restrictsRecipients).toBe(false);
+    expect(() => policy.assertRecipients([['anyone@anywhere.test']])).not.toThrow();
+  });
+
+  it('allows recipients inside an allowed domain', () => {
+    const policy = new SenderPolicy({ allowedRecipientDomains }, {});
+    expect(policy.restrictsRecipients).toBe(true);
+    expect(() => policy.assertRecipients([['a@example.com'], ['B@Example.com']])).not.toThrow();
+  });
+
+  it('refuses a recipient outside the allowed domains', () => {
+    const policy = new SenderPolicy({ allowedRecipientDomains }, {});
+    expect(() => policy.assertRecipients([['a@evil.test']])).toThrow(RecipientNotAllowedError);
+  });
+
+  it('checks bcc, the class an inattentive reviewer misses', () => {
+    const policy = new SenderPolicy({ allowedRecipientDomains }, {});
+    expect(() =>
+      policy.assertRecipients([['ok@example.com'], undefined, ['leak@evil.test']])
+    ).toThrow(RecipientNotAllowedError);
+  });
+
+  it('does not let a subdomain inherit its parent domain', () => {
+    const policy = new SenderPolicy({ allowedRecipientDomains }, {});
+    // An attacker who can create evil.example.com must not become a valid
+    // recipient just because example.com is listed.
+    expect(() => policy.assertRecipients([['a@evil.example.com']])).toThrow(
+      RecipientNotAllowedError
+    );
+  });
+
+  it('does not let a lookalike suffix pass', () => {
+    const policy = new SenderPolicy({ allowedRecipientDomains }, {});
+    expect(() => policy.assertRecipients([['a@notexample.com']])).toThrow(
+      RecipientNotAllowedError
+    );
+  });
+
+  it('reports how many were rejected without echoing them', () => {
+    const policy = new SenderPolicy({ allowedRecipientDomains }, {});
+    let message = '';
+    try {
+      policy.assertRecipients([['a@evil.test', 'b@evil.test'], ['ok@example.com']]);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toContain('2 address(es)');
+    expect(message).not.toContain('evil.test');
+  });
+
+  it('reads the allowlist from the environment', () => {
+    const policy = new SenderPolicy({}, { OUTLOOK_ALLOWED_RECIPIENT_DOMAINS: 'example.com' });
+    expect(() => policy.assertRecipients([['a@evil.test']])).toThrow(RecipientNotAllowedError);
   });
 });

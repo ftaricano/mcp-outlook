@@ -33,6 +33,7 @@ import {
 } from './schemas.js';
 import { MAX_ZIP_ENTRY_NAME_CHARS } from './zipEntryName.js';
 import type { ZipEntryInfo } from './zipArchive.js';
+import { RecipientNotAllowedError } from '../security/senderPolicy.js';
 
 const READ_ONLY_ANNOTATIONS = {
   readOnlyHint: true,
@@ -1013,7 +1014,12 @@ export function createOutlookPluginServer(
             ],
             structuredContent: result,
           };
-        } catch {
+        } catch (error) {
+          if (error instanceof RecipientNotAllowedError) {
+            return toolError(
+              `${error.message}. Change the recipients or ask the user; do not retry as-is.`
+            );
+          }
           return toolError('Send failed or this server is not configured to send.');
         }
       }

@@ -87,14 +87,62 @@ export function parseAllowedSenders(raw: string | undefined): readonly string[] 
   return Object.freeze([...new Set(entries)]);
 }
 
+export class RecipientNotAllowedError extends Error {
+  // Names no variable, for the same redaction reason as SenderNotAllowedError.
+  constructor(public readonly count: number) {
+    super(`Recipients not allowed: ${count} address(es) outside the recipient domain allowlist`);
+    this.name = 'RecipientNotAllowedError';
+  }
+}
+
+const DOMAIN_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
+
+/**
+ * Parse a comma-separated recipient domain allowlist.
+ *
+ * Same absent/empty distinction as `parseAllowedSenders`: absent is
+ * unrestricted, set-but-empty is an operator mistake and refuses to start.
+ *
+ * Matching is on the exact domain after `@`. A subdomain does not inherit its
+ * parent — `evil.example.com` is not covered by `example.com`. That is the
+ * conservative reading, and the one that matters: an attacker who can create a
+ * subdomain under a listed domain should not thereby become a valid recipient.
+ */
+export function parseAllowedRecipientDomains(raw: string | undefined): readonly string[] {
+  if (raw === undefined) return Object.freeze([]);
+
+  const entries = raw
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase().replace(/^@/, ''))
+    .filter(Boolean);
+
+  if (entries.length === 0) {
+    if (raw === '') return Object.freeze([]);
+    throw new SenderPolicyError(
+      'OUTLOOK_ALLOWED_RECIPIENT_DOMAINS is set but contains no domains; unset it to allow every recipient'
+    );
+  }
+
+  const invalid = entries.filter((entry) => !DOMAIN_PATTERN.test(entry)).length;
+  if (invalid > 0) {
+    throw new SenderPolicyError(
+      `OUTLOOK_ALLOWED_RECIPIENT_DOMAINS must be a comma-separated list of domains; ${invalid} entry/entries are not valid domains`
+    );
+  }
+
+  return Object.freeze([...new Set(entries)]);
+}
+
 export interface SenderPolicyOptions {
   readonly sendFrom?: string;
   readonly allowedSenders?: string;
+  readonly allowedRecipientDomains?: string;
 }
 
 export class SenderPolicy {
   private readonly sendFrom: string | undefined;
   private readonly allowed: readonly string[];
+  private readonly allowedRecipientDomains: readonly string[];
 
   constructor(options: SenderPolicyOptions = {}, source: NodeJS.ProcessEnv = process.env) {
     const sendFrom = (options.sendFrom ?? source.OUTLOOK_SEND_FROM)?.trim();
@@ -104,11 +152,39 @@ export class SenderPolicy {
 
     this.sendFrom = sendFrom || undefined;
     this.allowed = parseAllowedSenders(options.allowedSenders ?? source.OUTLOOK_ALLOWED_SENDERS);
+    this.allowedRecipientDomains = parseAllowedRecipientDomains(
+      options.allowedRecipientDomains ?? source.OUTLOOK_ALLOWED_RECIPIENT_DOMAINS
+    );
     Object.freeze(this);
   }
 
   get restricted(): boolean {
     return this.allowed.length > 0;
+  }
+
+  get restrictsRecipients(): boolean {
+    return this.allowedRecipientDomains.length > 0;
+  }
+
+  /**
+   * Authorize the full recipient set of an outbound message.
+   *
+   * Pinning the sender defeats impersonation; this defeats exfiltration, which
+   * is the larger risk wherever the caller composing the message may be acting
+   * on untrusted content. All three recipient classes are checked together —
+   * bcc is the one an inattentive reviewer misses, and the one an attacker
+   * would reach for.
+   */
+  assertRecipients(recipients: readonly (readonly string[] | undefined)[]): void {
+    if (this.allowedRecipientDomains.length === 0) return;
+
+    const addresses = recipients.flatMap((group) => group ?? []);
+    const rejected = addresses.filter((address) => {
+      const domain = address.trim().toLowerCase().split('@').pop() ?? '';
+      return !this.allowedRecipientDomains.includes(domain);
+    });
+
+    if (rejected.length > 0) throw new RecipientNotAllowedError(rejected.length);
   }
 
   /**

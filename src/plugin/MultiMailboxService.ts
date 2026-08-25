@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Message } from '@microsoft/microsoft-graph-types';
 import type { AdvancedSearchOptions, EmailService } from '../services/emailService.js';
 import type { ReliableSearchResult, SearchStatus } from '../services/reliableSearch.js';
+import { RecipientNotAllowedError } from '../security/senderPolicy.js';
 import type { PluginConfig, MailboxConfig } from './config.js';
 import {
   AttachmentHandoffError,
@@ -1726,6 +1727,11 @@ export class MultiMailboxService {
         recipients: message.to.length + (message.cc?.length ?? 0) + (message.bcc?.length ?? 0),
       };
     } catch (error) {
+      // A policy refusal is not a failure to retry. Passing it through — its
+      // message carries a count, never an address — lets the caller learn it
+      // must change the recipients or ask a human, instead of seeing the same
+      // opaque string it would get from a transient Graph error.
+      if (error instanceof RecipientNotAllowedError) throw error;
       if (error instanceof MailboxOperationError) throw error;
       throw new MailboxOperationError('send');
     }

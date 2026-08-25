@@ -67,7 +67,12 @@ These are enforced by CI or by design. Don't regress them.
     is called; unset means unrestricted, since the deployment's addresses cannot live in this repo
     (invariant 9). `OUTLOOK_SEND_FROM` redirects new messages only — a reply belongs to the mailbox
     that owns the original message, and redirecting it would point at a foreign message id.
-    `create_draft` is deliberately outside the gate. Any new outbound call site must pass the gate —
+    `OUTLOOK_ALLOWED_RECIPIENT_DOMAINS` is the second half of the gate and aims at a different
+    threat: pinning the sender stops impersonation, bounding recipients stops exfiltration. It
+    checks `to`/`cc`/`bcc` together, matches the exact domain after `@` (a subdomain does not
+    inherit its parent), and makes `reply_to_email` refuse outright — a reply's recipients come
+    from the original message, i.e. from the untrusted content the allowlist exists to contain.
+    `create_draft` is deliberately outside both gates. Any new outbound call site must pass them —
     `tests/security/outboundCallSites.test.ts` fails if an outbound Graph route appears outside
     `EmailService`, or if their number changes. The plugin's `send_email` reaches the wire through
     that same `EmailService.sendEmail`, so it inherits this gate rather than bypassing it.

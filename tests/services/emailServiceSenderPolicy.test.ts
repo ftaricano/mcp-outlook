@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { EmailService } from '../../src/services/emailService.js';
-import { SenderNotAllowedError, SenderPolicy } from '../../src/security/senderPolicy.js';
+import {
+  RecipientNotAllowedError,
+  SenderNotAllowedError,
+  SenderPolicy,
+} from '../../src/security/senderPolicy.js';
 
 function makeService(targetUserEmail: string | undefined, senderPolicy: SenderPolicy) {
   const posts: Array<{ path: string; payload: unknown }> = [];
@@ -132,5 +136,68 @@ describe('EmailService outbound sender gate', () => {
     await service.sendEmail(['someone@example.com'], 'Report', 'Body');
 
     expect(posts[0].path).toBe('/users/owner@example.com/sendMail');
+  });
+});
+
+describe('EmailService recipient gate', () => {
+  const policyOptions = { allowedSenders: ALLOWED, allowedRecipientDomains: 'example.com' };
+
+  it('sends when every recipient is inside an allowed domain', async () => {
+    const { service, posts } = makeService(ALLOWED, new SenderPolicy(policyOptions, {}));
+
+    await service.sendEmail(['ok@example.com'], 'S', 'B', ['cc@example.com']);
+
+    expect(posts).toHaveLength(1);
+  });
+
+  it('refuses an outside recipient without calling Graph', async () => {
+    const { service, posts } = makeService(ALLOWED, new SenderPolicy(policyOptions, {}));
+
+    await expect(service.sendEmail(['leak@evil.test'], 'S', 'B')).rejects.toThrow(
+      RecipientNotAllowedError
+    );
+    expect(posts).toHaveLength(0);
+  });
+
+  it('refuses an outside bcc even when to and cc are clean', async () => {
+    const { service, posts } = makeService(ALLOWED, new SenderPolicy(policyOptions, {}));
+
+    await expect(
+      service.sendEmail(['ok@example.com'], 'S', 'B', ['cc@example.com'], ['leak@evil.test'])
+    ).rejects.toThrow(RecipientNotAllowedError);
+    expect(posts).toHaveLength(0);
+  });
+
+  it('refuses replying at all, since a reply inherits recipients from untrusted content', async () => {
+    const { service, posts } = makeService(ALLOWED, new SenderPolicy(policyOptions, {}));
+
+    await expect(service.replyToEmail('message-1', 'Body')).rejects.toThrow(
+      RecipientNotAllowedError
+    );
+    expect(posts).toHaveLength(0);
+  });
+
+  it('still allows replying when no recipient allowlist is configured', async () => {
+    const { service, posts } = makeService(ALLOWED, new SenderPolicy({ allowedSenders: ALLOWED }, {}));
+
+    await service.replyToEmail('message-1', 'Body');
+
+    expect(posts).toHaveLength(1);
+  });
+
+  it('refuses the hybrid file send before the file is read', async () => {
+    const { service } = makeService(ALLOWED, new SenderPolicy(policyOptions, {}));
+
+    await expect(
+      service.sendEmailWithFileAttachment('/tmp/nope.pdf', ['leak@evil.test'], 'S', 'B')
+    ).rejects.toThrow(RecipientNotAllowedError);
+  });
+
+  it('leaves drafts unrestricted, so a human can still be handed an outside message', async () => {
+    const { service, posts } = makeService(ALLOWED, new SenderPolicy(policyOptions, {}));
+
+    await service.createDraft(['outside@evil.test'], 'Draft', 'Body');
+
+    expect(posts).toHaveLength(1);
   });
 });

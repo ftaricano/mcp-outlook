@@ -20,9 +20,10 @@ Operators may independently enable a single send tool. It is off unless `PLUGIN_
 and the plugin refuses to start unless the sending mailbox is named by `OUTLOOK_SEND_FROM`, listed
 in the operator's private mailbox allowlist, and covered by `OUTLOOK_ALLOWED_SENDERS`. The sending
 mailbox is fixed by that configuration and cannot be chosen per call — the tool takes no mailbox
-argument. Recipients, subject, and body come from the caller, so an operator who enables this gate
-is enabling outbound email to addresses chosen at call time; that is the point of the tool and it
-is not otherwise restricted by this software.
+argument. Subject, body, and recipients come from the caller, so an operator who enables this gate
+is enabling outbound email composed at call time. Operators may bound the destinations with
+`OUTLOOK_ALLOWED_RECIPIENT_DOMAINS`, which restricts every recipient of every outbound message to
+a listed domain; unset, recipients are unrestricted.
 
 Operators may independently enable two local attachment-handoff tools. They materialize one
 bounded attachment in a fixed private store under the operator's home directory and return only

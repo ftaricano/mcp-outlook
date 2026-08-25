@@ -972,6 +972,31 @@ describe('createOutlookPluginServer', () => {
     });
   });
 
+  it('tells the caller a recipient policy refused it, not that sending broke', async () => {
+    const { RecipientNotAllowedError } = await import('../../src/security/senderPolicy.js');
+    const server = createOutlookPluginServer(
+      fakeService({
+        sendMessage: async () => {
+          throw new RecipientNotAllowedError(2);
+        },
+      }),
+      pluginConfig({ allowSend: true, sendFromAlias: 'finance' })
+    );
+    const { client } = await connect(server);
+
+    const result = await client.callTool({
+      name: 'send_email',
+      arguments: { to: ['a@evil.test'], subject: 'S', body: 'B' },
+    });
+
+    const text = JSON.stringify(result.content);
+    expect(result.isError).toBe(true);
+    // A caller told only "send failed" retries; one told it was policy stops.
+    expect(text).toContain('2 address(es)');
+    expect(text).toContain('do not retry');
+    expect(text).not.toContain('evil.test');
+  });
+
   it('creates a draft without exposing a send path', async () => {
     const { client } = await connect(createServer({ allowWrites: true }));
     const result = await client.callTool({

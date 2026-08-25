@@ -11,7 +11,7 @@ import { CacheManager } from './cacheManager.js';
 import { GraphOptimizer } from './graphOptimizer.js';
 import { ParallelProcessor } from './parallelProcessor.js';
 import { PathGuard } from '../security/pathGuard.js';
-import { SenderPolicy } from '../security/senderPolicy.js';
+import { RecipientNotAllowedError, SenderPolicy } from '../security/senderPolicy.js';
 import {
   buildSenderContainsFilter,
   buildSenderExactFilter,
@@ -381,6 +381,7 @@ export class EmailService {
     // and transport advice, which would disguise a refused sender as a transient
     // failure worth retrying.
     const userEmail = this.senderPolicy.resolveSendMailbox(this.targetUserEmail);
+    this.senderPolicy.assertRecipients([to, cc, bcc]);
 
     try {
       const apiPath = userEmail === 'me' ? '/me/sendMail' : `/users/${userEmail}/sendMail`;
@@ -624,6 +625,15 @@ export class EmailService {
   ): Promise<any> {
     // See sendEmail: the gate must not be reachable through the catch below.
     const userEmail = this.senderPolicy.assertReplyMailbox(this.targetUserEmail);
+    // A reply's recipients come from the original message, i.e. from the very
+    // untrusted content a recipient allowlist exists to contain, and Graph
+    // resolves them server-side where we cannot inspect them. Replying to an
+    // external sender is precisely the exfiltration path being closed, so when
+    // a recipient allowlist is configured, replying is refused rather than
+    // allowed unchecked.
+    if (this.senderPolicy.restrictsRecipients) {
+      throw new RecipientNotAllowedError(0);
+    }
 
     try {
       const action = replyAll ? 'replyAll' : 'reply';
@@ -1381,6 +1391,7 @@ export class EmailService {
     // happen. Both catches below swallow into a result object, so the gate has
     // to run before them to stay visible.
     this.senderPolicy.resolveSendMailbox(this.targetUserEmail);
+    this.senderPolicy.assertRecipients([to, options.cc, options.bcc]);
 
     try {
       console.error('🚀 Iniciando envio híbrido de email com anexo...');
@@ -1522,6 +1533,7 @@ export class EmailService {
   }> {
     // See sendEmailFromAttachment: fail before encoding a file we may not send.
     this.senderPolicy.resolveSendMailbox(this.targetUserEmail);
+    this.senderPolicy.assertRecipients([to, options.cc, options.bcc]);
 
     try {
       console.error('📎 Enviando email com arquivo do disco...');

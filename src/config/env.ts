@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { parseAllowedSenders } from '../security/senderPolicy.js';
+import { parseAllowedRecipientDomains, parseAllowedSenders } from '../security/senderPolicy.js';
 
 /**
  * Environment schema. Validated once at startup so the server fails fast
@@ -44,6 +44,19 @@ const EnvSchema = z.object({
         ctx.addIssue({
           code: 'custom',
           message: error instanceof Error ? error.message : 'invalid allowlist',
+        });
+      }
+    }),
+  OUTLOOK_ALLOWED_RECIPIENT_DOMAINS: z
+    .string()
+    .optional()
+    .superRefine((value, ctx) => {
+      try {
+        parseAllowedRecipientDomains(value);
+      } catch (error) {
+        ctx.addIssue({
+          code: 'custom',
+          message: error instanceof Error ? error.message : 'invalid recipient allowlist',
         });
       }
     }),

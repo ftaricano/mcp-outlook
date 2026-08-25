@@ -51,6 +51,7 @@ Four required values feed both the server and the CLI:
 | `MICROSOFT_GRAPH_TENANT_ID` | yes | Azure AD tenant UUID |
 | `TARGET_USER_EMAIL` | yes* | Mailbox to operate on. Strongly recommended — omitting it causes runtime errors from Graph rather than a clean startup failure. |
 | `OUTLOOK_ALLOWED_SENDERS` | no | Comma-separated allowlist of mailboxes permitted to send. Unset means unrestricted (the historical behaviour). When set, `send_email`, `reply_to_email`, `send_email_from_attachment`, and `send_email_with_file` refuse any other mailbox before calling Graph. `create_draft` is never restricted. |
+| `OUTLOOK_ALLOWED_RECIPIENT_DOMAINS` | no | Comma-separated domains outbound mail may be addressed to. Unset means unrestricted. When set, `to`, `cc` and `bcc` are all checked before Graph is called, matching the exact domain after `@` — a subdomain does not inherit its parent. `reply_to_email` is refused entirely while this is set, because a reply's recipients come from the original message. `create_draft` is never restricted. |
 | `OUTLOOK_SEND_FROM` | no | Mailbox new outbound messages are sent from, overriding `TARGET_USER_EMAIL` for the send path only. Lets one process read one mailbox and send as another. Does not apply to `reply_to_email`, which is bound to the mailbox owning the original message. Required — and must name a configured mailbox — when the plugin's send gate is on. |
 | `PLUGIN_ALLOW_SEND` | no | Exposes one `send_email` tool in the plugin. Default off. No fallback to the plugin JSON — the key is rejected there — but it is an ordinary environment variable, so a `.env` in the process cwd sets it too; an explicit `false` in the environment still wins over one. Refuses to start unless `OUTLOOK_SEND_FROM` names a mailbox in the plugin allowlist that `OUTLOOK_ALLOWED_SENDERS` also covers. Requires application `Mail.Send`. |
 | `LOG_LEVEL` | no | `error` / `warn` / `info` (default) / `debug` |
@@ -163,14 +164,18 @@ both in the plugin allowlist and covered by a non-empty `OUTLOOK_ALLOWED_SENDERS
 takes **no `mailbox` argument**: the sending mailbox is fixed by configuration, so a message the
 model is reading has no input through which to suggest sending as someone else.
 
-**Know what that does and does not buy you.** Pinning the sender defeats impersonation — a
-malicious message cannot get mail sent *as* someone else. It does nothing about the larger threat
-on this surface, which is **exfiltration**: recipients, subject, and body remain caller input, so a
-message that successfully instructs the model can have mailbox content sent to an address the
-attacker chose, signed with your domain's DKIM. This software applies no recipient allowlist, no
-rate limit, and keeps no local audit trail of what was sent — the record is the sending mailbox's
-Sent Items. Enable this gate only where the agent driving the plugin is one you would trust with an
-outbound mail client, and prefer `create_draft` wherever a human can press send.
+**Know what pinning the sender does and does not buy you.** It defeats impersonation — a malicious
+message cannot get mail sent *as* someone else. On its own it does nothing about the larger threat
+on this surface, which is **exfiltration**: subject and body remain caller input, so a message that
+successfully instructs the model can have mailbox content sent onward, signed with your domain's
+DKIM. `OUTLOOK_ALLOWED_RECIPIENT_DOMAINS` is the gate aimed at that one — with it set, even a fully
+compromised caller can only reach addresses you already control.
+
+Residual risk remains after both gates, and is worth stating plainly: there is no rate limit, and
+no local audit trail of what was sent — the record is the sending mailbox's Sent Items. Content can
+still move between two allowed domains. Enable sending only where the agent driving the plugin is
+one you would trust with an outbound mail client, and prefer `create_draft` wherever a human can
+press send.
 
 Use application `Mail.Read` for the default twelve-tool catalog. Enabling the five write tools
 requires `Mail.ReadWrite`, and the send gate requires `Mail.Send`. `PLUGIN_ALLOW_WRITES=false` always
