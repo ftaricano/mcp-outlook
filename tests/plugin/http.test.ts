@@ -13,8 +13,26 @@ import {
 } from '../../src/plugin/http.js';
 
 const servers: Server[] = [];
+const HTTP_READ_ONLY_TOOLS = [
+  'get_attachment_content',
+  'get_folder_stats',
+  'get_message',
+  'inspect_attachment_evidence',
+  'investigate_documents',
+  'list_allowed_mailboxes',
+  'list_attachments',
+  'list_folders',
+  'list_messages',
+  'search_mailbox',
+  'search_mailboxes',
+  'search_mailboxes_batch',
+];
 
-function dependencies() {
+function dependencies(
+  overrides: Partial<
+    Pick<PluginConfig, 'allowLocalHandoffs' | 'allowSend' | 'allowWrites' | 'sendFromAlias'>
+  > = {}
+) {
   const mailbox = { alias: 'finance', address: 'finance@example.com' } as const;
   const config: PluginConfig = {
     mailboxes: [mailbox],
@@ -25,6 +43,8 @@ function dependencies() {
     maxBodyChars: 100,
     allowWrites: false,
     allowLocalHandoffs: false,
+    allowSend: false,
+    sendFromAlias: undefined,
     maxAttachmentInputBytes: 15 * 1024 * 1024,
     maxExtractedChars: 200_000,
     maxRawAttachmentBytes: 256 * 1024,
@@ -41,8 +61,11 @@ function dependencies() {
     maxBatchAttachments: 1_000,
     maxZipEntries: 200,
     maxZipUncompressedBytes: 50 * 1024 * 1024,
+    maxContainerEntries: 1_000,
+    maxContainerUncompressedBytes: 100 * 1024 * 1024,
     searchMemoryPath: undefined,
   };
+  Object.assign(config, overrides);
   const service = {
     listAllowedMailboxes: () => ['finance'],
   } as unknown as MultiMailboxService;
@@ -171,5 +194,44 @@ describe('Outlook plugin HTTP server', () => {
 
     expect(tools).toHaveLength(12);
     expect(result.structuredContent).toEqual({ mailboxes: ['finance'] });
+  });
+
+  it('keeps the HTTP catalog read-only when every effectful gate is enabled', async () => {
+    const hostile = dependencies({
+      allowLocalHandoffs: true,
+      allowSend: true,
+      allowWrites: true,
+      sendFromAlias: 'finance',
+    });
+    const server = await startOutlookHttpServer(hostile, {
+      host: '127.0.0.1',
+      port: 0,
+      bearerToken: 'test-token',
+    });
+    servers.push(server);
+    const port = (server.address() as AddressInfo).port;
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`http://127.0.0.1:${port}/mcp`),
+      {
+        requestInit: {
+          headers: { Authorization: 'Bearer test-token' },
+        },
+      }
+    );
+    const client = new Client({ name: 'http-hostile-test-client', version: '1.0.0' });
+
+    await client.connect(transport);
+    const { tools } = await client.listTools();
+    const result = await client.callTool({
+      name: 'list_allowed_mailboxes',
+      arguments: {},
+    });
+    await client.close();
+
+    expect(tools.map((tool) => tool.name).sort()).toEqual(HTTP_READ_ONLY_TOOLS);
+    expect(result.structuredContent).toEqual({ mailboxes: ['finance'] });
+    expect(hostile.config.allowLocalHandoffs).toBe(true);
+    expect(hostile.config.allowSend).toBe(true);
+    expect(hostile.config.allowWrites).toBe(true);
   });
 });

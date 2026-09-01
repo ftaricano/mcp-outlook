@@ -540,6 +540,9 @@ The built-in server listens on `127.0.0.1:3010` by default:
 - optional bearer checked before JSON parsing
 - 1 MB request-body limit
 - non-loopback binding rejected
+- transport-level read-only catalog: exactly the twelve read-only plugin tools;
+  local handoffs, mailbox writes, and sending remain unavailable even if their
+  plugin configuration or environment gates are enabled
 
 This process is not a public ChatGPT endpoint by itself. A remote ChatGPT app requires HTTPS
 and an OAuth 2.1 resource-server layer with PKCE-capable authorization in front of it. Do not
