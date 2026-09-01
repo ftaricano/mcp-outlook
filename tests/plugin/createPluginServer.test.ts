@@ -932,7 +932,11 @@ describe('createOutlookPluginServer', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(JSON.stringify(result.content)).toContain('unrecognized_keys');
+    // Zod 4 (via SDK 1.30) reports `Unrecognized key: "mailbox"`; Zod 3 emitted the
+    // `unrecognized_keys` issue code. Assert the rejected field, not the wording.
+    const rejection = JSON.stringify(result.content);
+    expect(rejection).toMatch(/[Uu]nrecognized[ _]key/);
+    expect(rejection).toContain('mailbox');
     // Rejected by schema validation, so the handler never ran.
     expect(sends).toHaveLength(0);
   });
