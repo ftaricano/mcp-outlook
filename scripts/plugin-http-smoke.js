@@ -12,8 +12,10 @@ const config = {
   maxMailboxesPerSearch: 1,
   maxResultsPerMailbox: 5,
   maxBodyChars: 100,
-  allowWrites: false,
-  allowLocalHandoffs: false,
+  allowWrites: true,
+  allowLocalHandoffs: true,
+  allowSend: true,
+  sendFromAlias: 'test',
   maxAttachmentInputBytes: 15 * 1024 * 1024,
   maxExtractedChars: 200_000,
   maxRawAttachmentBytes: 256 * 1024,
@@ -29,6 +31,8 @@ const config = {
   maxBatchAttachments: 1_000,
   maxZipEntries: 200,
   maxZipUncompressedBytes: 50 * 1024 * 1024,
+  maxContainerEntries: 1_000,
+  maxContainerUncompressedBytes: 100 * 1024 * 1024,
 };
 const service = {
   listAllowedMailboxes: () => ['test'],

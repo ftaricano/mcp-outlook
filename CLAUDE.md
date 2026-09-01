@@ -51,6 +51,10 @@ These are enforced by CI or by design. Don't regress them.
     constructor-pinned mailbox services, and cache keys include mailbox identity.
 11. **HTTP is loopback-only in this repo.** Remote ChatGPT use requires a separately reviewed
     HTTPS OAuth 2.1 resource-server layer and a separate Graph `Mail.Read` app registration.
+   The HTTP entrypoint also forces the twelve-tool physically read-only catalog;
+   local handoffs, mailbox writes, and sending are unavailable regardless of
+   plugin configuration or environment gates. The stdio entrypoint retains its
+   independent gates.
 12. **Graph permissions follow the exposed catalog.** The default twelve-tool plugin requires only
     application `Mail.Read`. Enabling its five write tools requires `Mail.ReadWrite`. Enabling its
     send gate requires `Mail.Send` — the one case where the plugin needs it; leave that gate off

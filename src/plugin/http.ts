@@ -32,6 +32,16 @@ export interface OutlookHttpDependencies {
   readonly config: PluginConfig;
 }
 
+function createHttpReadOnlyConfig(config: PluginConfig): PluginConfig {
+  return Object.freeze({
+    ...config,
+    allowLocalHandoffs: false,
+    allowWrites: false,
+    allowSend: false,
+    sendFromAlias: undefined,
+  });
+}
+
 function isLoopbackHost(host: string): boolean {
   return LOOPBACK_HOSTS.has(host);
 }
@@ -105,6 +115,7 @@ export function createOutlookHttpApp(
     );
   }
 
+  const httpConfig = createHttpReadOnlyConfig(dependencies.config);
   const app = express();
   app.disable('x-powered-by');
   app.use(localhostHostValidation());
@@ -124,7 +135,7 @@ export function createOutlookHttpApp(
     async (req, res) => {
       const server = createOutlookPluginServer(
         dependencies.service,
-        dependencies.config,
+        httpConfig,
         options.version
       );
       const transport = new StreamableHTTPServerTransport({
