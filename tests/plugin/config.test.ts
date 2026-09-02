@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  chownSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -93,6 +101,33 @@ describe('loadPluginConfig', () => {
     const path = writeConfig(validConfig(), 0o640);
 
     expect(() => loadPluginConfig(path)).toThrow(/owner-readable/i);
+  });
+
+  it('accepts an owner-read-only file on POSIX', () => {
+    const path = writeConfig(validConfig(), 0o400);
+
+    expect(loadPluginConfig(path).mailboxes).toHaveLength(2);
+  });
+
+  it.runIf(process.platform !== 'win32' && process.getuid?.() === 0)(
+    'rejects a file owned by another user on POSIX',
+    () => {
+      const path = writeConfig(validConfig());
+      chownSync(path, 65534, 65534);
+
+      expect(() => loadPluginConfig(path)).toThrow(/owned by the current user/i);
+    }
+  );
+
+  it('opens the private config once and reads through the validated descriptor', () => {
+    const source = readFileSync(join(process.cwd(), 'src', 'plugin', 'config.ts'), 'utf8');
+
+    expect(source.match(/openSync\(configPath/g)).toHaveLength(1);
+    expect(source).toContain('fstatSync(fd)');
+    expect(source).toContain("readFileSync(fd, 'utf8')");
+    expect(source).toContain('closeSync(fd)');
+    expect(source).not.toContain('lstatSync(configPath)');
+    expect(source).not.toContain('realpathSync(configPath)');
   });
 
   it.each([
