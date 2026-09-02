@@ -133,11 +133,7 @@ export function createOutlookHttpApp(
     bearerMiddleware(options.bearerToken),
     express.json({ limit: MAX_JSON_BODY }),
     async (req, res) => {
-      const server = createOutlookPluginServer(
-        dependencies.service,
-        httpConfig,
-        options.version
-      );
+      const server = createOutlookPluginServer(dependencies.service, httpConfig, options.version);
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
         enableJsonResponse: true,
@@ -195,7 +191,11 @@ export function isExecutedAsMain(moduleUrl: string, argvPath: string | undefined
 
 async function main(): Promise<void> {
   installPluginConsoleGuard();
-  bootstrapKeychain();
+  bootstrapKeychain([
+    'MICROSOFT_GRAPH_CLIENT_ID',
+    'MICROSOFT_GRAPH_CLIENT_SECRET',
+    'MICROSOFT_GRAPH_TENANT_ID',
+  ]);
   const env = loadEnv();
   const runtime = createOutlookPluginRuntime(env);
   const host = process.env.OUTLOOK_HTTP_HOST ?? '127.0.0.1';
