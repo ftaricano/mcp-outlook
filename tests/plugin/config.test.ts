@@ -9,6 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import {
   defaultPluginConfigPath,
@@ -97,6 +98,18 @@ describe('loadPluginConfig', () => {
     expect(() => loadPluginConfig(linkPath)).toThrow(/regular file/i);
   });
 
+  it.runIf(process.platform !== 'win32')('rejects a FIFO without blocking', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mcp-outlook-plugin-fifo-'));
+    tempDirectories.push(directory);
+    const fifoPath = join(directory, 'config.pipe');
+    const created = spawnSync('mkfifo', [fifoPath], { timeout: 1_000 });
+    expect(created.status).toBe(0);
+
+    const startedAt = Date.now();
+    expect(() => loadPluginConfig(fifoPath)).toThrow(/regular file/i);
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+  });
+
   it('rejects a file readable by group or other users on POSIX', () => {
     const path = writeConfig(validConfig(), 0o640);
 
@@ -126,7 +139,10 @@ describe('loadPluginConfig', () => {
     expect(source).toContain('fstatSync(fd)');
     expect(source).toContain("readFileSync(fd, 'utf8')");
     expect(source).toContain('closeSync(fd)');
-    expect(source).not.toContain('lstatSync(configPath)');
+    expect(source).toContain('lstatSync(configPath)');
+    expect(source).toContain('constants.O_NONBLOCK');
+    expect(source).toContain('stats.dev !== pathStats.dev');
+    expect(source).toContain('stats.ino !== pathStats.ino');
     expect(source).not.toContain('realpathSync(configPath)');
   });
 

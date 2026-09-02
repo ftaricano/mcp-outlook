@@ -1,4 +1,4 @@
-import { closeSync, constants, fstatSync, openSync, readFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -195,10 +195,21 @@ function createImmutableMailboxMap(
 }
 
 function readPrivateConfigFile(configPath: string): string {
+  let pathStats;
+  try {
+    pathStats = lstatSync(configPath);
+  } catch {
+    throw new PluginConfigError('Outlook plugin configuration file is not available');
+  }
+  if (pathStats.isSymbolicLink() || !pathStats.isFile()) {
+    throw new PluginConfigError('Outlook plugin configuration must be a regular file');
+  }
+
   let fd: number;
   try {
-    const noFollow = process.platform === 'win32' ? 0 : constants.O_NOFOLLOW;
-    fd = openSync(configPath, constants.O_RDONLY | noFollow);
+    const posixSafetyFlags =
+      process.platform === 'win32' ? 0 : constants.O_NOFOLLOW | constants.O_NONBLOCK;
+    fd = openSync(configPath, constants.O_RDONLY | posixSafetyFlags);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ELOOP') {
       throw new PluginConfigError('Outlook plugin configuration must be a regular file');
@@ -210,6 +221,9 @@ function readPrivateConfigFile(configPath: string): string {
     const stats = fstatSync(fd);
     if (!stats.isFile()) {
       throw new PluginConfigError('Outlook plugin configuration must be a regular file');
+    }
+    if (stats.dev !== pathStats.dev || stats.ino !== pathStats.ino) {
+      throw new PluginConfigError('Outlook plugin configuration changed while being opened');
     }
 
     if (process.platform !== 'win32') {
