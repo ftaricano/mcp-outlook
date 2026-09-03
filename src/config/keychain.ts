@@ -8,8 +8,9 @@ const ENV_VARS = [
   'MICROSOFT_GRAPH_TENANT_ID',
   'TARGET_USER_EMAIL',
 ] as const;
+type KeychainEnvVar = (typeof ENV_VARS)[number];
 
-function fallbackServicesFor(envVar: (typeof ENV_VARS)[number]): string[] {
+function fallbackServicesFor(envVar: KeychainEnvVar): string[] {
   return (process.env[`OUTLOOK_KEYCHAIN_${envVar}_SERVICES`] ?? '')
     .split(',')
     .map((service) => service.trim())
@@ -47,10 +48,10 @@ function lookupKeychain(service: string): string | null {
  * point at the right one via `OUTLOOK_KEYCHAIN_<VAR>_SERVICES`. Set
  * `OUTLOOK_KEYCHAIN_QUIET=1` to silence the warning (CI / tests).
  */
-export function bootstrapKeychain(): void {
+export function bootstrapKeychain(envVars: readonly KeychainEnvVar[] = ENV_VARS): void {
   if (process.platform !== 'darwin') return;
   const failures: Array<{ envVar: string; servicesTried: string[] }> = [];
-  for (const envVar of ENV_VARS) {
+  for (const envVar of envVars) {
     if (process.env[envVar]) continue;
     const services = serviceNamesFor(envVar);
     let found = false;

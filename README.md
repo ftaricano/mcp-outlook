@@ -433,7 +433,8 @@ invariant 9 in `CLAUDE.md`).
 
 ### Private plugin configuration
 
-Create `~/.config/mcp-outlook/plugin.json` with mode `0600`:
+Create `~/.config/mcp-outlook/plugin.json` as a regular file owned by the
+runtime user, with mode `0600`:
 
 ```json
 {

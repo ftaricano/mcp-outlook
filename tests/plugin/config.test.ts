@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  chownSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import {
   defaultPluginConfigPath,
@@ -89,10 +98,52 @@ describe('loadPluginConfig', () => {
     expect(() => loadPluginConfig(linkPath)).toThrow(/regular file/i);
   });
 
+  it.runIf(process.platform !== 'win32')('rejects a FIFO without blocking', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mcp-outlook-plugin-fifo-'));
+    tempDirectories.push(directory);
+    const fifoPath = join(directory, 'config.pipe');
+    const created = spawnSync('mkfifo', [fifoPath], { timeout: 1_000 });
+    expect(created.status).toBe(0);
+
+    const startedAt = Date.now();
+    expect(() => loadPluginConfig(fifoPath)).toThrow(/regular file/i);
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+  });
+
   it('rejects a file readable by group or other users on POSIX', () => {
     const path = writeConfig(validConfig(), 0o640);
 
     expect(() => loadPluginConfig(path)).toThrow(/owner-readable/i);
+  });
+
+  it('accepts an owner-read-only file on POSIX', () => {
+    const path = writeConfig(validConfig(), 0o400);
+
+    expect(loadPluginConfig(path).mailboxes).toHaveLength(2);
+  });
+
+  it.runIf(process.platform !== 'win32' && process.getuid?.() === 0)(
+    'rejects a file owned by another user on POSIX',
+    () => {
+      const path = writeConfig(validConfig());
+      chownSync(path, 65534, 65534);
+
+      expect(() => loadPluginConfig(path)).toThrow(/owned by the current user/i);
+    }
+  );
+
+  it('opens the private config once and reads through the validated descriptor', () => {
+    const source = readFileSync(join(process.cwd(), 'src', 'plugin', 'config.ts'), 'utf8');
+
+    expect(source.match(/openSync\(configPath/g)).toHaveLength(1);
+    expect(source).toContain('fstatSync(fd)');
+    expect(source).toContain("readFileSync(fd, 'utf8')");
+    expect(source).toContain('closeSync(fd)');
+    expect(source).toContain('lstatSync(configPath)');
+    expect(source).toContain('constants.O_NONBLOCK');
+    expect(source).toContain('stats.dev !== pathStats.dev');
+    expect(source).toContain('stats.ino !== pathStats.ino');
+    expect(source).not.toContain('realpathSync(configPath)');
   });
 
   it.each([

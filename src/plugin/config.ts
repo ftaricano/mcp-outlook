@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -195,34 +195,58 @@ function createImmutableMailboxMap(
 }
 
 function readPrivateConfigFile(configPath: string): string {
-  let stats;
+  let pathStats;
   try {
-    stats = lstatSync(configPath);
+    pathStats = lstatSync(configPath);
   } catch {
     throw new PluginConfigError('Outlook plugin configuration file is not available');
   }
-
-  if (stats.isSymbolicLink() || !stats.isFile()) {
+  if (pathStats.isSymbolicLink() || !pathStats.isFile()) {
     throw new PluginConfigError('Outlook plugin configuration must be a regular file');
   }
 
-  if (process.platform !== 'win32' && ((stats.mode & 0o077) !== 0 || (stats.mode & 0o400) === 0)) {
-    throw new PluginConfigError(
-      'Outlook plugin configuration must be owner-readable only on POSIX systems'
-    );
-  }
-
-  let resolvedPath: string;
+  let fd: number;
   try {
-    resolvedPath = realpathSync(configPath);
-  } catch {
+    const posixSafetyFlags =
+      process.platform === 'win32' ? 0 : constants.O_NOFOLLOW | constants.O_NONBLOCK;
+    fd = openSync(configPath, constants.O_RDONLY | posixSafetyFlags);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ELOOP') {
+      throw new PluginConfigError('Outlook plugin configuration must be a regular file');
+    }
     throw new PluginConfigError('Outlook plugin configuration file is not available');
   }
 
   try {
-    return readFileSync(resolvedPath, 'utf8');
-  } catch {
-    throw new PluginConfigError('Outlook plugin configuration could not be read');
+    const stats = fstatSync(fd);
+    if (!stats.isFile()) {
+      throw new PluginConfigError('Outlook plugin configuration must be a regular file');
+    }
+    if (stats.dev !== pathStats.dev || stats.ino !== pathStats.ino) {
+      throw new PluginConfigError('Outlook plugin configuration changed while being opened');
+    }
+
+    if (process.platform !== 'win32') {
+      const currentUid = process.getuid?.();
+      if (currentUid !== undefined && stats.uid !== currentUid) {
+        throw new PluginConfigError(
+          'Outlook plugin configuration must be owned by the current user on POSIX systems'
+        );
+      }
+      if ((stats.mode & 0o077) !== 0 || (stats.mode & 0o400) === 0) {
+        throw new PluginConfigError(
+          'Outlook plugin configuration must be owner-readable only on POSIX systems'
+        );
+      }
+    }
+
+    try {
+      return readFileSync(fd, 'utf8');
+    } catch {
+      throw new PluginConfigError('Outlook plugin configuration could not be read');
+    }
+  } finally {
+    closeSync(fd);
   }
 }
 
@@ -282,7 +306,9 @@ function resolveSendFromAlias(mailboxes: readonly MailboxConfig[]): string {
   try {
     allowedSenders = parseAllowedSenders(process.env.OUTLOOK_ALLOWED_SENDERS);
   } catch (error) {
-    throw new PluginConfigError(error instanceof Error ? error.message : 'invalid sender allowlist');
+    throw new PluginConfigError(
+      error instanceof Error ? error.message : 'invalid sender allowlist'
+    );
   }
 
   if (allowedSenders.length === 0) {
