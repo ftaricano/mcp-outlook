@@ -17,9 +17,12 @@ import { EmailSummarizer } from './services/emailSummarizer.js';
 import { createPathGuard } from './security/pathGuard.js';
 import { SenderPolicy } from './security/senderPolicy.js';
 import { HandlerRegistry } from './handlers/HandlerRegistry.js';
+import { installRedactedConsoleError } from './logging/redactedConsole.js';
 import { Logger } from './logging/logger.js';
 import { LockManager } from './utils/lockManager.js';
-import { formatRedactedError } from './utils/redactSecrets.js';
+import { formatRedactedError, redactSecrets } from './utils/redactSecrets.js';
+
+installRedactedConsoleError();
 
 class EmailMCPServer {
   private readonly server: Server;
@@ -167,10 +170,10 @@ function bootstrap(): EmailMCPServer {
     env = loadEnv();
   } catch (error) {
     if (error instanceof EnvValidationError) {
-      process.stderr.write(`\n[mcp-outlook] ${error.message}\n\n`);
+      process.stderr.write(`\n[mcp-outlook] ${redactSecrets(error.message)}\n\n`);
     } else {
       process.stderr.write(
-        `[mcp-outlook] Failed to load environment: ${error instanceof Error ? error.message : String(error)}\n`
+        `[mcp-outlook] Failed to load environment: ${redactSecrets(error instanceof Error ? error.message : String(error))}\n`
       );
     }
     process.exit(1);
@@ -190,7 +193,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       process.exit(0);
     } catch (error) {
       process.stderr.write(
-        `[mcp-outlook] shutdown error: ${error instanceof Error ? error.message : String(error)}\n`
+        `[mcp-outlook] shutdown error: ${redactSecrets(error instanceof Error ? error.message : String(error))}\n`
       );
       process.exit(1);
     }

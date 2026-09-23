@@ -10,6 +10,8 @@
  * writing to stdout would corrupt JSON-RPC frames.
  */
 
+import { redactSecrets } from '../utils/redactSecrets.js';
+
 export type LogLevel = 'error' | 'warn' | 'info' | 'debug';
 
 const LEVEL_PRIORITY: Record<LogLevel, number> = {
@@ -103,9 +105,9 @@ export class Logger {
     return {
       ...fields,
       error: {
-        name: err.name,
-        message: err.message,
-        stack: err.stack,
+        name: redactSecrets(err.name),
+        message: redactSecrets(err.message),
+        stack: err.stack ? redactSecrets(err.stack) : undefined,
       },
     };
   }
@@ -119,6 +121,7 @@ export class Logger {
       ...(fields ?? {}),
     };
     // Single-line JSON to stderr — easy for ops tooling to parse.
-    process.stderr.write(JSON.stringify(entry) + '\n');
+    const serialized = JSON.stringify(entry);
+    process.stderr.write(`${level === 'error' ? redactSecrets(serialized) : serialized}\n`);
   }
 }

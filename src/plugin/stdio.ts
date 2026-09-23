@@ -9,6 +9,7 @@ import { EnvValidationError, loadEnv } from '../config/env.js';
 import { createOutlookPluginServer } from './createPluginServer.js';
 import { installPluginConsoleGuard } from './logging.js';
 import { createOutlookPluginRuntime } from './runtime.js';
+import { redactSecrets } from '../utils/redactSecrets.js';
 
 installPluginConsoleGuard();
 bootstrapKeychain();
@@ -27,6 +28,6 @@ main().catch((error) => {
       : error instanceof Error
         ? error.message
         : 'Unknown plugin startup error';
-  process.stderr.write(`[mcp-outlook-plugin] ${message}\n`);
+  process.stderr.write(`[mcp-outlook-plugin] ${redactSecrets(message)}\n`);
   process.exit(1);
 });

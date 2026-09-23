@@ -14,6 +14,7 @@ import { EnvValidationError, loadEnv } from '../config/env.js';
 import type { PluginConfig } from './config.js';
 import { createOutlookPluginServer } from './createPluginServer.js';
 import { installPluginConsoleGuard } from './logging.js';
+import { redactSecrets } from '../utils/redactSecrets.js';
 import type { MultiMailboxService } from './MultiMailboxService.js';
 import { createOutlookPluginRuntime } from './runtime.js';
 
@@ -217,7 +218,7 @@ if (isExecutedAsMain(import.meta.url, process.argv[1])) {
         : error instanceof Error
           ? error.message
           : 'Unknown HTTP startup error';
-    process.stderr.write(`[mcp-outlook-plugin] ${message}\n`);
+    process.stderr.write(`[mcp-outlook-plugin] ${redactSecrets(message)}\n`);
     process.exit(1);
   });
 }
