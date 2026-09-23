@@ -14,6 +14,7 @@ import { EnvValidationError, loadEnv } from '../config/env.js';
 import type { PluginConfig } from './config.js';
 import { createOutlookPluginServer } from './createPluginServer.js';
 import { installPluginConsoleGuard } from './logging.js';
+import { redactSecrets } from '../utils/redactSecrets.js';
 import type { MultiMailboxService } from './MultiMailboxService.js';
 import { createOutlookPluginRuntime } from './runtime.js';
 
@@ -211,13 +212,15 @@ async function main(): Promise<void> {
 
 if (isExecutedAsMain(import.meta.url, process.argv[1])) {
   main().catch((error) => {
-    const message =
-      error instanceof EnvValidationError
+    const isValidationError = error instanceof EnvValidationError;
+    const message = isValidationError
+      ? error.message
+      : error instanceof Error
         ? error.message
-        : error instanceof Error
-          ? error.message
-          : 'Unknown HTTP startup error';
-    process.stderr.write(`[mcp-outlook-plugin] ${message}\n`);
+        : 'Unknown HTTP startup error';
+    process.stderr.write(
+      `[mcp-outlook-plugin] ${isValidationError ? message : redactSecrets(message)}\n`
+    );
     process.exit(1);
   });
 }
