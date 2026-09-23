@@ -170,7 +170,7 @@ function bootstrap(): EmailMCPServer {
     env = loadEnv();
   } catch (error) {
     if (error instanceof EnvValidationError) {
-      process.stderr.write(`\n[mcp-outlook] ${redactSecrets(error.message)}\n\n`);
+      process.stderr.write(`\n[mcp-outlook] ${error.message}\n\n`);
     } else {
       process.stderr.write(
         `[mcp-outlook] Failed to load environment: ${redactSecrets(error instanceof Error ? error.message : String(error))}\n`

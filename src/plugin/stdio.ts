@@ -22,12 +22,14 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  const message =
-    error instanceof EnvValidationError
+  const isValidationError = error instanceof EnvValidationError;
+  const message = isValidationError
+    ? error.message
+    : error instanceof Error
       ? error.message
-      : error instanceof Error
-        ? error.message
-        : 'Unknown plugin startup error';
-  process.stderr.write(`[mcp-outlook-plugin] ${redactSecrets(message)}\n`);
+      : 'Unknown plugin startup error';
+  process.stderr.write(
+    `[mcp-outlook-plugin] ${isValidationError ? message : redactSecrets(message)}\n`
+  );
   process.exit(1);
 });

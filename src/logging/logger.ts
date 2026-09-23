@@ -21,6 +21,14 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
   debug: 3,
 };
 
+function stringifyErrorField(value: unknown): string {
+  try {
+    return String(value);
+  } catch {
+    return '[unavailable]';
+  }
+}
+
 export interface LogFields {
   operation?: string;
   toolName?: string;
@@ -105,9 +113,9 @@ export class Logger {
     return {
       ...fields,
       error: {
-        name: redactSecrets(err.name),
-        message: redactSecrets(err.message),
-        stack: err.stack ? redactSecrets(err.stack) : undefined,
+        name: redactSecrets(stringifyErrorField(err.name)),
+        message: redactSecrets(stringifyErrorField(err.message)),
+        stack: err.stack ? redactSecrets(stringifyErrorField(err.stack)) : undefined,
       },
     };
   }
@@ -121,7 +129,9 @@ export class Logger {
       ...(fields ?? {}),
     };
     // Single-line JSON to stderr — easy for ops tooling to parse.
-    const serialized = JSON.stringify(entry);
-    process.stderr.write(`${level === 'error' ? redactSecrets(serialized) : serialized}\n`);
+    const serialized = JSON.stringify(entry, (_key, value: unknown) =>
+      level === 'error' && typeof value === 'string' ? redactSecrets(value) : value
+    );
+    process.stderr.write(`${serialized}\n`);
   }
 }
