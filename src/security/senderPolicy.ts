@@ -21,7 +21,7 @@ export class SenderNotAllowedError extends Error {
   // rule masks any 20+ character identifier — `OUTLOOK_ALLOWED_SENDERS` is 22,
   // so naming it would print `[token]` and tell the operator nothing. Weakening
   // that rule to make one message prettier is the wrong trade; "outbound sender
-  // allowlist" survives redaction and is greppable in README and CLAUDE.md.
+  // allowlist" survives redaction and is greppable in README and AGENTS.md.
   constructor(public readonly sender: string) {
     super(`Sender not allowed: ${sender} is not in the outbound sender allowlist`);
     this.name = 'SenderNotAllowedError';

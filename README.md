@@ -429,7 +429,7 @@ Only `apelidos`, `grupos`, and `stopwords` are read; configured stopwords are re
 stored names and incoming terms during alias/group matching. Other keys in the same file (e.g.
 an existing private sender map) are ignored. This mechanism is generic — the actual aliases,
 groups, and stopwords are deployment data and must live outside this repository (see Hard
-invariant 9 in `CLAUDE.md`).
+invariant 9 in `AGENTS.md`).
 
 ### Private plugin configuration
 
