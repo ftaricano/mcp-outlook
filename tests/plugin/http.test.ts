@@ -72,11 +72,12 @@ function dependencies(
   return { config, service };
 }
 
-async function start(bearerToken?: string) {
+async function start(bearerToken?: string, allowUnauthenticated?: boolean) {
   const server = await startOutlookHttpServer(dependencies(), {
     host: '127.0.0.1',
     port: 0,
     bearerToken,
+    allowUnauthenticated,
   });
   servers.push(server);
   const port = (server.address() as AddressInfo).port;
@@ -108,8 +109,31 @@ describe('Outlook plugin HTTP server', () => {
     );
   });
 
+  it('refuses to start without a bearer token unless explicitly allowed', () => {
+    expect(() => createOutlookHttpApp(dependencies(), {})).toThrow(/requires a bearer token/);
+    expect(() => createOutlookHttpApp(dependencies(), { bearerToken: '' })).toThrow(
+      /requires a bearer token/
+    );
+    expect(() => createOutlookHttpApp(dependencies(), { bearerToken: '   ' })).toThrow(
+      /requires a bearer token/
+    );
+    expect(() => createOutlookHttpApp(dependencies(), { allowUnauthenticated: false })).toThrow(
+      /requires a bearer token/
+    );
+  });
+
+  it('serves /mcp without a bearer only when allowUnauthenticated is set', async () => {
+    const baseUrl = await start(undefined, true);
+    const client = new Client({ name: 'http-no-auth-test', version: '1.0.0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`)));
+    const { tools } = await client.listTools();
+    await client.close();
+
+    expect(tools.map((tool) => tool.name).sort()).toEqual(HTTP_READ_ONLY_TOOLS);
+  });
+
   it('returns a metadata-only health response', async () => {
-    const baseUrl = await start();
+    const baseUrl = await start('test-token');
     const response = await fetch(`${baseUrl}/health`);
 
     expect(response.status).toBe(200);
