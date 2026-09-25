@@ -8,6 +8,7 @@ import type { PluginConfig } from '../../src/plugin/config.js';
 import type { MultiMailboxService } from '../../src/plugin/MultiMailboxService.js';
 import {
   createOutlookHttpApp,
+  HttpConfigError,
   isExecutedAsMain,
   startOutlookHttpServer,
 } from '../../src/plugin/http.js';
@@ -110,6 +111,7 @@ describe('Outlook plugin HTTP server', () => {
   });
 
   it('refuses to start without a bearer token unless explicitly allowed', () => {
+    expect(() => createOutlookHttpApp(dependencies(), {})).toThrow(HttpConfigError);
     expect(() => createOutlookHttpApp(dependencies(), {})).toThrow(/requires a bearer token/);
     expect(() => createOutlookHttpApp(dependencies(), { bearerToken: '' })).toThrow(
       /requires a bearer token/

@@ -39,6 +39,18 @@ export interface OutlookHttpDependencies {
   readonly config: PluginConfig;
 }
 
+/**
+ * A startup refusal whose message is fixed text naming configuration variables,
+ * never a value. The entrypoint prints it without redaction, which would
+ * otherwise mangle the variable names the operator needs to see.
+ */
+export class HttpConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'HttpConfigError';
+  }
+}
+
 function createHttpReadOnlyConfig(config: PluginConfig): PluginConfig {
   return Object.freeze({
     ...config,
@@ -128,7 +140,7 @@ export function createOutlookHttpApp(
 
   const bearerToken = configuredBearerToken(options.bearerToken);
   if (!bearerToken && options.allowUnauthenticated !== true) {
-    throw new Error(
+    throw new HttpConfigError(
       'The Outlook MCP HTTP server requires a bearer token: set OUTLOOK_HTTP_BEARER_TOKEN, or set OUTLOOK_HTTP_ALLOW_NO_AUTH=true to serve without authentication'
     );
   }
@@ -219,11 +231,16 @@ async function main(): Promise<void> {
   const host = process.env.OUTLOOK_HTTP_HOST ?? '127.0.0.1';
   const port = Number(process.env.OUTLOOK_HTTP_PORT ?? '3010');
   const bearerToken = configuredBearerToken(process.env.OUTLOOK_HTTP_BEARER_TOKEN);
-  const allowUnauthenticated = resolveBooleanEnv(
-    'OUTLOOK_HTTP_ALLOW_NO_AUTH',
-    process.env.OUTLOOK_HTTP_ALLOW_NO_AUTH,
-    false
-  );
+  let allowUnauthenticated: boolean;
+  try {
+    allowUnauthenticated = resolveBooleanEnv(
+      'OUTLOOK_HTTP_ALLOW_NO_AUTH',
+      process.env.OUTLOOK_HTTP_ALLOW_NO_AUTH,
+      false
+    );
+  } catch {
+    throw new HttpConfigError('OUTLOOK_HTTP_ALLOW_NO_AUTH must be a boolean value');
+  }
 
   await startOutlookHttpServer(
     { service: runtime.service, config: runtime.config },
@@ -239,7 +256,8 @@ async function main(): Promise<void> {
 
 if (isExecutedAsMain(import.meta.url, process.argv[1])) {
   main().catch((error) => {
-    const isValidationError = error instanceof EnvValidationError;
+    const isValidationError =
+      error instanceof EnvValidationError || error instanceof HttpConfigError;
     const message = isValidationError
       ? error.message
       : error instanceof Error
