@@ -8,7 +8,7 @@ import {
 
 describe('escapeODataString', () => {
   it('passes plain text through unchanged', () => {
-    expect(escapeODataString('bruno@example.com')).toBe('bruno@example.com');
+    expect(escapeODataString('user@example.com')).toBe('user@example.com');
   });
 
   it('doubles single quotes to satisfy OData ABNF', () => {
@@ -39,7 +39,7 @@ describe('buildSenderContainsFilter', () => {
 
   it('uses contains (not eq) so callers get case-insensitive matching', () => {
     // Regression guard: `eq` is case-sensitive on Graph,
-    // which made `--sender=user@x.com` silently return 0 results when the
+    // which made `--sender=user@example.com` silently return 0 results when the
     // address was stored with different casing. Anyone reverting this to
     // `eq` should fail this test.
     expect(buildSenderContainsFilter('X')).not.toMatch(/\beq\b/);
@@ -56,7 +56,7 @@ describe('buildSenderExactFilter', () => {
 
   it('lower-cases the literal before comparing', () => {
     // Regression guard: anyone removing the `.toLowerCase()` will fail this.
-    expect(buildSenderExactFilter('ALICE@X.COM')).toContain("'alice@x.com'");
+    expect(buildSenderExactFilter('ALICE@EXAMPLE.COM')).toContain("'alice@example.com'");
   });
 
   it('escapes single quotes in the sender value', () => {
@@ -67,7 +67,7 @@ describe('buildSenderExactFilter', () => {
 
   it('does not use contains() so callers preserve exact-equality semantics', () => {
     // Regression guard against the original drop-in replacement that turned
-    // `getEmailsFromSender('bruno@x.com')` into substring match — flagged by
+    // `getEmailsFromSender('user@example.com')` into substring match — flagged by
     // the Codex review of PR #34.
     expect(buildSenderExactFilter('X')).not.toMatch(/\bcontains\b/);
     expect(buildSenderExactFilter('X')).toMatch(/\beq\b/);

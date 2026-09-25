@@ -272,7 +272,7 @@ not enable draft, move, copy, mark, or download tools and still requires only Gr
 idempotency key. The server requires a complete, non-truncated attachment listing, enforces the
 configured declared-size and Base64-character bounds before decoding, then enforces the real
 decoded-size cap. It publishes a private bundle under
-`~/.jarvishub-mcp/outlook-handoffs/<opaque-id>/` with directory mode `0700` and file mode `0600`:
+`~/.mcp-outlook/handoffs/<opaque-id>/` with directory mode `0700` and file mode `0600`:
 
 - `payload.bin` — the bounded attachment bytes;
 - `manifest.json` — version, opaque ID, request fingerprint, mailbox/message/attachment

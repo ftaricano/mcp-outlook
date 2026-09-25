@@ -200,7 +200,7 @@ interface TemporaryFile {
 }
 
 export function defaultAttachmentHandoffRoot(): string {
-  return join(homedir(), '.jarvishub-mcp', 'outlook-handoffs');
+  return join(homedir(), '.mcp-outlook', 'handoffs');
 }
 
 function sha256(value: string | Buffer): string {

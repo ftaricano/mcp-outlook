@@ -56,7 +56,7 @@ const stringOrStringArray = z.union([nonEmptyString, z.array(nonEmptyString).min
 // Accept either string or number for free-text search fields. The outlook CLI
 // (scripts/outlook.js) coerces digit-only flag values to JS numbers, so an
 // invoice ID like 100151515 reaches the schema as a number and crashes
-// plain z.string() with "expected string, received number" (JAR-257 bug #2).
+// plain z.string() with "expected string, received number".
 const searchString = z.union([z.string(), z.number()]).transform((v) => String(v));
 
 const folderName = z.string().min(1);

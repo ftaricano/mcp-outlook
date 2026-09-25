@@ -39,7 +39,7 @@ async function loadBootstrap() {
   return await import('../../src/config/keychain.js');
 }
 
-describe('bootstrapKeychain — darwin path (JAR-259)', () => {
+describe('bootstrapKeychain — darwin path', () => {
   it('does not warn when all required vars are already set in env', async () => {
     process.env.MICROSOFT_GRAPH_CLIENT_ID = 'preset-id';
     process.env.MICROSOFT_GRAPH_CLIENT_SECRET = 'preset-secret';
@@ -63,21 +63,21 @@ describe('bootstrapKeychain — darwin path (JAR-259)', () => {
     expect(output).toContain('MICROSOFT_GRAPH_CLIENT_ID');
     expect(output).toContain('mcp-outlook::MICROSOFT_GRAPH_CLIENT_ID');
     // The warning has to mention the env-var escape hatch so the operator
-    // can wire up an existing Keychain entry (e.g. cpz::SP_CLIENT_ID) without
+    // can wire up an existing Keychain entry (e.g. acme::SP_CLIENT_ID) without
     // having to read source code.
     expect(output).toMatch(/OUTLOOK_KEYCHAIN_.+_SERVICES/);
   });
 
   it('lists fallback services passed via OUTLOOK_KEYCHAIN_*_SERVICES', async () => {
     process.env.OUTLOOK_KEYCHAIN_MICROSOFT_GRAPH_CLIENT_ID_SERVICES =
-      'cpz::SP_CLIENT_ID,other::CLIENT_ID';
+      'acme::SP_CLIENT_ID,other::CLIENT_ID';
 
     const warn = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const { bootstrapKeychain } = await loadBootstrap();
     bootstrapKeychain();
 
     const output = warn.mock.calls.map((c) => c[0]).join('');
-    expect(output).toContain('cpz::SP_CLIENT_ID');
+    expect(output).toContain('acme::SP_CLIENT_ID');
     expect(output).toContain('other::CLIENT_ID');
   });
 

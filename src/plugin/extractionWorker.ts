@@ -6,7 +6,7 @@
 // except via a single postMessage, and it never includes a password in that
 // message.
 //
-// Honest scope of the isolation, corrected per JAR-782 review: worker_threads
+// Honest scope of the isolation, corrected after review: worker_threads
 // keeps a hostile file's *event-loop* work (parsing, decompression) off the
 // main MCP process and lets the supervisor `terminate()` it hard on timeout.
 // `resourceLimits` below only caps this worker's own V8 heap — it does

@@ -15,7 +15,7 @@ import {
 // URL and does not go through vitest's TS transform, so the format-detection
 // tests below need the real build artifact — see tests/globalSetup.ts, which
 // builds it once before any test file runs. This is a deliberate trade-off
-// (see JAR-782 fix notes): the mechanism tests further down (timeout / crash
+// (see the isolation notes in src/plugin/extractionWorker.ts): the mechanism tests further down (timeout / crash
 // handling) exercise `runIsolatedWorker` directly against small plain-JS
 // fixture workers instead, so they run fast on any Node version without
 // depending on the build.
@@ -37,7 +37,7 @@ trailer<</Root 1 0 R>>`,
 async function xlsxBuffer(): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet('Plan1');
-  sheet.addRow(['apolice', 'competencia', 'premio']);
+  sheet.addRow(['invoice', 'period', 'amount']);
   sheet.addRow(['123456', '05/2026', 1500.5]);
   return Buffer.from(await workbook.xlsx.writeBuffer());
 }

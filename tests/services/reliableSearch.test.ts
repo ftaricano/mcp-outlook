@@ -34,13 +34,13 @@ describe('runReliableTextSearch', () => {
     const executeFallback = vi.fn().mockResolvedValue(
       complete([
         message('match', {
-          attachments: [{ name: 'Fatura Cliente Alfa.pdf' }],
+          attachments: [{ name: 'Invoice Acme Corp.pdf' }],
         }),
       ])
     );
 
     const result = await runReliableTextSearch({
-      query: 'Cliente Alfa',
+      query: 'Acme Corp',
       maxResults: 10,
       executeSearch,
       executeFallback,
@@ -166,7 +166,7 @@ describe('runReliableTextSearch', () => {
 
   it('normalizes punctuation while requiring token boundaries', () => {
     expect(
-      messageMatchesQuery(message('one', { subject: 'Cliente-Alfa confirmado' }), 'Cliente Alfa')
+      messageMatchesQuery(message('one', { subject: 'Acme-Corp confirmed' }), 'Acme Corp')
     ).toBe(true);
     expect(messageMatchesQuery(message('two', { subject: 'Annual report' }), 'ann')).toBe(false);
     expect(messageMatchesQuery(message('three', { subject: 'Reference 100151515' }), '10015')).toBe(

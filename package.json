@@ -14,7 +14,6 @@
     "scripts/plugin-smoke-test.js",
     "scripts/plugin-http-smoke.js",
     "scripts/lib",
-    "docs/specs",
     "README.md",
     "PRIVACY.md",
     "LICENSE",
@@ -62,7 +61,7 @@
     "outlook",
     "typescript"
   ],
-  "author": "Fernando Taricano",
+  "author": "ftaricano",
   "license": "MIT",
   "repository": {
     "type": "git",

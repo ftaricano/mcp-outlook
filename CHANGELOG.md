@@ -16,11 +16,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AGENTS.md` is organized into Commands, Layout, Conventions and Don'ts.
 - CI: secret scan with gitleaks, actions pinned to commit SHAs, and a manual
   `workflow_dispatch` trigger. Test files and scripts pass `npm run format:check` again.
+- The default root for local attachment handoffs is now `~/.mcp-outlook/handoffs`. Bundles
+  under the previous root are not migrated; handoffs are off unless
+  `PLUGIN_ALLOW_LOCAL_HANDOFFS=true`.
+- `author` in `package.json` and the plugin manifest is the GitHub handle. Examples and test
+  fixtures use fictional names and `example.com` addresses.
 
 ### Removed
 
 - The workflow that auto-merged Dependabot pull requests. Dependency updates are merged by a
   maintainer after CI.
+- Internal planning documents under `docs/plans`, `docs/specs` and `docs/superpowers`;
+  `docs/specs` is no longer part of the npm package.
 
 ## [2.3.0] - 2026-09-24
 
