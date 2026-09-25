@@ -18,7 +18,7 @@ describe('EmailService.advancedSearchEmailsDetailed', () => {
               bodyPreview: '',
               body: { content: '' },
               from: { emailAddress: { address: 'sender@example.com' } },
-              attachments: [{ name: 'Fatura Cliente Alfa.pdf' }],
+              attachments: [{ name: 'Invoice Acme Corp.pdf' }],
             },
           ],
         };
@@ -29,7 +29,7 @@ describe('EmailService.advancedSearchEmailsDetailed', () => {
     process.env.TARGET_USER_EMAIL = 'user@example.com';
 
     const result = await service.advancedSearchEmailsDetailed({
-      query: 'Cliente Alfa',
+      query: 'Acme Corp',
       maxResults: 10,
       maxPages: 5,
       scanLimit: 100,

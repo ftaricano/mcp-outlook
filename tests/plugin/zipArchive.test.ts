@@ -56,12 +56,12 @@ const LIMITS = { maxEntries: 200, maxUncompressedBytes: 50 * 1024 * 1024 };
 describe('zipArchive', () => {
   it('lists entries with sizes', async () => {
     const zip = await buildZip({
-      'GRUPO-ALFA/fatura-05-2026.pdf': '%PDF fake',
+      'ACME/invoice-05-2026.pdf': '%PDF fake',
       'leia-me.txt': 'oi',
     });
     const listing = await listZipEntries(zip, LIMITS);
     expect(listing.entries.map((entry) => entry.name)).toEqual(
-      expect.arrayContaining(['GRUPO-ALFA/fatura-05-2026.pdf', 'leia-me.txt'])
+      expect.arrayContaining(['ACME/invoice-05-2026.pdf', 'leia-me.txt'])
     );
     expect(listing.hiddenEntries).toBe(0);
   });

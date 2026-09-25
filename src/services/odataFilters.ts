@@ -6,17 +6,17 @@
  * 1. `buildSenderContainsFilter(sender)` — `contains(...)`, case-insensitive,
  *    substring match. Used by `advanced_search` where the caller asked for a
  *    flexible search and a partial sender (e.g. just a username) is a valid
- *    UX. Previously `eq` made `--sender=bruno@x.com` silently return zero on
- *    mailboxes that stored the address with different casing (JAR-257 #1).
+ *    UX. Previously `eq` made `--sender=user@example.com` silently return zero on
+ *    mailboxes that stored the address with different casing.
  *
  * 2. `buildSenderExactFilter(sender)` — `tolower(...) eq tolower(...)`,
  *    case-insensitive but exact equality. Used by `getEmailsFromSender()`
  *    where the caller's contract is "messages from this exact address".
- *    `contains()` here would silently broaden the result set (`bruno`
- *    matching `brunon@x.com`).
+ *    `contains()` here would silently broaden the result set (`user`
+ *    matching `username@example.com`).
  *
  * Both shapes double single quotes in user-supplied input per the OData
- * ABNF; otherwise an address like `o'brien@x.com` produces a malformed
+ * ABNF; otherwise an address like `o'brien@example.com` produces a malformed
  * filter and (worse) opens a filter-injection avenue when the input flows
  * from an untrusted source (e.g. through an MCP client). Backslash,
  * parentheses, and other characters are not string-literal escape

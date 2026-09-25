@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { EmailService } from '../../src/services/emailService.js';
 
-// JAR-988 (W1): the plugin-layer regression test for get_folder_stats mocks
+// The plugin-layer regression test for get_folder_stats mocks
 // MultiMailboxService.getFolderStats directly with the already-correct
 // shape, so it never exercises the real EmailService.getFolderStatistics
 // implementation against a Graph response. This test does — a rename of any

@@ -87,7 +87,7 @@ describe('validateToolInput - realistic second inputs', () => {
       to: ['a@b.com', 'c@d.com'],
       subject: 'Test',
       body: '<p>Hi</p>',
-      cc: ['cc@x.com'],
+      cc: ['cc@example.com'],
       bcc: ['bcc@y.com'],
       useTemplate: true,
       templateTheme: 'corporate',
@@ -144,7 +144,7 @@ describe('validateToolInput - realistic second inputs', () => {
   it('list_emails accepts a numeric search and coerces to string', () => {
     // The outlook CLI parses digit-only flag values as Number(); without
     // coercion in the schema, search=100151515 (an invoice ID) fails
-    // validation with "expected string, received number". JAR-257 bug #2.
+    // validation with "expected string, received number".
     const r = validateToolInput('list_emails', { search: 100151515 });
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.data.search).toBe('100151515');

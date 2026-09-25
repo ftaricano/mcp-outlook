@@ -706,7 +706,7 @@ describe('createOutlookPluginServer', () => {
   });
 
   it('signals truncation when the folder tree could not be fully fetched', async () => {
-    // Regression test for JAR-988: list_folders used to return a bare array
+    // Regression test: list_folders used to return a bare array
     // with no way to signal that pagination or a per-folder fetch failure
     // left the tree incomplete.
     const { client } = await connect(
@@ -738,7 +738,7 @@ describe('createOutlookPluginServer', () => {
   });
 
   it('maps get_folder_stats fields to the real EmailService.getFolderStatistics shape', async () => {
-    // Regression test for JAR-988: the handler used to read stats.totalItems /
+    // Regression test: the handler used to read stats.totalItems /
     // stats.unreadItems / stats.sizeInBytes, fields that never exist on the
     // real getFolderStatistics() return value, so every call silently
     // returned undefined for all three with no error.
