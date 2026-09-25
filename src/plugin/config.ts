@@ -253,7 +253,7 @@ function readPrivateConfigFile(configPath: string): string {
 const TRUTHY_ALLOW_WRITES_VALUES = new Set(['true', '1', 'yes', 'on']);
 const FALSY_ALLOW_WRITES_VALUES = new Set(['false', '0', 'no', 'off']);
 
-function resolveBooleanEnv(
+export function resolveBooleanEnv(
   name: string,
   envValue: string | undefined,
   defaultValue: boolean

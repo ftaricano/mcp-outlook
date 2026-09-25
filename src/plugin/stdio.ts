@@ -9,6 +9,7 @@ import { EnvValidationError, loadEnv } from '../config/env.js';
 import { createOutlookPluginServer } from './createPluginServer.js';
 import { installPluginConsoleGuard } from './logging.js';
 import { createOutlookPluginRuntime } from './runtime.js';
+import { pluginStartupWarnings } from './startupWarnings.js';
 import { redactSecrets } from '../utils/redactSecrets.js';
 
 installPluginConsoleGuard();
@@ -17,6 +18,9 @@ bootstrapKeychain();
 async function main(): Promise<void> {
   const env = loadEnv();
   const runtime = createOutlookPluginRuntime(env);
+  for (const warning of pluginStartupWarnings(runtime.config, env)) {
+    process.stderr.write(`[mcp-outlook-plugin] warning: ${warning}\n`);
+  }
   const server = createOutlookPluginServer(runtime.service, runtime.config, env.MCP_SERVER_VERSION);
   await server.connect(new StdioServerTransport());
 }

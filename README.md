@@ -167,7 +167,8 @@ The send gate is the strictest of the three, because this is the surface that re
 from every allowed mailbox. It refuses to start unless `OUTLOOK_SEND_FROM` names a mailbox that is
 both in the plugin allowlist and covered by a non-empty `OUTLOOK_ALLOWED_SENDERS`. And `send_email`
 takes **no `mailbox` argument**: the sending mailbox is fixed by configuration, so a message the
-model is reading has no input through which to suggest sending as someone else.
+model is reading has no input through which to suggest sending as someone else. With the send gate
+on and `OUTLOOK_ALLOWED_RECIPIENT_DOMAINS` unset, the plugin prints a startup warning on stderr.
 
 **Know what pinning the sender does and does not buy you.** It defeats impersonation — a malicious
 message cannot get mail sent *as* someone else. On its own it does nothing about the larger threat
@@ -543,7 +544,9 @@ The built-in server listens on `127.0.0.1:3010` by default:
 - MCP endpoint: `/mcp`
 - metadata-only health: `/health`
 - Streamable HTTP, stateless JSON responses
-- optional bearer checked before JSON parsing
+- bearer token required and checked before JSON parsing; the server refuses to start without
+  `OUTLOOK_HTTP_BEARER_TOKEN` unless `OUTLOOK_HTTP_ALLOW_NO_AUTH=true` is set explicitly (it then
+  warns on stderr)
 - 1 MB request-body limit
 - non-loopback binding rejected
 - transport-level read-only catalog: exactly the twelve read-only plugin tools;

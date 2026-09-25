@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- The loopback HTTP server refuses to start without `OUTLOOK_HTTP_BEARER_TOKEN`, unless
+  `OUTLOOK_HTTP_ALLOW_NO_AUTH=true` is set explicitly. A blank token counts as missing.
+- The stdio plugin warns on stderr when the send gate is on and
+  `OUTLOOK_ALLOWED_RECIPIENT_DOMAINS` is unset.
+
 ### Added
 
 - `CHANGELOG.md`, `CONTRIBUTING.md`, and issue and pull request templates.

@@ -11,7 +11,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { localhostHostValidation } from '@modelcontextprotocol/sdk/server/middleware/hostHeaderValidation.js';
 import { bootstrapKeychain } from '../config/keychain.js';
 import { EnvValidationError, loadEnv } from '../config/env.js';
-import type { PluginConfig } from './config.js';
+import { resolveBooleanEnv, type PluginConfig } from './config.js';
 import { createOutlookPluginServer } from './createPluginServer.js';
 import { installPluginConsoleGuard } from './logging.js';
 import { redactSecrets } from '../utils/redactSecrets.js';
@@ -25,6 +25,12 @@ export interface OutlookHttpOptions {
   readonly host?: string;
   readonly port?: number;
   readonly bearerToken?: string;
+  /**
+   * Serve `/mcp` without a bearer token. Off by default: without a token, any
+   * local process that can reach the loopback port can read the allowed
+   * mailboxes. The entrypoint sets it only from `OUTLOOK_HTTP_ALLOW_NO_AUTH=true`.
+   */
+  readonly allowUnauthenticated?: boolean;
   readonly version?: string;
 }
 
@@ -45,6 +51,10 @@ function createHttpReadOnlyConfig(config: PluginConfig): PluginConfig {
 
 function isLoopbackHost(host: string): boolean {
   return LOOPBACK_HOSTS.has(host);
+}
+
+function configuredBearerToken(value: string | undefined): string | undefined {
+  return value !== undefined && value.trim() !== '' ? value : undefined;
 }
 
 function tokenDigest(value: string): Buffer {
@@ -116,6 +126,13 @@ export function createOutlookHttpApp(
     );
   }
 
+  const bearerToken = configuredBearerToken(options.bearerToken);
+  if (!bearerToken && options.allowUnauthenticated !== true) {
+    throw new Error(
+      'The Outlook MCP HTTP server requires a bearer token: set OUTLOOK_HTTP_BEARER_TOKEN, or set OUTLOOK_HTTP_ALLOW_NO_AUTH=true to serve without authentication'
+    );
+  }
+
   const httpConfig = createHttpReadOnlyConfig(dependencies.config);
   const app = express();
   app.disable('x-powered-by');
@@ -131,7 +148,7 @@ export function createOutlookHttpApp(
 
   app.post(
     '/mcp',
-    bearerMiddleware(options.bearerToken),
+    bearerMiddleware(bearerToken),
     express.json({ limit: MAX_JSON_BODY }),
     async (req, res) => {
       const server = createOutlookPluginServer(dependencies.service, httpConfig, options.version);
@@ -201,12 +218,22 @@ async function main(): Promise<void> {
   const runtime = createOutlookPluginRuntime(env);
   const host = process.env.OUTLOOK_HTTP_HOST ?? '127.0.0.1';
   const port = Number(process.env.OUTLOOK_HTTP_PORT ?? '3010');
-  const bearerToken = process.env.OUTLOOK_HTTP_BEARER_TOKEN;
+  const bearerToken = configuredBearerToken(process.env.OUTLOOK_HTTP_BEARER_TOKEN);
+  const allowUnauthenticated = resolveBooleanEnv(
+    'OUTLOOK_HTTP_ALLOW_NO_AUTH',
+    process.env.OUTLOOK_HTTP_ALLOW_NO_AUTH,
+    false
+  );
 
   await startOutlookHttpServer(
     { service: runtime.service, config: runtime.config },
-    { host, port, bearerToken, version: env.MCP_SERVER_VERSION }
+    { host, port, bearerToken, allowUnauthenticated, version: env.MCP_SERVER_VERSION }
   );
+  if (!bearerToken) {
+    process.stderr.write(
+      '[mcp-outlook-plugin] warning: OUTLOOK_HTTP_ALLOW_NO_AUTH=true, /mcp accepts requests without a bearer token\n'
+    );
+  }
   process.stderr.write(`[mcp-outlook-plugin] listening on http://${host}:${port}/mcp\n`);
 }
 

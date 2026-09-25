@@ -2,6 +2,11 @@
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { spawn } from 'node:child_process';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { startOutlookHttpServer } from '../dist/plugin/http.js';
 
 const mailbox = { alias: 'test', address: 'test@example.com' };
@@ -72,4 +77,79 @@ try {
   await new Promise((resolve, reject) =>
     server.close((error) => (error ? reject(error) : resolve()))
   );
+}
+
+// The entrypoint must refuse to serve /mcp without a bearer token unless the
+// operator opts out explicitly, and must not read a misspelled opt-out as "on".
+const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
+const httpEntry = join(repoRoot, 'dist', 'plugin', 'http.js');
+const temporaryRoot = mkdtempSync(join(tmpdir(), 'mcp-outlook-http-smoke-'));
+const configPath = join(temporaryRoot, 'plugin.json');
+writeFileSync(
+  configPath,
+  JSON.stringify({ mailboxes: [{ alias: 'test', address: 'test@example.com' }] }),
+  { mode: 0o600 }
+);
+chmodSync(configPath, 0o600);
+
+function runEntrypoint(extraEnv) {
+  const child = spawn(process.execPath, [httpEntry], {
+    cwd: repoRoot,
+    stdio: ['ignore', 'ignore', 'pipe'],
+    env: {
+      PATH: process.env.PATH ?? '',
+      NODE_ENV: 'test',
+      LOG_LEVEL: 'error',
+      MICROSOFT_GRAPH_CLIENT_ID: '11111111-1111-4111-8111-111111111111',
+      MICROSOFT_GRAPH_CLIENT_SECRET: 'plugin-http-smoke-secret',
+      MICROSOFT_GRAPH_TENANT_ID: '22222222-2222-4222-8222-222222222222',
+      TARGET_USER_EMAIL: 'test@example.com',
+      OUTLOOK_PLUGIN_CONFIG: configPath,
+      OUTLOOK_HTTP_PORT: '0',
+      ...extraEnv,
+    },
+  });
+  let stderr = '';
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk.toString('utf8');
+  });
+  return new Promise((resolvePromise, reject) => {
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error('HTTP entrypoint did not start or exit within 15s'));
+    }, 15_000);
+    child.stderr.on('data', () => {
+      if (stderr.includes('listening on')) {
+        clearTimeout(timer);
+        child.kill('SIGTERM');
+        resolvePromise({ started: true, stderr });
+      }
+    });
+    child.on('exit', (code) => {
+      clearTimeout(timer);
+      resolvePromise({ started: stderr.includes('listening on'), code, stderr });
+    });
+  });
+}
+
+try {
+  for (const [label, env, pattern] of [
+    ['no bearer token', {}, /requires a bearer token/],
+    ['blank bearer token', { OUTLOOK_HTTP_BEARER_TOKEN: '   ' }, /requires a bearer token/],
+    ['misspelled opt-out', { OUTLOOK_HTTP_ALLOW_NO_AUTH: 'yes please' }, /must be a boolean/],
+  ]) {
+    const outcome = await runEntrypoint(env);
+    if (outcome.started || outcome.code === 0 || !pattern.test(outcome.stderr)) {
+      throw new Error(`HTTP entrypoint did not refuse to start: ${label}`);
+    }
+    process.stdout.write(`Plugin HTTP startup refusal OK (${label})\n`);
+  }
+
+  const optedOut = await runEntrypoint({ OUTLOOK_HTTP_ALLOW_NO_AUTH: 'true' });
+  if (!optedOut.started || !/without a bearer token/.test(optedOut.stderr)) {
+    throw new Error('HTTP entrypoint did not start, or did not warn, with the explicit opt-out');
+  }
+  process.stdout.write('Plugin HTTP explicit no-auth opt-out OK (starts with a warning)\n');
+} finally {
+  rmSync(temporaryRoot, { recursive: true, force: true });
 }
