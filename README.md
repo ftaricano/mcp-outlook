@@ -2,10 +2,15 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%E2%89%A520-brightgreen.svg)](https://nodejs.org)
-[![CI](https://github.com/ftaricano/mcp-outlook/actions/workflows/ci.yml/badge.svg)](https://github.com/ftaricano/mcp-outlook/actions/workflows/ci.yml)
 [![MCP](https://img.shields.io/badge/MCP-compatible-8A2BE2.svg)](https://modelcontextprotocol.io)
 
-MCP server for Microsoft Outlook / Exchange via the Microsoft Graph API. Exposes **40 tools** over stdio — list, send, draft, search, organize, batch-operate, and handle attachments including large-file hybrid flows that bypass MCP token limits.
+**Microsoft Outlook and Exchange mail for AI agents: an MCP server and a one-shot CLI over Microsoft Graph, with search results that say how complete they are and allowlists that bound what an agent can reach.**
+
+![The outlook CLI searches a mailbox and returns structured JSON with status, confidence and truncation](docs/demo.svg)
+
+<sub>CLI output against a local demo server with fictional data (Acme); no mailbox is contacted. `--output=json` returns the same structured result an MCP client receives.</sub>
+
+The original server exposes **40 tools** over stdio — list, send, draft, search, organize, batch-operate, and handle attachments including large-file hybrid flows that bypass MCP token limits. A separate multi-mailbox plugin serves a read-only catalog by default, over stdio or loopback HTTP, with writes and sending behind independent opt-in gates.
 
 Works with any MCP-compatible client (Claude Desktop, Cursor, custom agents, etc.). Authenticates via Azure AD **client-credentials** (no user login required).
 
@@ -793,3 +798,12 @@ Security-sensitive paths deserve extra review: `src/security/`, credential loadi
 ## License
 
 [MIT](LICENSE)
+
+## Credits
+
+Built on the [Model Context Protocol TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk),
+the [Microsoft Graph JavaScript client](https://github.com/microsoftgraph/msgraph-sdk-javascript) and
+[MSAL Node](https://github.com/AzureAD/microsoft-authentication-library-for-js). Attachment
+extraction uses [pdf.js](https://github.com/mozilla/pdf.js), [mammoth](https://github.com/mwilliamson/mammoth.js),
+[ExcelJS](https://github.com/exceljs/exceljs) and [unzipper](https://github.com/ZJONSSON/node-unzipper).
+Input validation uses [Zod](https://github.com/colinhacks/zod).
