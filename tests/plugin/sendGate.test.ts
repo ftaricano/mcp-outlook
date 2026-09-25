@@ -3,7 +3,10 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadPluginConfig, PluginConfigError } from '../../src/plugin/config.js';
-import { MailboxOperationError, MultiMailboxService } from '../../src/plugin/MultiMailboxService.js';
+import {
+  MailboxOperationError,
+  MultiMailboxService,
+} from '../../src/plugin/MultiMailboxService.js';
 
 const tempDirectories: string[] = [];
 

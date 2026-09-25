@@ -210,7 +210,10 @@ describe('EmailService recipient gate', () => {
   });
 
   it('still allows replying when no recipient allowlist is configured', async () => {
-    const { service, posts } = makeService(ALLOWED, new SenderPolicy({ allowedSenders: ALLOWED }, {}));
+    const { service, posts } = makeService(
+      ALLOWED,
+      new SenderPolicy({ allowedSenders: ALLOWED }, {})
+    );
 
     await service.replyToEmail('message-1', 'Body');
 

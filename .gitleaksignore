@@ -1,0 +1,5 @@
+# Synthetic tokens built in tests/logging/logger.test.ts to exercise log redaction.
+3dd40f93de553d1846111e5ddd1d0ef9abcad593:tests/logging/logger.test.ts:generic-api-key:27
+3dd40f93de553d1846111e5ddd1d0ef9abcad593:tests/logging/logger.test.ts:generic-api-key:28
+tests/logging/logger.test.ts:generic-api-key:27
+tests/logging/logger.test.ts:generic-api-key:28

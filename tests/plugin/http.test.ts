@@ -210,14 +210,11 @@ describe('Outlook plugin HTTP server', () => {
     });
     servers.push(server);
     const port = (server.address() as AddressInfo).port;
-    const transport = new StreamableHTTPClientTransport(
-      new URL(`http://127.0.0.1:${port}/mcp`),
-      {
-        requestInit: {
-          headers: { Authorization: 'Bearer test-token' },
-        },
-      }
-    );
+    const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
+      requestInit: {
+        headers: { Authorization: 'Bearer test-token' },
+      },
+    });
     const client = new Client({ name: 'http-hostile-test-client', version: '1.0.0' });
 
     await client.connect(transport);

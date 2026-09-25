@@ -28,20 +28,17 @@ describe('parseAllowedSenders', () => {
   );
 
   it('normalizes case, whitespace and duplicates', () => {
-    expect(parseAllowedSenders(' Reports@Example.com , reports@example.com ,ops@example.com')).toEqual(
-      ['reports@example.com', 'ops@example.com']
-    );
+    expect(
+      parseAllowedSenders(' Reports@Example.com , reports@example.com ,ops@example.com')
+    ).toEqual(['reports@example.com', 'ops@example.com']);
   });
 
-  it.each([
-    'a@b.c/../../users/victim',
-    'a@b.c/x',
-    'a@b.c?$select=1',
-    '<a@b.c>',
-    'a@b.c#frag',
-  ])('rejects an address that could escape a Graph URL segment: %j', (entry) => {
-    expect(() => parseAllowedSenders(entry)).toThrow(SenderPolicyError);
-  });
+  it.each(['a@b.c/../../users/victim', 'a@b.c/x', 'a@b.c?$select=1', '<a@b.c>', 'a@b.c#frag'])(
+    'rejects an address that could escape a Graph URL segment: %j',
+    (entry) => {
+      expect(() => parseAllowedSenders(entry)).toThrow(SenderPolicyError);
+    }
+  );
 
   it('rejects entries that are not email addresses without echoing them', () => {
     let thrown: unknown;
@@ -220,9 +217,7 @@ describe('SenderPolicy.assertRecipients', () => {
 
   it('does not let a lookalike suffix pass', () => {
     const policy = new SenderPolicy({ allowedRecipientDomains }, {});
-    expect(() => policy.assertRecipients([['a@notexample.com']])).toThrow(
-      RecipientNotAllowedError
-    );
+    expect(() => policy.assertRecipients([['a@notexample.com']])).toThrow(RecipientNotAllowedError);
   });
 
   it('reports how many were rejected without echoing them', () => {
