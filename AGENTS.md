@@ -13,7 +13,53 @@ third gate is enabled and a sending mailbox is pinned by configuration.
 Auth is Azure AD client-credentials (no user login). The original server remains single-mailbox
 per process; plugin services pin mailbox identity per instance.
 
-## Hard invariants
+## Commands
+
+```bash
+npm ci                 # install exact dependencies
+npm run build          # TypeScript -> dist/
+npm run lint           # ESLint
+npm run typecheck      # tsc --noEmit
+npm run format:check   # Prettier
+npm test               # Vitest unit tests
+npm run verify         # pre-PR: lint, typecheck, tests, build and all three smokes
+```
+
+| Command | Gate |
+|---|---|
+| `npm run verify` | pre-PR — lint, typecheck, tests, build and all three smokes |
+| `npm run format:check` | pre-PR — formatting; CI runs it too |
+| `npm run test:coverage` | enforces coverage thresholds |
+| `node scripts/live-readonly-smoke.js` | live Graph read smoke — requires real creds, not in CI |
+| `node scripts/live-writes-smoke.js` | live Graph write smoke — same |
+
+The failing-test / hotfix loop: run the narrowest vitest file first (`npm test -- tests/path/file.test.ts`), not the full suite.
+
+For search/CLI work, include the focused suites under `tests/services/*Search*`,
+`tests/services/graphPagination.test.ts`, and `tests/cli/`. Packaging changes must also run
+`npm pack --dry-run` and confirm `scripts/lib/` is present.
+
+## Layout
+
+```
+src/
+  config/     zod-validated env, fails fast
+  auth/       MSAL client-credentials
+  security/   pathGuard — filesystem allowlist (DOWNLOAD_DIR, MCP_EMAIL_UPLOAD_DIRS)
+              senderPolicy — outbound mailbox allowlist (OUTLOOK_ALLOWED_SENDERS, OUTLOOK_SEND_FROM)
+  services/   Graph wrapper: response cache, batch helpers (retry via SDK middleware)
+  schemas/    zod input schema per tool + jsonSchema converter
+  handlers/   one class per domain, HandlerRegistry routes by tool name
+  templates/  4 HTML themes
+  utils/      file manager, attachment validator, secret redaction
+scripts/lib/  persistent state, sanitized run journal, governed harvest
+```
+
+Handler domains: `Email`, `Attachment`, `Hybrid` (large-file), `Folder`, `Search`, `Batch`. Stay in the right domain when adding a tool.
+
+## Conventions
+
+### Invariants
 
 These are enforced by CI or by design. Don't regress them.
 
@@ -81,31 +127,14 @@ These are enforced by CI or by design. Don't regress them.
     `EmailService`, or if their number changes. The plugin's `send_email` reaches the wire through
     that same `EmailService.sendEmail`, so it inherits this gate rather than bypassing it.
 15. **Local handoffs are opaque, private, and fail closed.** They use only the fixed
-    `~/.jarvishub-mcp/outlook-handoffs` root, never a caller-supplied path. A `0700` bundle contains
+    private root returned by `defaultAttachmentHandoffRoot()`
+    (`src/plugin/attachmentHandoffStore.ts`), never a caller-supplied path. A `0700` bundle contains
     only `0600` `payload.bin` plus `manifest.json`; the manifest is the final commit marker. Replay
     revalidates request fingerprint, exact manifest shape, modes, size, and SHA-256. The MCP never
     returns bytes, Base64, internal paths, or the request fingerprint. Quotas bound one payload,
     aggregate payload bytes, and committed bundle count.
 
-## Architecture at a glance
-
-```
-src/
-  config/     zod-validated env, fails fast
-  auth/       MSAL client-credentials
-  security/   pathGuard — filesystem allowlist (DOWNLOAD_DIR, MCP_EMAIL_UPLOAD_DIRS)
-              senderPolicy — outbound mailbox allowlist (OUTLOOK_ALLOWED_SENDERS, OUTLOOK_SEND_FROM)
-  services/   Graph wrapper: response cache, batch helpers (retry via SDK middleware)
-  schemas/    zod input schema per tool + jsonSchema converter
-  handlers/   one class per domain, HandlerRegistry routes by tool name
-  templates/  4 HTML themes
-  utils/      file manager, attachment validator, secret redaction
-scripts/lib/  persistent state, sanitized run journal, governed harvest
-```
-
-Handler domains: `Email`, `Attachment`, `Hybrid` (large-file), `Folder`, `Search`, `Batch`. Stay in the right domain when adding a tool.
-
-## Adding a tool
+### Adding a tool
 
 1. zod schema → `src/schemas/toolSchemas.ts`
 2. handler method on the appropriate domain class under `src/handlers/`
@@ -114,26 +143,13 @@ Handler domains: `Email`, `Attachment`, `Hybrid` (large-file), `Folder`, `Search
 5. bump `EXPECTED_TOOL_COUNT` in [scripts/smoke-test.js](scripts/smoke-test.js)
 6. add row to the tools table in [README.md](README.md)
 
-## Testing gates
-
-| Command | Gate |
-|---|---|
-| `npm run verify` | pre-PR — lint, typecheck, tests, build and all three smokes |
-| `npm run test:coverage` | enforces coverage thresholds |
-| `node scripts/live-readonly-smoke.js` | live Graph read smoke — requires real creds, not in CI |
-| `node scripts/live-writes-smoke.js` | live Graph write smoke — same |
-
-The failing-test / hotfix loop: run the narrowest vitest file first (`npm test -- tests/path/file.test.ts`), not the full suite.
-
-For search/CLI work, include the focused suites under `tests/services/*Search*`,
-`tests/services/graphPagination.test.ts`, and `tests/cli/`. Packaging changes must also run
-`npm pack --dry-run` and confirm `scripts/lib/` is present.
-
-## Dev workflow for non-trivial changes
+### Workflow for non-trivial changes
 
 README's [Development workflow](README.md#development-workflow) section is the canonical reference: **plan → execute task-by-task → verify diff before declaring done**. Skip the ceremony for typo-class fixes; apply it the moment a change touches `src/security/`, credentials, Graph permission scopes, or spans multiple files.
 
-## Anti-patterns
+Commits follow [Conventional Commits](https://www.conventionalcommits.org/). User-visible changes get a line under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md).
+
+## Don'ts
 
 - `fetch()` directly to `graph.microsoft.com` — route through `EmailService`.
 - `path.resolve()` as a "safety" step — it doesn't follow symlinks or enforce the allowlist. Use `pathGuard.resolveSafe(path, 'read' | 'write')`.

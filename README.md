@@ -14,7 +14,7 @@ Works with any MCP-compatible client (Claude Desktop, Cursor, custom agents, etc
 | Tools | 40 operational + 12 plugin tools by default (14 with local handoffs, 17 with mailbox writes, 19 with both) |
 | Tests | Unit, protocol, CLI, plugin, and HTTP suites |
 | Node | ≥ 20 |
-| MCP SDK | ^1.29.0 |
+| MCP SDK | ^1.30.0 |
 | License | MIT |
 
 ## Requirements
@@ -774,11 +774,13 @@ Report vulnerabilities privately through [GitHub Security Advisories](https://gi
 
 ## Contributing
 
+See [CONTRIBUTING.md](CONTRIBUTING.md). Notable changes are listed in [CHANGELOG.md](CHANGELOG.md).
+
 ```bash
 npm run verify
 ```
 
-Pre-PR checklist: `npm run verify`, coverage, audit, and package-content validation all pass.
+Pre-PR checklist: `npm run verify`, `npm run format:check`, coverage, audit, and package-content validation all pass.
 
 Open an [issue](https://github.com/ftaricano/mcp-outlook/issues) before submitting large changes.
 
