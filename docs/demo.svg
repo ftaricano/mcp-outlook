@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="745" height="306" viewBox="0 0 745 306" role="img" aria-label="Terminal: the outlook CLI searches a mailbox and returns structured JSON with status, confidence and truncation">
+  <style>
+    text { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 14px; fill: #c9d1d9; }
+    .p { fill: #7ee787; } .c { fill: #e6edf3; } .k { fill: #79c0ff; } .s { fill: #a5d6ff; } .l { fill: #ffa657; }
+    .t { fill: #8b949e; font-size: 12px; }
+  </style>
+  <rect width="745" height="306" rx="8" fill="#0d1117"/>
+  <circle cx="18" cy="16" r="6" fill="#ff5f56"/><circle cx="38" cy="16" r="6" fill="#ffbd2e"/><circle cx="58" cy="16" r="6" fill="#27c93f"/>
+  <text x="372" y="20" text-anchor="middle" class="t">outlook — demo data (Acme)</text>
+  <text x="20" y="48" xml:space="preserve"><tspan class="p">$</tspan> <tspan class="c">outlook advanced_search --query=invoice --hasAttachments=true --output=json \</tspan></text>
+  <text x="20" y="68" xml:space="preserve"><tspan class="c">    | jq &#x27;{status, confidence, truncated, subjects: [.messages[].subject]}&#x27;</tspan></text>
+  <text x="20" y="88" xml:space="preserve">{</text>
+  <text x="20" y="108" xml:space="preserve">  <tspan class="k">&quot;status&quot;</tspan>: <tspan class="s">&quot;FOUND&quot;</tspan>,</text>
+  <text x="20" y="128" xml:space="preserve">  <tspan class="k">&quot;confidence&quot;</tspan>: <tspan class="s">&quot;high&quot;</tspan>,</text>
+  <text x="20" y="148" xml:space="preserve">  <tspan class="k">&quot;truncated&quot;</tspan>: <tspan class="l">false</tspan>,</text>
+  <text x="20" y="168" xml:space="preserve">  <tspan class="k">&quot;subjects&quot;</tspan>: [</text>
+  <text x="20" y="188" xml:space="preserve">    <tspan class="s">&quot;Invoice INV-2041 for September&quot;</tspan>,</text>
+  <text x="20" y="208" xml:space="preserve">    <tspan class="s">&quot;Re: Invoice INV-2037 (corrected)&quot;</tspan>,</text>
+  <text x="20" y="228" xml:space="preserve">    <tspan class="s">&quot;Signed contract and invoice schedule&quot;</tspan></text>
+  <text x="20" y="248" xml:space="preserve">  ]</text>
+  <text x="20" y="268" xml:space="preserve">}</text>
+</svg>
