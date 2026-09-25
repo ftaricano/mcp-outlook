@@ -26,8 +26,8 @@ describe('escapeODataString', () => {
 
 describe('buildSenderContainsFilter', () => {
   it('produces a contains() filter against from/emailAddress/address', () => {
-    expect(buildSenderContainsFilter('bruno@pinheiromonteiro.com.br')).toBe(
-      "contains(from/emailAddress/address,'bruno@pinheiromonteiro.com.br')"
+    expect(buildSenderContainsFilter('user@example.com')).toBe(
+      "contains(from/emailAddress/address,'user@example.com')"
     );
   });
 
@@ -38,8 +38,8 @@ describe('buildSenderContainsFilter', () => {
   });
 
   it('uses contains (not eq) so callers get case-insensitive matching', () => {
-    // Regression guard for JAR-257 bug #1: `eq` is case-sensitive on Graph,
-    // which made `--sender=bruno@x.com` silently return 0 results when the
+    // Regression guard: `eq` is case-sensitive on Graph,
+    // which made `--sender=user@x.com` silently return 0 results when the
     // address was stored with different casing. Anyone reverting this to
     // `eq` should fail this test.
     expect(buildSenderContainsFilter('X')).not.toMatch(/\beq\b/);
@@ -49,8 +49,8 @@ describe('buildSenderContainsFilter', () => {
 
 describe('buildSenderExactFilter', () => {
   it('produces a tolower() eq tolower() filter', () => {
-    expect(buildSenderExactFilter('Bruno@PinheiroMonteiro.com.br')).toBe(
-      "tolower(from/emailAddress/address) eq 'bruno@pinheiromonteiro.com.br'"
+    expect(buildSenderExactFilter('User@Example.com')).toBe(
+      "tolower(from/emailAddress/address) eq 'user@example.com'"
     );
   });
 
