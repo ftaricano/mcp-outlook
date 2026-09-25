@@ -120,6 +120,7 @@ describe('HTTP keychain bootstrap', () => {
         DOWNLOAD_DIR: downloadDir,
         OUTLOOK_HTTP_HOST: '127.0.0.1',
         OUTLOOK_HTTP_PORT: '0',
+        OUTLOOK_HTTP_BEARER_TOKEN: 'http-bootstrap-test-token',
         OUTLOOK_KEYCHAIN_PREFIX: 'mcp-outlook',
         OUTLOOK_KEYCHAIN_QUIET: '1',
         SECURITY_LOG: logPath,
