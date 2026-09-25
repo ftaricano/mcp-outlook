@@ -169,7 +169,9 @@ try {
   // The strongest claim this plugin makes about sending is that it refuses to
   // START when the gate is on but the sender is not fully pinned. Unit tests
   // cover loadPluginConfig; only this proves the process actually dies.
-  await checkStartupRefusal('gate on, no sending mailbox', { OUTLOOK_ALLOWED_SENDERS: SEND_ADDRESS });
+  await checkStartupRefusal('gate on, no sending mailbox', {
+    OUTLOOK_ALLOWED_SENDERS: SEND_ADDRESS,
+  });
   await checkStartupRefusal('gate on, no outbound allowlist', { OUTLOOK_SEND_FROM: SEND_ADDRESS });
   await checkStartupRefusal('sending mailbox not in the plugin allowlist', {
     OUTLOOK_SEND_FROM: 'stranger@example.com',

@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `AGENTS.md` is organized into Commands, Layout, Conventions and Don'ts.
+- CI: secret scan with gitleaks, actions pinned to commit SHAs, and a manual
+  `workflow_dispatch` trigger. Test files and scripts pass `npm run format:check` again.
+
+### Removed
+
+- The workflow that auto-merged Dependabot pull requests. Dependency updates are merged by a
+  maintainer after CI.
 
 ## [2.3.0] - 2026-09-24
 
