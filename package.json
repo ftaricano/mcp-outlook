@@ -23,7 +23,7 @@
     "outlook": "./scripts/outlook.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13.0"
   },
   "overrides": {
     "@hono/node-server": "^2.0.5",
