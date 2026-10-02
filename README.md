@@ -1,7 +1,7 @@
 # mcp-outlook
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/node-%E2%89%A520-brightgreen.svg)](https://nodejs.org)
+[![Node.js](https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg)](https://nodejs.org)
 [![MCP](https://img.shields.io/badge/MCP-compatible-8A2BE2.svg)](https://modelcontextprotocol.io)
 
 **Microsoft Outlook and Exchange mail for AI agents: an MCP server and a one-shot CLI over Microsoft Graph, with search results that say how complete they are and allowlists that bound what an agent can reach.**
@@ -18,13 +18,13 @@ Works with any MCP-compatible client (Claude Desktop, Cursor, custom agents, etc
 |---|---|
 | Tools | 40 operational + 12 plugin tools by default (14 with local handoffs, 17 with mailbox writes, 19 with both) |
 | Tests | Unit, protocol, CLI, plugin, and HTTP suites |
-| Node | ≥ 20 |
+| Node | ≥ 22.13 |
 | MCP SDK | ^1.30.0 |
 | License | MIT |
 
 ## Requirements
 
-- Node.js 20 or 22
+- Node.js 22.13 or newer
 - Azure AD app registration with **Application** permissions. Use separate registrations for the
   original server and any remotely exposed plugin:
   - original 40-tool server: `Mail.ReadWrite`; add `Mail.Send` only for `send_email` or
@@ -705,7 +705,7 @@ Runtime flow:
 | `npm run smoke:http` | Loopback Streamable HTTP plugin smoke |
 | `npm run audit:prod` | Audit runtime deps only |
 
-CI runs lint + typecheck + tests + smoke on Node 20, 22, and 24.
+CI runs lint + typecheck + tests + smoke on Node 22.13 and 24.
 
 Live integration smoke tests (require Graph credentials in env):
 

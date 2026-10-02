@@ -18,7 +18,7 @@ jobs:
 
     strategy:
       matrix:
-        node: [20, 22, 24]
+        node: ['22.13.0', 24]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -60,11 +60,11 @@ jobs:
         run: npm pack --dry-run
 
       - name: Coverage
-        if: matrix.node == '20'
+        if: matrix.node == '22.13.0'
         run: npm run test:coverage
 
       - name: Upload coverage
-        if: matrix.node == '20'
+        if: matrix.node == '22.13.0'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-report
@@ -95,7 +95,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 20
+          node-version: 22.13.0
           cache: npm
       # --ignore-scripts prevents the `prepare` hook (which runs tsc) from
       # executing without devDependencies available, avoiding a false failure.
