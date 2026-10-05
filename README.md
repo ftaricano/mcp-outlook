@@ -19,7 +19,7 @@ Works with any MCP-compatible client (Claude Desktop, Cursor, custom agents, etc
 | Tools | 40 operational + 12 plugin tools by default (14 with local handoffs, 17 with mailbox writes, 19 with both) |
 | Tests | Unit, protocol, CLI, plugin, and HTTP suites |
 | Node | ≥ 22.13 |
-| MCP SDK | ^1.30.0 |
+| MCP SDK | ^1.31.0 |
 | License | MIT |
 
 ## Requirements

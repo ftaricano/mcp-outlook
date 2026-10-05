@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- MCP startup pins the cwd `.env` file, preserves explicit environment values and suppresses
+  dotenv debug output during the dotenv 18 upgrade.
 - The loopback HTTP server refuses to start without `OUTLOOK_HTTP_BEARER_TOKEN`, unless
   `OUTLOOK_HTTP_ALLOW_NO_AUTH=true` is set explicitly. A blank token counts as missing.
 - The stdio plugin warns on stderr when the send gate is on and
