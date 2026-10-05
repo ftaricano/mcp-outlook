@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- PDF extraction uses pdf.js 6 and releases its loading task after success or failure.
+- Node.js 22.13 or newer is required; CI covers the minimum supported version and Node 24.
+
 - `AGENTS.md` is organized into Commands, Layout, Conventions and Don'ts.
 - CI: secret scan with gitleaks, actions pinned to commit SHAs, and a manual
   `workflow_dispatch` trigger. Test files and scripts pass `npm run format:check` again.

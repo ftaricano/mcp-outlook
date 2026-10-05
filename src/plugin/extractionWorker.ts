@@ -94,23 +94,30 @@ type WorkerResponse =
 
 async function extractPdf(buffer: Buffer, maxChars: number): Promise<TextResult> {
   const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  const document = await getDocument({
+  const loadingTask = getDocument({
     data: new Uint8Array(buffer),
-    isEvalSupported: false,
     useSystemFonts: true,
-  }).promise;
+  });
 
-  const parts: string[] = [];
-  let total = 0;
-  for (let pageNumber = 1; pageNumber <= document.numPages && total <= maxChars; pageNumber += 1) {
-    const page = await document.getPage(pageNumber);
-    const content = await page.getTextContent();
-    const pageText = content.items.map((item) => ('str' in item ? item.str : '')).join(' ');
-    parts.push(pageText);
-    total += pageText.length;
+  try {
+    const document = await loadingTask.promise;
+    const parts: string[] = [];
+    let total = 0;
+    for (
+      let pageNumber = 1;
+      pageNumber <= document.numPages && total <= maxChars;
+      pageNumber += 1
+    ) {
+      const page = await document.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const pageText = content.items.map((item) => ('str' in item ? item.str : '')).join(' ');
+      parts.push(pageText);
+      total += pageText.length;
+    }
+    return bound(parts.join('\n\n'), maxChars);
+  } finally {
+    await loadingTask.destroy();
   }
-  await document.destroy();
-  return bound(parts.join('\n\n'), maxChars);
 }
 
 async function extractXlsx(buffer: Buffer, maxChars: number): Promise<TextResult> {
