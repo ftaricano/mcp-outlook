@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import dotenv from 'dotenv';
-dotenv.config({ quiet: true });
+dotenv.config({ path: '.env', quiet: true, override: false, debug: false });
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { bootstrapKeychain } from '../config/keychain.js';
