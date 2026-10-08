@@ -26,6 +26,7 @@ describe('EmailService single-attempt send through the real SDK', () => {
     it.each([true, false, undefined])('status ' + status + ', noRetry=%s', async (noRetry) => {
       const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options) => {
         expect(options?.method).toBe('POST');
+        if (noRetry === true) expect(options?.redirect).toBe('manual');
         const response = new Response(
           JSON.stringify({ error: { code: 'OfflineFixture', message: 'Fixture' } }),
           {
