@@ -104,7 +104,8 @@ export class EmailHandler extends BaseHandler {
         validatedArgs.cc,
         validatedArgs.bcc,
         validatedArgs.attachments,
-        enhancedOptions
+        enhancedOptions,
+        { noRetry: args.noRetry }
       );
 
       const attachmentInfo =

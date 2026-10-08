@@ -86,7 +86,14 @@ These are enforced by CI or by design. Don't regress them.
    malicious message could try to steer. The sending mailbox is not sayable, only configurable.
 2. **Every tool has a zod schema.** `src/schemas/toolSchemas.ts` is the gate — `HandlerRegistry.handleTool` runs `validateToolInput` before dispatching. No handler method runs on unvalidated args.
 3. **Filesystem access goes through `pathGuard`.** Handlers never call `fs.readFile` / `fs.writeFile` on caller-supplied paths directly; `src/services/fileManager.ts` and `src/services/emailService.ts` already route through `pathGuard.resolveSafe()`. Any new file-touching code must go through the same door.
-4. **Graph calls go through `EmailService`.** No direct `Client.api()` in handlers — that bypasses response caching (`CacheManager`) and the batch helpers. Retry/throttling (429 + `Retry-After`) is **not** custom: it comes from the Graph SDK's default middleware chain (`Client.initWithMiddleware` in `src/auth/graphAuth.ts`), which includes the SDK `RetryHandler`. There is no in-house rate limiter.
+4. **Graph calls go through `EmailService`.** No direct `Client.api()` in handlers — that bypasses response caching (`CacheManager`) and the batch helpers. Retry/throttling (429 + `Retry-After`) is **not** custom: it comes from the Graph SDK's default middleware chain (`Client.initWithMiddleware` in `src/auth/graphAuth.ts`), which includes the SDK `RetryHandler`. There is no in-house rate limiter. `send_email.noRetry` is a strict optional boolean;
+   only true applies per-request retry/redirect limits of zero after outbound gates at the
+   existing call-site. Keep the final transport argument separate from template options,
+   and preserve defaults for missing/false, readers, replies, and global middleware.
+   For CLI transport or lifecycle changes, read the single-attempt and capability contract in
+   [README.md](README.md#outlook-cli-one-shot-calls): bind the same-child schema gate, one
+   dispatch, bounded cleanup with awaited close, inherited group, and offline probe identity.
+
 5. **HTML template inputs are escaped by default.** `src/templates/` must keep escaping user-controlled fields before rendering. Do not add a trusted-HTML bypass without an explicit sanitizer and tests.
 6. **Search negatives are evidence-bearing.** Search code must follow `@odata.nextLink` within explicit limits and distinguish `NOT_FOUND` from `SEARCH_INCOMPLETE`, `SEARCH_FAILED`, and `SEARCH_UNTRUSTED`. Never turn a page-fetch failure or limit hit into a clean empty result.
 7. **Run telemetry is metadata-only.** `scripts/lib/run-journal.js` may store argument names/types, counters, durations, statuses, and normalized error classes. It must never persist argument values, message content/metadata, attachment names, credentials, or raw errors.

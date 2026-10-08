@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { EmailHandler } from '../../src/handlers/EmailHandler.js';
 
 // Minimal fakes — handleSummarizeEmailsBatch only calls listEmails() and
@@ -33,4 +33,22 @@ describe('EmailHandler.handleSummarizeEmailsBatch — failure reporting', () => 
     expect(r.isError).toBeFalsy();
     expect(r.content[0].text).toContain('Nenhum email encontrado');
   });
+});
+
+describe('EmailHandler single-attempt transport', () => {
+  it.each([true, false, undefined])(
+    'passes validated noRetry %s as transport options',
+    async (noRetry) => {
+      const sendEmail = vi.fn().mockResolvedValue({ success: true });
+      const handler = new EmailHandler({ sendEmail } as never, {} as never);
+      await handler.handleSendEmail({
+        to: ['recipient@example.test'],
+        subject: 'Fixture',
+        body: 'Fixture',
+        noRetry,
+      });
+      expect(sendEmail.mock.calls[0][7]).toEqual({ noRetry });
+      expect(sendEmail.mock.calls[0][6]).toBeUndefined();
+    }
+  );
 });

@@ -37,6 +37,7 @@ import {
   readJournal,
 } from './lib/run-journal.js';
 import { harvestEvents } from './lib/harvest.js';
+import { installationCapabilities } from './lib/capabilities.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -212,6 +213,7 @@ outlook — one-shot CLI for mcp-outlook (40 Microsoft Graph email tools)
 Usage:
   outlook list                           List all 40 tools with descriptions
   outlook schema <tool>                  Show a tool's input schema
+  outlook capabilities --output=json     Inspect the local built installation
   outlook <tool> [--key=value ...]       Call a tool with individual flags
   outlook <tool> --json '<JSON>'         Call a tool with a raw JSON args object
   outlook feedback <runId> --outcome=missed
@@ -284,7 +286,6 @@ async function runMcp({
   command,
   schemaTarget,
   toolArgs,
-  jsonPayload,
   timeout,
   compact,
   output,
@@ -295,13 +296,20 @@ async function runMcp({
   const runId = randomUUID();
   const startedAt = new Date().toISOString();
   const startedMs = Date.now();
-  let invocationArgs = toolArgs;
+  const invocationArgs = toolArgs;
   let buf = '';
-  let idCounter = 1;
+  let phase = 'initialize';
+  const singleAttempt = command === 'send_email' && toolArgs.noRetry === true;
+  let interruptedSignal;
+  let closed = false;
+  const childClosed = new Promise((resolveClose) => {
+    child.once('close', () => {
+      closed = true;
+      resolveClose();
+    });
+  });
   let timer;
-  // Set once we've printed a result or reported an error. After that point the
-  // server is only shutting down (we sent it SIGTERM), so its exit code must
-  // NOT be turned into a spurious "check credentials" failure.
+  // Settlement starts cleanup; later frames or close events cannot replace the result.
   let settled = false;
   // Captured server stderr, surfaced verbatim when the server dies BEFORE
   // answering (real reason — lock contention, bad env — beats a generic hint).
@@ -310,7 +318,14 @@ async function runMcp({
   let pipeErrorTimer;
 
   return new Promise((resolve) => {
-    const responses = new Map();
+    const onSignal = (signal) => {
+      interruptedSignal = signal;
+      fail(`Interrupted by ${signal}`);
+    };
+    const onTerm = () => onSignal('SIGTERM');
+    const onInt = () => onSignal('SIGINT');
+    process.on('SIGTERM', onTerm);
+    process.on('SIGINT', onInt);
 
     timer = setTimeout(() => {
       fail(`Timeout after ${timeout}ms — is the server built and credentials set?`);
@@ -335,7 +350,6 @@ async function runMcp({
         } catch {
           continue;
         }
-        if (frame.id != null) responses.set(frame.id, frame);
         onFrame(frame);
       }
     });
@@ -385,6 +399,7 @@ async function runMcp({
         reportPipeFailure('server input stream is closed');
         return;
       }
+      if (settled) return;
       child.stdin.write(JSON.stringify(msg) + '\n');
     }
 
@@ -409,63 +424,94 @@ async function runMcp({
       }
     }
 
-    function finish(renderedOutput, result) {
+    async function cleanup() {
+      if (!closed) {
+        child.kill('SIGTERM');
+        const killTimer = setTimeout(() => {
+          if (!closed) child.kill('SIGKILL');
+        }, 1000);
+        await childClosed;
+        clearTimeout(killTimer);
+      }
+    }
+
+    function complete(renderedOutput, result, message) {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       clearTimeout(pipeErrorTimer);
-      settled = true;
-      void recordRun('success', result).finally(() => {
-        process.stdout.write(renderedOutput + '\n');
-        child.kill('SIGTERM');
+      void cleanup().then(async () => {
+        await recordRun(
+          message || interruptedSignal ? 'error' : 'success',
+          result,
+          message || interruptedSignal
+        );
+        process.removeListener('SIGTERM', onTerm);
+        process.removeListener('SIGINT', onInt);
+        if (interruptedSignal) {
+          process.stderr.write(`[outlook] Interrupted by ${interruptedSignal}\n`);
+          process.exitCode = interruptedSignal === 'SIGINT' ? 130 : 143;
+        } else if (message) {
+          process.stderr.write(`[outlook] ${message}\n`);
+          process.exitCode = 1;
+        } else {
+          process.stdout.write(renderedOutput + '\n');
+        }
         resolve();
       });
     }
 
-    // `result` is the MCP frame result when one exists (e.g. an isError tool response that
-    // still carries structuredContent). Forwarding it keeps the search evidence of failed
-    // runs — SEARCH_FAILED/SEARCH_UNTRUSTED — in the journal for harvest to observe.
+    function finish(renderedOutput, result) {
+      complete(renderedOutput, result);
+    }
+
     function fail(message, result) {
-      if (settled) return;
-      clearTimeout(timer);
-      clearTimeout(pipeErrorTimer);
-      settled = true;
-      child.kill();
-      void recordRun('error', result, message).finally(() => die(message));
+      complete(undefined, result, message);
+    }
+
+    function dispatchTool() {
+      phase = 'call';
+      send({
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'tools/call',
+        params: { name: command, arguments: toolArgs },
+      });
     }
 
     function onFrame(frame) {
-      // Step 1: initialize response → send initialized + our request
-      if (frame.id === 1 && frame.result) {
+      if (settled) return;
+      if (frame.id === 1 && phase === 'initialize') {
+        if (!frame.result || frame.error) {
+          fail('Server initialization failed');
+          return;
+        }
+        phase = 'catalog';
         send({ jsonrpc: '2.0', method: 'notifications/initialized' });
-
-        if (command === 'list') {
-          send({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
-        } else if (command === 'schema') {
+        if (command === 'list' || command === 'schema' || singleAttempt) {
           send({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
         } else {
-          // Regular tool call
-          let args;
-          if (jsonPayload) {
-            try {
-              args = JSON.parse(jsonPayload);
-              invocationArgs = args;
-            } catch (e) {
-              fail(`--json parse error: ${e.message}`);
-              return;
-            }
-          } else {
-            args = toolArgs;
-          }
-          send({
-            jsonrpc: '2.0',
-            id: 2,
-            method: 'tools/call',
-            params: { name: command, arguments: args },
-          });
+          dispatchTool();
         }
+        return;
       }
-
-      // Step 2: our request response
-      if (frame.id === 2) {
+      if (frame.id === 2 && phase === 'catalog' && singleAttempt) {
+        const tools = frame.result?.tools;
+        const sends = Array.isArray(tools)
+          ? tools.filter((tool) => tool?.name === 'send_email')
+          : [];
+        if (
+          frame.error ||
+          sends.length !== 1 ||
+          sends[0].inputSchema?.properties?.noRetry?.type !== 'boolean'
+        ) {
+          fail('Effective server does not advertise boolean send_email.noRetry');
+          return;
+        }
+        dispatchTool();
+        return;
+      }
+      if ((frame.id === 2 && phase === 'catalog') || (frame.id === 3 && phase === 'call')) {
         if (frame.error) {
           fail(`Tool error: ${frame.error.message ?? JSON.stringify(frame.error)}`);
           return;
@@ -544,6 +590,29 @@ async function runMcp({
 
 const opts = parseArgs(process.argv);
 
+if (opts.command === 'capabilities') {
+  const permitted = process.argv.slice(2);
+  if (
+    permitted.length !== 2 ||
+    permitted[0] !== 'capabilities' ||
+    permitted[1] !== '--output=json' ||
+    process.env.OUTLOOK_SERVER_ENTRY !== undefined ||
+    process.env.OUTLOOK_ENV_FILE !== undefined
+  ) {
+    die(
+      'Capabilities requires exactly capabilities --output=json with no server or environment selectors'
+    );
+  }
+  try {
+    process.stdout.write(
+      `${JSON.stringify(await installationCapabilities(REPO_ROOT, fileURLToPath(import.meta.url)))}\n`
+    );
+  } catch {
+    die('Built installation capabilities unavailable');
+  }
+  process.exit(0);
+}
+
 if (opts.help || !opts.command) {
   printHelp();
   process.exit(0);
@@ -595,6 +664,26 @@ if (opts.command === 'harvest') {
   });
   process.stdout.write(`${JSON.stringify(result, null, opts.output === 'text' ? 2 : 0)}\n`);
   process.exit(0);
+}
+
+if (!Number.isSafeInteger(opts.timeout) || opts.timeout <= 0 || opts.timeout > 2_147_483_647) {
+  die('Timeout must be a positive integer in milliseconds');
+}
+if (opts.jsonPayload !== null) {
+  try {
+    opts.toolArgs = JSON.parse(opts.jsonPayload);
+    if (!opts.toolArgs || typeof opts.toolArgs !== 'object' || Array.isArray(opts.toolArgs))
+      throw new Error();
+  } catch {
+    die('--json requires a valid JSON object');
+  }
+}
+if (
+  opts.command === 'send_email' &&
+  opts.toolArgs.noRetry !== undefined &&
+  typeof opts.toolArgs.noRetry !== 'boolean'
+) {
+  die('send_email.noRetry must be a boolean');
 }
 
 // Explicit env files are account selectors and override existing credential vars
