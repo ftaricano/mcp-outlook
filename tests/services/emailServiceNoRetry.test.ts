@@ -25,8 +25,6 @@ describe('EmailService single-attempt send through the real SDK', () => {
   for (const status of [429, 503, 504, 307, 308]) {
     it.each([true, false, undefined])('status ' + status + ', noRetry=%s', async (noRetry) => {
       const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options) => {
-        expect(options?.method).toBe('POST');
-        if (noRetry === true) expect(options?.redirect).toBe('manual');
         const response = new Response(
           JSON.stringify({ error: { code: 'OfflineFixture', message: 'Fixture' } }),
           {
@@ -54,6 +52,10 @@ describe('EmailService single-attempt send through the real SDK', () => {
         )
       ).rejects.toThrow();
       expect(fetch).toHaveBeenCalledTimes(noRetry ? 1 : status === 307 || status === 308 ? 6 : 4);
+      for (const [, options] of fetch.mock.calls) {
+        expect(options?.method).toBe('POST');
+        if (noRetry === true) expect(options?.redirect).toBe('manual');
+      }
     });
   }
   it('accepts 202 without replay', async () => {
@@ -73,6 +75,7 @@ describe('EmailService single-attempt send through the real SDK', () => {
       )
     ).resolves.toMatchObject({ success: true });
     expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][1]).toMatchObject({ method: 'POST', redirect: 'manual' });
   });
   it('surfaces a network failure without replay', async () => {
     const fetch = vi
@@ -91,5 +94,6 @@ describe('EmailService single-attempt send through the real SDK', () => {
       )
     ).rejects.toThrow();
     expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][1]).toMatchObject({ method: 'POST', redirect: 'manual' });
   });
 });
