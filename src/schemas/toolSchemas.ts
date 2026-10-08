@@ -133,6 +133,7 @@ const listEmailsSchema = z.object({
 });
 
 const sendEmailSchema = z.object({
+  noRetry: z.boolean().optional(),
   to: emailAddressList,
   subject: nonEmptyString,
   body: nonEmptyString,

@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Strict optional `send_email.noRetry` disables retries and redirects for one send request;
+  the CLI verifies the effective server schema before opting in.
+- Offline `outlook capabilities --output=json` reports built installation identity and the
+  single-attempt/child-cleanup contract without environment or credential bootstrap.
+- The CLI reaps its MCP child on completion, timeout, SIGTERM, and SIGINT, with a bounded
+  TERM grace period and KILL escalation before output or exit.
+
 - `CHANGELOG.md`, `CONTRIBUTING.md`, and issue and pull request templates.
 - README: a one-line summary, a demo captured from the CLI with fictional data, and credits.
 

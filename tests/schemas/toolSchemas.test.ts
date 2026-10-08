@@ -410,3 +410,25 @@ describe('validateToolInput - saved search names', () => {
     ).toBe(false);
   });
 });
+
+describe('send_email single-attempt contract', () => {
+  it.each([true, false])('preserves validated noRetry %s', (noRetry) => {
+    const parsed = validateToolInput('send_email', {
+      to: ['sender@example.test'],
+      subject: 'Fixture',
+      body: 'Fixture',
+      noRetry,
+    });
+    expect(parsed.ok && parsed.data.noRetry).toBe(noRetry);
+  });
+  it.each(['true', 1, null, {}])('refuses non-boolean noRetry %j', (noRetry) => {
+    expect(
+      validateToolInput('send_email', {
+        to: ['sender@example.test'],
+        subject: 'Fixture',
+        body: 'Fixture',
+        noRetry,
+      }).ok
+    ).toBe(false);
+  });
+});

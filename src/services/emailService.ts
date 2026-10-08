@@ -1,4 +1,8 @@
-import { Client } from '@microsoft/microsoft-graph-client';
+import {
+  Client,
+  RetryHandlerOptions,
+  RedirectHandlerOptions,
+} from '@microsoft/microsoft-graph-client';
 import { GraphAuthProvider } from '../auth/graphAuth.js';
 import { Message } from '@microsoft/microsoft-graph-types';
 import {
@@ -375,7 +379,8 @@ export class EmailService {
     cc?: string[],
     bcc?: string[],
     attachments?: EmailAttachment[],
-    enhancedOptions?: EnhancedEmailOptions
+    enhancedOptions?: EnhancedEmailOptions,
+    transportOptions?: { noRetry?: boolean }
   ): Promise<any> {
     // Outside the try on purpose: the catch below rewrites errors into attachment
     // and transport advice, which would disguise a refused sender as a transient
@@ -483,7 +488,14 @@ export class EmailService {
       }
 
       console.error('📧 Enviando email...');
-      const response = await this.client.api(apiPath).post(message);
+      const request = this.client.api(apiPath);
+      if (transportOptions?.noRetry === true) {
+        request.middlewareOptions([
+          new RetryHandlerOptions(undefined, 0),
+          new RedirectHandlerOptions(0),
+        ]);
+      }
+      const response = await request.post(message);
       console.error('✅ Email enviado com sucesso');
 
       return {

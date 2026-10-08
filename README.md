@@ -141,6 +141,35 @@ outlook harvest --since=7d --skill-target=outlook-mcp --output=json
 # Flags: --env-file, --timeout, --output, --session, --no-journal, --compact, --help
 ```
 
+For a single transport attempt, pass the strict boolean `noRetry: true` to `send_email`:
+
+```bash
+outlook send_email --json '{"to":["recipient@example.test"],"subject":"Fixture","body":"Fixture","noRetry":true}' --output=mcp
+outlook capabilities --output=json
+```
+
+The opt-in disables SDK retries and redirects on the existing send request after sender and
+recipient checks. Missing or false keeps the SDK defaults; reads and replies keep their existing
+behavior. Before opt-in dispatch, the CLI checks `send_email.noRetry` is advertised as a boolean
+by the same MCP child. An old or incompatible server is refused before `tools/call`.
+Graph acceptance does not prove inbox delivery. An error, timeout, or cancellation can leave an
+unknown outcome and never authorizes an automatic resend.
+
+`capabilities --output=json` is a local contract-version-1 probe, before `.env`, Keychain, or MCP
+startup. It accepts exactly those arguments and refuses `OUTLOOK_SERVER_ENTRY` and
+`OUTLOOK_ENV_FILE`, including empty selectors. It derives the schema from built files and reports
+installation paths plus SHA-256 fingerprints of the CLI, its `scripts/lib` support tree, server,
+send schema, package metadata, sorted `dist` tree, and resolved Graph SDK package tree. It reports
+Graph SDK/runtime versions and the real runtime path. `lockfileSha256` is null when no
+`package-lock.json` is installed (npm excludes it from packages); this is an explicit provenance
+limit, so bind the other installation fields as well. Missing built/schema/dependency artifacts
+fail closed. Paths and digests are local installation metadata; they contain no mailbox data.
+
+On success, timeout, SIGTERM, or SIGINT, the CLI sends TERM to its child, waits up to 1000 ms,
+then sends KILL if necessary and awaits close before output or exit. It inherits the caller's
+process group. A supervising runner must govern the whole inherited group, including any outer
+credential wrapper; the CLI only supervises its own direct MCP child.
+
 CLI credentials resolve in this order: `--env-file <path>` → `$OUTLOOK_ENV_FILE` → existing env vars → `<repo>/.env` for missing values → macOS Keychain. Explicit env files override existing credential variables for this one-shot process; the default repo `.env` does not.
 
 Output modes:
