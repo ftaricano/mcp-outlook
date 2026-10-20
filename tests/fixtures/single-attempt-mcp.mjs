@@ -1,8 +1,7 @@
-import { appendFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, writeFileSync, renameSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 
 const mode = process.env.FIXTURE_MODE;
-writeFileSync(process.env.FIXTURE_PID, String(process.pid));
 process.on('SIGTERM', () => {
   appendFileSync(process.env.FIXTURE_EVENTS, 'term\n');
   if (mode?.includes('resistant')) return;
@@ -11,6 +10,8 @@ process.on('SIGTERM', () => {
     process.exit(0);
   }, 100);
 });
+writeFileSync(`${process.env.FIXTURE_PID}.tmp`, String(process.pid));
+renameSync(`${process.env.FIXTURE_PID}.tmp`, process.env.FIXTURE_PID);
 const answer = (id, result) => {
   const line = JSON.stringify({ jsonrpc: '2.0', id, result }) + '\n';
   process.stdout.write(line);
