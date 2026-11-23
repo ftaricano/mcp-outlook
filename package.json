@@ -72,8 +72,8 @@
   },
   "homepage": "https://github.com/ftaricano/mcp-outlook#readme",
   "dependencies": {
-    "@azure/msal-node": "^7.0.1",
-    "@microsoft/microsoft-graph-client": "^3.0.7",
+    "@azure/msal-node": "^7.2.3",
+    "@microsoft/microsoft-graph-client": "^3.1.0",
     "@microsoft/microsoft-graph-types": "^2.43.1",
     "@modelcontextprotocol/sdk": "^1.31.0",
     "dotenv": "^18.0.9",
